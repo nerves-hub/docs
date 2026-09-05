@@ -1,0 +1,139 @@
+---
+title: "Deployment Group Workflows"
+sidebarTitle: "Workflows"
+description: "Stage a firmware rollout with a workflow definition: per-step targeting, concurrency, failure tolerance, and approval gates, defined in JSON and uploaded to a deployment group."
+---
+
+By default a [deployment group](/setup/deployments) updates every matching device at one pace. A **workflow** breaks that into ordered steps instead — a small canary batch, a sign-off, then everyone else — with each step choosing its own devices, its own concurrency, and how much failure it will tolerate before stopping.
+
+Workflows are defined in JSON and uploaded to a group, much as GitHub Actions and CircleCI pipelines are defined in YAML.
+
+<Warning>
+  Workflows are an early release feature. Feedback goes to the [NervesHub issue tracker](https://github.com/nerves-hub/nerves_hub_web/issues).
+</Warning>
+
+## A worked example
+
+Four steps: canaries on fixed connections first, then cellular canaries, then one city, then a human decides whether the rest of the fleet follows.
+
+```json
+{
+  "version": 1,
+  "steps": [
+    {
+      "name": "Canary",
+      "description": "wifi and ethernet canary devices",
+      "matching_conditions": {
+        "tags": ["canary"],
+        "network_interfaces": ["wifi", "ethernet"],
+        "match_limit": 20
+      },
+      "concurrent_updates": 10
+    },
+    {
+      "name": "Canary - LTE",
+      "description": "Cellular connected canaries",
+      "matching_conditions": {
+        "tags": ["canary"],
+        "network_interfaces": ["cellular"],
+        "match_limit": 10
+      },
+      "concurrent_updates": 10
+    },
+    {
+      "name": "Phoenix based",
+      "description": "Locally servicable devices",
+      "matching_conditions": {
+        "tags": ["city:phoenix"],
+        "match_limit": 100
+      },
+      "concurrent_updates": 25
+    },
+    {
+      "type": "approval_required",
+      "name": "Product sign-off",
+      "description": "Someone confirms the canaries are healthy"
+    }
+  ]
+}
+```
+
+Splitting the canaries by connection is the point of that first pair: a firmware that breaks cellular is worth catching on ten metered devices rather than the whole fleet.
+
+## The file
+
+| Field | |
+| --- | --- |
+| `version` | Schema version. Required. |
+| `steps` | Ordered list, **1 to 6** steps. Required. |
+
+Steps run in the order they are listed. Each takes:
+
+| Field | |
+| --- | --- |
+| `name` | Required on **every** step, including approval and catch-all steps. Max 50 characters. |
+| `type` | `update_devices` (the default), `approval_required`, or `catch_all` |
+| `description` | Optional, max 100 characters |
+| `matching_conditions` | Which devices this step covers |
+| `concurrent_updates` | How many of this step's devices update at once |
+| `failure_tolerance` | How many may fail before the step fails |
+
+The smallest valid workflow is one named step:
+
+```json
+{ "version": 1, "steps": [{ "name": "Everyone" }] }
+```
+
+## Step types
+
+| Type | What it does |
+| --- | --- |
+| `update_devices` | Updates the devices it matches, then moves on. The default when `type` is omitted. |
+| `approval_required` | Halts the rollout until someone approves it |
+| `catch_all` | Sweeps up every device not yet covered by an earlier step |
+
+## Choosing devices for a step
+
+`matching_conditions` narrows a step. Omitting a condition means it does not narrow anything.
+
+| Condition | |
+| --- | --- |
+| `tags` | A device must carry **every** tag listed |
+| `network_interfaces` | The interface the device most recently connected over: `wifi`, `ethernet`, `cellular`, or `unknown` |
+| `match_limit` | A hard cap on how many devices this step covers |
+
+`network_interfaces` is what makes it practical to hold metered devices back until a release has proven itself on cheap connections.
+
+## Pacing and failure
+
+`concurrent_updates` sets how many of a step's devices update at once — the step's own pace, independent of the others.
+
+`failure_tolerance` is how many of a step's devices may fail before the step itself fails and the rollout stops there rather than continuing into the next step. Give either a count or a percentage, not both. It defaults to one device, and a `catch_all` step never fails.
+
+Each step reports its own status as the rollout progresses: `waiting`, `in_progress`, `completed`, `skipped`, or `error`.
+
+## Uploading
+
+Open the deployment group, go to **Settings**, and use **Upload Workflow Definition** under Deployment Workflows. The file is validated on upload; if it is rejected nothing is stored and the error names the path that failed, so `steps/0` with `name` means the first step is missing its name.
+
+The two mistakes worth knowing about:
+
+- **Every step needs a `name`**, including `approval_required` and `catch_all` steps. It is easy to assume a step with no devices to match needs no name.
+- **`version` and `steps` are both required**, and `steps` cannot be empty.
+
+Once stored, the group's Settings page reports how many steps the definition has. **Delete Workflow Definition** removes it and returns the group to updating every matching device at one pace.
+
+## Approving a step
+
+When a rollout reaches an `approval_required` step it stops and the deployment group shows a banner — *Waiting on you*, the step's name, and its description — with an **Approve and continue** button. Approving records who approved it and when, clears the banner, and the rollout proceeds to the next step.
+
+## What a workflow supersedes
+
+A workflow takes over two of the group's own [safety controls](/setup/deployments#rollout-safety-controls) while it is attached:
+
+| Group setting | While a workflow is attached |
+| --- | --- |
+| `concurrent_updates` | Not applied. Each step paces itself with its own `concurrent_updates`. |
+| Priority queue | Not used. The step order decides which devices update first. |
+
+The failure and penalty box settings still apply — a workflow changes the order and pacing of a rollout, not what happens to a device that cannot take the update.

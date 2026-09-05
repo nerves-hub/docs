@@ -24,8 +24,7 @@
             "pages": [
               "terminology",
               "concepts/pki",
-              "concepts/firmware-signing",
-              "concepts/deployments"
+              "concepts/firmware-signing"
             ]
           },
           {

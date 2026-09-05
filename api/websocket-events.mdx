@@ -68,7 +68,7 @@ The server is requesting that the device perform a graceful reboot. The payload 
 {}
 ```
 
-Upon receiving this event, the device should send a `rebooting` event back to the server (see [Device → Server Events](#device-server-events)), then initiate a system reboot. This event is typically triggered from the NervesHub web console or via the management API.
+Upon receiving this event, the device should send a [`rebooting`](#rebooting) event back to the server, then initiate a system reboot. This event is typically triggered from the NervesHub web console or via the management API.
 
 ***
 

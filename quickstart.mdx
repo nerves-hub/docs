@@ -241,7 +241,7 @@ This guide uses `manage.nervescloud.com` as the host. Swap in your own if self-h
     2. Set targeting **conditions** (version + tags). Leave tags empty for now so it matches your device.
     3. Save and mark it **active**.
 
-    Full options: [How deployment groups work](/concepts/deployments).
+    Full options: [Deployment groups](/setup/deployments), including staged rollouts with [workflows](/concepts/deployment-workflows).
   </Step>
   <Step title="Watch it update">
     With an active group pointing at newer firmware, NervesHub offers the update. The device downloads it, verifies the signature, applies it, and reboots into the new version. Track progress on the device's page.
@@ -261,7 +261,7 @@ This guide uses `manage.nervescloud.com` as the host. Swap in your own if self-h
     Reduce update bandwidth dramatically by sending only the binary diff between firmware versions.
   </Card>
 
-  <Card title="Deployment Groups" icon="rocket" href="/concepts/deployments">
+  <Card title="Deployment Groups" icon="rocket" href="/setup/deployments">
     Learn how to configure concurrency limits, failure thresholds, and staged rollouts.
   </Card>
 
