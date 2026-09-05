@@ -1,11 +1,11 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "name": "NervesCloud",
+  "name": "NervesHub",
   "theme": "palm",
   "colors": {
     "primary": "#6366f1",
-    "light": "#f19758",
-    "dark": "#c2591a"
+    "light": "#818cf8",
+    "dark": "#4f46e5"
   },
   "favicon": "/favicon.svg",
   "navbar": {
@@ -15,6 +15,14 @@
       "label": "Dashboard"
     },
     "links": [
+      {
+        "href": "https://help.nervescloud.com/roadmap",
+        "label": "Roadmap"
+      },
+      {
+        "href": "https://help.nervescloud.com/changelog",
+        "label": "Changelog"
+      },
       {
         "href": "https://help.nervescloud.com",
         "label": "Feedback"
@@ -77,36 +85,6 @@
               "cli/installation",
               "cli/configuration",
               "cli/reference"
-            ]
-          }
-        ]
-      },
-      {
-        "tab": "API Reference",
-        "groups": [
-          {
-            "group": "HTTP API",
-            "pages": [
-              "api/overview",
-              "api/authentication",
-              "api/devices",
-              "api/firmware",
-              "api/deployments",
-              "api/organizations"
-            ]
-          },
-          {
-            "group": "Device WebSocket",
-            "pages": [
-              "api/websocket-overview",
-              "api/websocket-events"
-            ]
-          },
-          {
-            "group": "NervesHubLink",
-            "pages": [
-              "api/nerveshublink-config",
-              "api/nerveshublink-client"
             ]
           }
         ]
