@@ -68,15 +68,15 @@
               "concepts/firmware-signing",
               "concepts/deployments"
             ]
-          },
-          {
-            "group": "CLI",
-            "pages": [
-              "cli/installation",
-              "cli/configuration",
-              "cli/reference"
-            ]
           }
+        ]
+      },
+      {
+        "tab": "CLI",
+        "pages": [
+          "cli/installation",
+          "cli/configuration",
+          "cli/reference"
         ]
       },
       {
