@@ -1,0 +1,17 @@
+/*
+ * Hide the AI assistant's sticky "Ask a question..." bar that otherwise sits at
+ * the bottom of every page.
+ *
+ * The assistant itself stays enabled: the "Ask Assistant" entry in the header
+ * (and its Cmd/Ctrl+I shortcut) still opens the chat panel, which has its own
+ * input. Only the always-present bar in the content column is removed.
+ *
+ * Disabling the assistant through Mintlify's own setting is all-or-nothing and
+ * would take the header entry with it, hence the stylesheet.
+ *
+ * Note: `.chat-assistant-floating-input` is Mintlify's own class name, so this
+ * rule is worth re-checking if the bar ever reappears after a Mintlify update.
+ */
+.chat-assistant-floating-input {
+  display: none !important;
+}
