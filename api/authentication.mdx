@@ -1,0 +1,105 @@
+---
+title: "Authenticate NervesHub API Requests with Bearer Tokens"
+sidebarTitle: "Authentication"
+description: "Learn how to obtain a NervesHub personal access token and authenticate every HTTP API request using Bearer token authorization headers."
+---
+
+The NervesHub API uses Bearer token authentication — you generate a personal access token once and include it in the `Authorization` header of every request. Tokens are scoped to your user account and carry your organization permissions.
+
+## Get a Token
+
+You can obtain a token in two ways: via the `nh` CLI or from the NervesCloud web UI.
+
+<Tabs>
+  <Tab title="CLI">
+    Authenticate with the CLI to generate and store a token locally:
+
+    ```bash
+    nh user login
+    ```
+
+    This opens a browser flow on your NervesHub instance. After you confirm the session, the CLI stores your token automatically for subsequent commands.
+  </Tab>
+
+  <Tab title="NervesCloud UI">
+    Generate a long-lived personal access token from the web dashboard:
+
+    1. Log in at [manage.nervescloud.com](https://manage.nervescloud.com).
+    2. Click your avatar in the top-right corner and select **Account Settings**.
+    3. Navigate to **Access Tokens**.
+    4. Click **New Token**, give it a name, and copy the value immediately — it is only shown once.
+  </Tab>
+</Tabs>
+
+## Use the Token
+
+Pass the token as a `Bearer` credential in the `Authorization` header of every API request:
+
+```bash
+curl -H "Authorization: Bearer YOUR_TOKEN" \
+  https://manage.nervescloud.com/api/users/me
+```
+
+Replace `YOUR_TOKEN` with your actual token value.
+
+## Store the Token as an Environment Variable
+
+Rather than embedding your token in every command, export it as an environment variable. Both the CLI and shell scripts can read from it:
+
+```bash
+export NERVES_HUB_TOKEN=your_token_here
+```
+
+The `nh` CLI reads `NERVES_HUB_TOKEN` (or `NH_TOKEN`) automatically, so authenticated commands need no additional flags:
+
+```bash
+nh device list   # CLI uses NERVES_HUB_TOKEN automatically
+```
+
+For `curl` and scripts, reference the variable in the header:
+
+```bash
+curl -H "Authorization: Bearer $NERVES_HUB_TOKEN" \
+  https://manage.nervescloud.com/api/orgs/acme/products
+```
+
+## Verify Authentication
+
+Confirm your token is valid by calling the `/api/users/me` endpoint:
+
+```bash
+curl -H "Authorization: Bearer $NERVES_HUB_TOKEN" \
+  https://manage.nervescloud.com/api/users/me
+```
+
+A successful response returns your user profile:
+
+```json
+{
+  "data": {
+    "username": "alice",
+    "email": "alice@example.com"
+  }
+}
+```
+
+If the token is missing or invalid, the API returns a `401` error:
+
+```json
+{ "error": "unauthorized" }
+```
+
+## Error Responses
+
+| Status             | Body                        | Cause                                      |
+| ------------------ | --------------------------- | ------------------------------------------ |
+| `401 Unauthorized` | `{"error": "unauthorized"}` | Token missing, malformed, or expired       |
+| `403 Forbidden`    | `{"error": "forbidden"}`    | Token valid but lacks required permissions |
+
+<Note>
+  A `403` usually means your organization role is too low for the operation rather than that the token is bad. Read-only calls need `view`; creating or changing resources needs `manage`; organization settings, member management, and certificate authorities need `admin`.
+</Note>
+
+<Tip>
+  For CI/CD pipelines, set `NERVES_HUB_NON_INTERACTIVE=true` alongside `NERVES_HUB_TOKEN` to prevent the CLI from prompting for input. The CLI will use the token from the environment and fail fast on auth errors rather than waiting for user interaction.
+</Tip>

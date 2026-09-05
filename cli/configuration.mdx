@@ -1,0 +1,119 @@
+---
+title: "Configure the nh CLI for Your NervesHub Environment"
+sidebarTitle: "Configuration"
+description: "Configure the nh CLI with authentication tokens, a default organization and product, environment variables, and named profiles for different environments."
+---
+
+Before running any `nh` commands, configure the CLI to point at your NervesHub server and authenticate your identity. Configuration is stored in `~/.nh` by default and can be overridden per-command with global flags or environment variables — making it straightforward to switch between NervesCloud, a staging server, and a self-hosted instance.
+
+## Authentication
+
+Authenticate with NervesHub using your preferred method. After authenticating, `nh` stores a session token in its local config directory.
+
+```bash
+nh user auth        # Log in and store a session token
+nh user login       # Browser-based login
+nh user whoami      # Verify the currently authenticated user
+```
+
+Use `nh user login` for interactive workstations where a browser is available. In automated pipelines, set the `NERVES_HUB_TOKEN` environment variable instead of calling a login command (see [Environment Variables](#environment-variables) below).
+
+<Note>
+  The browser flow opens a page on your NervesHub instance (for example `https://manage.nervescloud.com/auth/cli/<token>`) where you confirm the session. The CLI then stores the resulting token locally.
+</Note>
+
+## Set the Server URI
+
+`nh` defaults to the NervesCloud managed service at `https://manage.nervescloud.com/`. If you are running a self-hosted NervesHub instance, update the URI:
+
+```bash
+nh config set uri "https://manage.nervescloud.com/"
+```
+
+Replace the value with your own server's base URL. This setting is persisted to the local config file and used for all subsequent commands until you change it or override it with `--uri`.
+
+## Set Default Org and Product
+
+Avoid typing `--org` and `--product` on every command by setting defaults:
+
+```bash
+nh config set org my-org
+nh config set product my-product
+```
+
+Or export them as environment variables for the duration of a shell session or CI job:
+
+```bash
+export NERVES_HUB_ORG=my-org
+export NERVES_HUB_PRODUCT=my-product
+```
+
+## Environment Variables
+
+All configuration values can be supplied as environment variables. This is the recommended approach for CI/CD pipelines and containerized environments. `nh` recognizes both `NERVES_HUB_*` and `NERVES_CLOUD_*` prefixes as aliases for every variable.
+
+| Variable                     | Aliases                          | Purpose                                  |
+| ---------------------------- | -------------------------------- | ---------------------------------------- |
+| `NERVES_HUB_TOKEN`           | `NH_TOKEN`, `NERVES_CLOUD_TOKEN` | API authentication token                 |
+| `NERVES_HUB_ORG`             | `NERVES_CLOUD_ORG`               | Default organization name                |
+| `NERVES_HUB_PRODUCT`         | `NERVES_CLOUD_PRODUCT`           | Default product name                     |
+| `NERVES_HUB_FW_PRIVATE_KEY`  | `NERVES_CLOUD_FW_PRIVATE_KEY`    | Firmware signing private key (Ed25519)   |
+| `NERVES_HUB_FW_PUBLIC_KEY`   | `NERVES_CLOUD_FW_PUBLIC_KEY`     | Firmware signing public key (Ed25519)    |
+| `NERVES_HUB_URI`             | `NERVES_CLOUD_URI`               | Platform base URI                        |
+| `NERVES_HUB_HOME`            | `NERVES_CLOUD_DATA_DIR`          | CLI data directory (default: `~/.nh`)    |
+| `NERVES_HUB_NON_INTERACTIVE` | `NERVES_CLOUD_NON_INTERACTIVE`   | Auto-confirm all prompts (set to `true`) |
+
+<Note>
+  When the same value is set both in the config file and as an environment variable, the environment variable takes precedence. Command-line flags override both.
+</Note>
+
+## Configuration Profiles
+
+Use named profiles to maintain separate configurations for different environments — for example, `production`, `staging`, and `local`. Profiles are saved to and loaded from the CLI data directory.
+
+Save the current configuration to a named profile:
+
+```bash
+nh config save staging
+```
+
+Switch to a saved profile:
+
+```bash
+nh config load staging
+```
+
+List all saved profiles:
+
+```bash
+nh config profiles
+```
+
+Profiles capture the full current configuration, including the server URI, default org and product, and authentication token, making it easy to switch contexts without re-authenticating.
+
+## View Current Config
+
+Print the full current configuration — including the active server URI, org, product, and config file path — with:
+
+```bash
+nh config get
+```
+
+This is a good first step when debugging unexpected behavior or confirming which environment a command will target.
+
+## Global Flags
+
+Every `nh` command accepts the following flags, which override the corresponding config file or environment variable values for that single invocation:
+
+| Flag                | Description                                     |
+| ------------------- | ----------------------------------------------- |
+| `--uri`             | API base URI                                    |
+| `--token`           | Personal access token                           |
+| `--org`             | Organization scope                              |
+| `--product`         | Product scope                                   |
+| `--non-interactive` | Never prompt; fail instead of waiting for input |
+| `-o` / `--output`   | Output format: `table` (default) or `json`      |
+
+<Tip>
+  Use `--output json` (or `-o json`) when scripting against `nh` in CI/CD pipelines. JSON output is stable across releases, easier to parse with `jq`, and includes fields that the default table view may omit for readability.
+</Tip>

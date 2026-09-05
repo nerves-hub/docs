@@ -1,0 +1,328 @@
+---
+title: "NervesHub Deployments API: Create and Activate Rollouts"
+sidebarTitle: "Deployments"
+description: "HTTP API endpoints to create, list, update, and delete NervesHub deployment groups, including activation and targeting conditions."
+---
+
+The Deployments API lets you manage firmware rollouts programmatically — create a group that targets a subset of devices by tag and version condition, activate or deactivate it, and update which firmware version it distributes. Automating rollouts through the API is the standard pattern for CI/CD pipelines that ship firmware on every merge to main.
+
+<Note>
+  These endpoints manage what the web console calls **deployment groups**. The API paths remain `/deployments` for backwards compatibility.
+</Note>
+
+## List Deployment Groups
+
+Retrieve all deployment groups configured for a product.
+
+```
+GET /api/orgs/{org_name}/products/{product_name}/deployments
+```
+
+<ParamField path="org_name" type="string" required>
+  The slug of your organization.
+</ParamField>
+
+<ParamField path="product_name" type="string" required>
+  The slug of the product.
+</ParamField>
+
+**Example request:**
+
+```bash
+curl -H "Authorization: Bearer $NERVES_HUB_TOKEN" \
+  "https://manage.nervescloud.com/api/orgs/acme/products/smart-lock/deployments"
+```
+
+**Example response:**
+
+```json
+{
+  "data": [
+    {
+      "name": "production-rollout",
+      "firmware_uuid": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+      "state": "on",
+      "conditions": {
+        "tags": ["production"],
+        "tag_operator": "and",
+        "version": "< 1.4.2"
+      },
+      "device_count": 1840,
+      "inserted_at": "2024-11-10T13:00:00Z"
+    },
+    {
+      "name": "staging-canary",
+      "firmware_uuid": "c9d8e7f6-a5b4-3210-fedc-ba9876543210",
+      "state": "on",
+      "conditions": {
+        "tags": ["staging"],
+        "tag_operator": "and",
+        "version": "< 1.4.3"
+      },
+      "device_count": 12,
+      "inserted_at": "2024-11-14T11:00:00Z"
+    }
+  ]
+}
+```
+
+<ResponseField name="name" type="string">
+  The unique name of the group within the product.
+</ResponseField>
+
+<ResponseField name="firmware_uuid" type="string">
+  UUID of the firmware artifact this group's current release distributes.
+</ResponseField>
+
+<ResponseField name="state" type="string">
+  `on` means the group is actively pushing updates; `off` means it is inactive.
+</ResponseField>
+
+<ResponseField name="conditions" type="object">
+  Targeting conditions. `tags` is a list of device tags; `tag_operator` is `and` (require all, the default) or `or` (allow any); `version` is a semver constraint string (e.g. `< 1.4.2`, `>= 1.0.0 and < 1.4.0`).
+</ResponseField>
+
+<ResponseField name="device_count" type="integer">
+  Number of devices currently matched by this group's conditions.
+</ResponseField>
+
+***
+
+## Create a Deployment Group
+
+Define a new group that targets devices meeting specific tag and version conditions.
+
+```
+POST /api/orgs/{org_name}/products/{product_name}/deployments
+```
+
+<ParamField path="org_name" type="string" required>
+  The slug of your organization.
+</ParamField>
+
+<ParamField path="product_name" type="string" required>
+  The slug of the product.
+</ParamField>
+
+<ParamField body="name" type="string" required>
+  A unique name for this group within the product, e.g. `production-v1-4-3`.
+</ParamField>
+
+<ParamField body="firmware_uuid" type="string" required>
+  The UUID of the firmware artifact to distribute. Its platform and architecture are recorded on the group and every later release must match them.
+</ParamField>
+
+<ParamField body="conditions" type="object" required>
+  An object with `tags` (array of strings), optional `tag_operator` (`and` or `or`, default `and`), and `version` (semver constraint string) that devices must match to receive this update.
+</ParamField>
+
+**Example request:**
+
+```bash
+curl -X POST \
+  -H "Authorization: Bearer $NERVES_HUB_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "production-v1-4-3",
+    "firmware_uuid": "c9d8e7f6-a5b4-3210-fedc-ba9876543210",
+    "conditions": {
+      "tags": ["production"],
+      "version": "< 1.4.3"
+    }
+  }' \
+  "https://manage.nervescloud.com/api/orgs/acme/products/smart-lock/deployments"
+```
+
+**Example response (`201 Created`):**
+
+```json
+{
+  "data": {
+    "name": "production-v1-4-3",
+    "firmware_uuid": "c9d8e7f6-a5b4-3210-fedc-ba9876543210",
+    "state": "off",
+    "conditions": {
+      "tags": ["production"],
+      "tag_operator": "and",
+      "version": "< 1.4.3"
+    },
+    "device_count": 1840,
+    "inserted_at": "2024-11-15T18:00:00Z"
+  }
+}
+```
+
+<Note>
+  New groups are created in the `off` state. Devices will not receive updates until you activate the group by setting `state` to `on` with a PUT request.
+</Note>
+
+***
+
+## Get a Deployment Group
+
+Retrieve the current configuration and status of a single group.
+
+```
+GET /api/orgs/{org_name}/products/{product_name}/deployments/{name}
+```
+
+<ParamField path="org_name" type="string" required>
+  The slug of your organization.
+</ParamField>
+
+<ParamField path="product_name" type="string" required>
+  The slug of the product.
+</ParamField>
+
+<ParamField path="name" type="string" required>
+  The name of the group.
+</ParamField>
+
+**Example request:**
+
+```bash
+curl -H "Authorization: Bearer $NERVES_HUB_TOKEN" \
+  "https://manage.nervescloud.com/api/orgs/acme/products/smart-lock/deployments/production-v1-4-3"
+```
+
+***
+
+## Update a Deployment Group
+
+Modify a group's firmware, targeting conditions, or activation state. Use this endpoint to activate a group after creation, ship a new firmware version, or halt a rollout.
+
+```
+PUT /api/orgs/{org_name}/products/{product_name}/deployments/{name}
+```
+
+<ParamField path="org_name" type="string" required>
+  The slug of your organization.
+</ParamField>
+
+<ParamField path="product_name" type="string" required>
+  The slug of the product.
+</ParamField>
+
+<ParamField path="name" type="string" required>
+  The name of the group to update.
+</ParamField>
+
+<ParamField body="state" type="string">
+  Set to `on` to activate the group or `off` to deactivate it.
+</ParamField>
+
+<ParamField body="firmware_uuid" type="string">
+  Ship a different firmware artifact. Its platform and architecture must match the group's.
+</ParamField>
+
+<ParamField body="conditions" type="object">
+  Update the `tags`, `tag_operator`, and/or `version` targeting conditions.
+</ParamField>
+
+**Example — activate a group:**
+
+```bash
+curl -X PUT \
+  -H "Authorization: Bearer $NERVES_HUB_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"state": "on"}' \
+  "https://manage.nervescloud.com/api/orgs/acme/products/smart-lock/deployments/production-v1-4-3"
+```
+
+**Example — ship new firmware and update the version condition:**
+
+```bash
+curl -X PUT \
+  -H "Authorization: Bearer $NERVES_HUB_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "firmware_uuid": "d1e2f3a4-b5c6-7890-1234-567890abcdef",
+    "conditions": {
+      "tags": ["production"],
+      "version": "< 1.4.4"
+    }
+  }' \
+  "https://manage.nervescloud.com/api/orgs/acme/products/smart-lock/deployments/production-v1-4-3"
+```
+
+**Example response (`200 OK`):**
+
+```json
+{
+  "data": {
+    "name": "production-v1-4-3",
+    "firmware_uuid": "c9d8e7f6-a5b4-3210-fedc-ba9876543210",
+    "state": "on",
+    "conditions": {
+      "tags": ["production"],
+      "tag_operator": "and",
+      "version": "< 1.4.3"
+    },
+    "device_count": 1840
+  }
+}
+```
+
+***
+
+## Delete a Deployment Group
+
+Permanently remove a group. Devices that have already updated are unaffected; devices mid-update may experience a failed update cycle.
+
+```
+DELETE /api/orgs/{org_name}/products/{product_name}/deployments/{name}
+```
+
+<ParamField path="org_name" type="string" required>
+  The slug of your organization.
+</ParamField>
+
+<ParamField path="product_name" type="string" required>
+  The slug of the product.
+</ParamField>
+
+<ParamField path="name" type="string" required>
+  The name of the group to delete.
+</ParamField>
+
+**Example request:**
+
+```bash
+curl -X DELETE \
+  -H "Authorization: Bearer $NERVES_HUB_TOKEN" \
+  "https://manage.nervescloud.com/api/orgs/acme/products/smart-lock/deployments/production-v1-4-3"
+```
+
+Returns `204 No Content` on success.
+
+<Warning>
+  Deactivate a group (set `state` to `off`) before deleting it to avoid interrupting in-progress firmware downloads.
+</Warning>
+
+***
+
+## Typical CI/CD Workflow
+
+The standard automation pattern for shipping a firmware release end-to-end:
+
+<Steps>
+  <Step title="Build and sign firmware">
+    Your CI pipeline runs `mix firmware` and signs the output with `fwup --sign`.
+  </Step>
+
+  <Step title="Upload firmware">
+    POST the `.fw` file to the Firmware API. Capture the returned `uuid`.
+  </Step>
+
+  <Step title="Create a deployment group">
+    POST to create a new group referencing the firmware UUID, targeting your staging or canary tag first.
+  </Step>
+
+  <Step title="Activate the group">
+    PUT `{"state": "on"}` to begin distributing the update to matched devices.
+  </Step>
+
+  <Step title="Promote to production">
+    After verifying on staging, update the production group's `firmware_uuid` and ensure it is active.
+  </Step>
+</Steps>

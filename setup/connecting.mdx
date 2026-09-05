@@ -1,0 +1,98 @@
+---
+title: "Connecting Nerves Devices to NervesHub or NervesCloud"
+sidebarTitle: "Connecting"
+description: "How to configure your Nerves device to connect to NervesCloud or a self-hosted NervesHub server using persistent Phoenix WebSocket channels."
+---
+
+NervesHubLink establishes a long-lived Phoenix WebSocket channel on boot and keeps it open for the lifetime of the device process. Through this connection, NervesHub can push firmware update notifications, stream logs, open a remote IEx console, and receive health metrics — all without polling. This page explains how to point that connection at NervesCloud or your own self-hosted NervesHub instance.
+
+<Note>
+  NervesHubLink enforces SSL peer verification on every connection. The server certificate must be valid and trusted by the device's CA bundle. Connections to hosts with self-signed or untrusted certificates will be rejected unless you configure a custom CA certificate.
+</Note>
+
+## NervesCloud (Recommended)
+
+NervesCloud is the managed NervesHub service at [manage.nervescloud.com](https://manage.nervescloud.com). It is the fastest way to connect devices because no infrastructure setup is required. Set your host and credentials in `config/target.exs` and NervesHubLink handles everything else:
+
+```elixir
+# config/target.exs
+config :nerves_hub_link,
+  host: "devices.nervescloud.com",
+  port: 443,
+  auth: %{
+    product_key: System.get_env("NERVES_HUB_PRODUCT_KEY"),
+    product_secret: System.get_env("NERVES_HUB_PRODUCT_SECRET")
+  }
+```
+
+The `devices.nervescloud.com` endpoint is pre-trusted by the default Nerves CA bundle, so no additional certificate configuration is necessary.
+
+## Self-Hosted NervesHub
+
+If you operate your own NervesHub instance, override the `device_api_host`, `device_api_sni`, and `device_api_port` keys to point at your server:
+
+```elixir
+# config/target.exs
+config :nerves_hub_link,
+  device_api_host: "device.my-nerves-hub.org",
+  device_api_sni: 'device.my-nerves-hub.org',
+  device_api_port: 443
+```
+
+Note that `device_api_sni` is a **charlist** (single-quoted), not a binary string. This value is passed directly to the underlying `:ssl` application for Server Name Indication during the TLS handshake.
+
+If your server uses a private CA, provide the CA certificate so the device can verify the server's identity:
+
+```elixir
+config :nerves_hub_link,
+  device_api_host: "device.my-nerves-hub.org",
+  device_api_sni: 'device.my-nerves-hub.org',
+  device_api_port: 443,
+  ca_certs: [File.read!("/path/to/my-ca.pem")]
+```
+
+## Connection Behavior
+
+NervesHubLink maintains a single persistent WebSocket connection to the NervesHub server. You do not need to manage reconnects in application code — the library handles them automatically:
+
+* **Automatic reconnection** — if the connection drops (network outage, server restart), NervesHubLink retries with exponential backoff.
+* **No keep-alive tuning required** — Phoenix Channels send heartbeat frames; NervesHubLink responds automatically.
+
+## Disabling the Connection in Development
+
+When running `mix test` or developing on a host machine, you do not want NervesHubLink attempting to reach the NervesHub server. Disable the connection entirely with:
+
+```elixir
+# config/dev.exs or config/test.exs
+config :nerves_hub_link, connect: false
+```
+
+With this runtime configuration option set, the WebSocket process will not be started at all when the application boots.
+
+## Runtime Configuration with a Configurator
+
+For advanced use cases where credentials are not known at compile time — for example, when device certificates are provisioned during first boot or retrieved from a hardware security module — implement the `NervesHubLink.Configurator` behaviour:
+
+```elixir
+defmodule MyFirmware.NervesHubConfigurator do
+  @behaviour NervesHubLink.Configurator
+
+  @impl NervesHubLink.Configurator
+  def build_config(config) do
+    # Fetch credentials at runtime, e.g. from a secure element or local store
+    cert = MyFirmware.CertStore.read_cert()
+    key  = MyFirmware.CertStore.read_key()
+
+    %{config | auth: %{cert: cert, key: key}}
+  end
+end
+```
+
+Register your module in `config/target.exs`:
+
+```elixir
+config :nerves_hub_link,
+  configurator: MyFirmware.NervesHubConfigurator
+```
+
+NervesHubLink calls `build_config/1` at startup before opening the socket, so any credentials returned are used for the initial handshake and all subsequent reconnections.

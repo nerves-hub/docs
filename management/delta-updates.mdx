@@ -1,0 +1,81 @@
+---
+title: "Reduce Firmware Update Size with NervesHub Delta Updates"
+sidebarTitle: "Delta Updates"
+description: "Use NervesHub delta updates to ship binary diffs instead of full firmware, cutting transfer size by up to 95 percent and speeding up OTA updates."
+---
+
+NervesHub delta updates ship only the binary difference between firmware versions, dramatically reducing bandwidth consumption and update time. Instead of downloading a full 58 MB firmware image for a bug fix that touched a few hundred kilobytes of code, a device downloads a diff that may be as small as 100 KB — and applies it locally to reconstruct the new firmware. Delta updates are especially valuable for devices on metered or low-bandwidth connections.
+
+<Note>
+  Delta support depends on the update tool behind your firmware. fwup firmware (`.fw`) is the production path and uses `xdelta3`. NervesHub can also ingest ESP-IDF application images (`.bin`), AtomVM packbeam archives (`.avm`), and RAUC bundles (`.raucb`), but that support is **experimental** — ESP-IDF deltas use Espressif's `esp_delta_ota` patch format rather than `xdelta3`, and the AtomVM and RAUC integrations currently cover the server side only.
+</Note>
+
+## How Delta Updates Work
+
+When you publish a new firmware version to NervesHub and add it to a deployment group, NervesHub automatically generates a binary diff between the firmware the target devices are currently running and the new target firmware. For fwup firmware that diff is produced with `xdelta3`. This diff is stored alongside the full firmware image.
+
+When a device checks in and is eligible for an update:
+
+1. NervesHub checks whether a delta diff exists between the device's current firmware and the target firmware
+2. If a delta is available, the device downloads the diff instead of the full image
+3. The device passes the diff to `fwup`, which applies it to the current firmware partition and validates the result
+4. NervesHub records whether the device used a full or delta update path
+
+The device never needs to know it's applying a delta — `fwup` handles the diff application transparently, and the end result is identical to applying the full firmware image.
+
+## Size Reduction
+
+The reduction in transfer size depends on how much the firmware changed between versions. In practice:
+
+| Scenario                       | Full firmware size | Delta size | Reduction |
+| ------------------------------ | ------------------ | ---------- | --------- |
+| Config change or small bug fix | 58 MB | ~100 KB | ~99% |
+| Minor feature addition | 58 MB | ~1–3 MB | ~95–98% |
+| Large dependency update | 58 MB | ~10–20 MB | ~65–80% |
+| Complete system rebuild | 58 MB | ~50 MB | minimal |
+
+Delta updates are most effective when the changes between versions are small relative to the total firmware size. For routine releases — bug fixes, configuration tweaks, application logic changes — the reduction is dramatic.
+
+## Requirements
+
+Before delta updates can be used, verify that your setup meets the following minimum versions:
+
+<Note>
+  Delta generation happens entirely on the NervesHub server. You do not need to run `xdelta3` locally or change your firmware build process. NervesHub handles diff generation automatically when you publish firmware.
+</Note>
+
+* **fwup >= 1.6.0** — the version of fwup baked into your Nerves system must support delta application. Check your Nerves system's fwup version with `fwup --version` in a device shell.
+* **nerves\\_hub\\_link >= 0.9.1** — your device firmware must include NervesHubLink at or above this version to negotiate the delta update path with the server.
+* **Two stored firmware versions** — NervesHub can only generate a delta between two firmware versions it has stored. Both the current firmware running on the device and the target firmware must exist in NervesHub's firmware storage.
+
+Update your `mix.exs` to pull in a compatible NervesHubLink version:
+
+```elixir
+{:nerves_hub_link, "~> 2.7"}
+```
+
+## Enabling Delta Updates
+
+Delta updates are enabled at the server level and require no special configuration in your device firmware. When you create a deployment group in NervesHub, the server automatically generates delta diffs between the target firmware and each prior firmware version stored for your product. A group also carries its own toggle for delta updates, so you can turn them off for one fleet without affecting others.
+
+There is nothing to toggle in your firmware config, no extra mix dependency to add beyond NervesHubLink, and no change to your firmware build pipeline. Once your devices meet the version requirements above, they will automatically receive delta updates wherever a diff is available.
+
+## Verifying Delta Application
+
+NervesHub tracks the update path each device used. On the Device Detail page in NervesCloud, the firmware update history for a device shows whether each update was applied as a full download or a delta. This lets you confirm that delta updates are working as expected after a rollout and measure the bandwidth savings across your fleet.
+
+If a device applied a full update when you expected a delta, check that:
+
+* The device's current firmware version is stored in NervesHub (delta requires both versions to be present)
+* The device is running `nerves_hub_link >= 0.9.1`
+* The device's Nerves system includes `fwup >= 1.6.0`
+
+## Fallback to Full Firmware
+
+Delta update application is fault-tolerant. If the diff fails to apply — for any reason, including filesystem corruption, an interrupted download, or a checksum mismatch — NervesHubLink automatically falls back to downloading and applying the full firmware image. The update still completes successfully; it just uses more bandwidth.
+
+NervesHub records the fallback event on the device detail page so you can identify devices that consistently fail delta application and investigate the root cause.
+
+<Tip>
+  Delta updates deliver the greatest bandwidth savings when you release firmware frequently with small, incremental changes. Shipping bug fixes and configuration updates as separate releases — rather than batching them into large quarterly releases — lets NervesHub generate very small diffs and minimizes the data each device transfers over its lifetime.
+</Tip>

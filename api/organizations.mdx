@@ -1,0 +1,364 @@
+---
+title: "NervesHub Organizations API: Products and CA Certificates"
+sidebarTitle: "Organizations"
+description: "HTTP API endpoints for managing NervesHub organizations, products, and CA certificates used to authenticate and auto-provision devices at scale."
+---
+
+The Organizations API covers org-level resources including products, CA certificates, and the currently authenticated user. These endpoints establish the foundational structure — organizations own products, products own devices, and CA certificates enable automatic device provisioning when you onboard new hardware at scale.
+
+## Get the Current User
+
+Retrieve the profile of the user associated with the Bearer token in use.
+
+```
+GET /api/users/me
+```
+
+**Example request:**
+
+```bash
+curl -H "Authorization: Bearer $NERVES_HUB_TOKEN" \
+  "https://manage.nervescloud.com/api/users/me"
+```
+
+**Example response:**
+
+```json
+{
+  "data": {
+    "username": "alice",
+    "email": "alice@example.com"
+  }
+}
+```
+
+<ResponseField name="username" type="string">
+  The account username.
+</ResponseField>
+
+<ResponseField name="email" type="string">
+  The verified email address associated with the account.
+</ResponseField>
+
+***
+
+## List Products
+
+Retrieve all products in an organization.
+
+```
+GET /api/orgs/{org_name}/products
+```
+
+<ParamField path="org_name" type="string" required>
+  The slug of the organization.
+</ParamField>
+
+**Example request:**
+
+```bash
+curl -H "Authorization: Bearer $NERVES_HUB_TOKEN" \
+  "https://manage.nervescloud.com/api/orgs/acme/products"
+```
+
+**Example response:**
+
+```json
+{
+  "data": [
+    {
+      "name": "smart-lock",
+      "inserted_at": "2023-06-01T09:00:00Z"
+    },
+    {
+      "name": "smart-thermostat",
+      "inserted_at": "2023-09-15T14:30:00Z"
+    }
+  ]
+}
+```
+
+***
+
+## Get a Product
+
+Retrieve details about a single product by name.
+
+```
+GET /api/orgs/{org_name}/products/{product_name}
+```
+
+<ParamField path="org_name" type="string" required>
+  The slug of the organization.
+</ParamField>
+
+<ParamField path="product_name" type="string" required>
+  The slug of the product to retrieve.
+</ParamField>
+
+**Example request:**
+
+```bash
+curl -H "Authorization: Bearer $NERVES_HUB_TOKEN" \
+  "https://manage.nervescloud.com/api/orgs/acme/products/smart-lock"
+```
+
+**Example response:**
+
+```json
+{
+  "data": {
+    "name": "smart-lock",
+    "inserted_at": "2023-06-01T09:00:00Z"
+  }
+}
+```
+
+***
+
+## Create a Product
+
+Create a new product within an organization. Products group related devices and firmware under a single namespace.
+
+```
+POST /api/orgs/{org_name}/products
+```
+
+<ParamField path="org_name" type="string" required>
+  The slug of the organization.
+</ParamField>
+
+<ParamField body="name" type="string" required>
+  The name (slug) of the product. Use lowercase letters, numbers, and hyphens. This value appears in all API paths for this product's resources.
+</ParamField>
+
+**Example request:**
+
+```bash
+curl -X POST \
+  -H "Authorization: Bearer $NERVES_HUB_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "smart-thermostat"}' \
+  "https://manage.nervescloud.com/api/orgs/acme/products"
+```
+
+**Example response (`201 Created`):**
+
+```json
+{
+  "data": {
+    "name": "smart-thermostat",
+    "inserted_at": "2024-11-15T19:00:00Z"
+  }
+}
+```
+
+<Note>
+  Creating, updating, and deleting products requires the `manage` role.
+</Note>
+
+***
+
+## Update a Product
+
+Update the settings of an existing product.
+
+```
+PUT /api/orgs/{org_name}/products/{product_name}
+```
+
+<ParamField path="org_name" type="string" required>
+  The slug of the organization.
+</ParamField>
+
+<ParamField path="product_name" type="string" required>
+  The current slug of the product.
+</ParamField>
+
+<ParamField body="name" type="string">
+  A new slug for the product. Renaming a product changes all its API paths — update any CI scripts or integrations that reference the old name.
+</ParamField>
+
+**Example request:**
+
+```bash
+curl -X PUT \
+  -H "Authorization: Bearer $NERVES_HUB_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "smart-thermostat-v2"}' \
+  "https://manage.nervescloud.com/api/orgs/acme/products/smart-thermostat"
+```
+
+***
+
+## Delete a Product
+
+Permanently delete a product and all its associated devices, firmware, and deployment groups.
+
+```
+DELETE /api/orgs/{org_name}/products/{product_name}
+```
+
+<ParamField path="org_name" type="string" required>
+  The slug of the organization.
+</ParamField>
+
+<ParamField path="product_name" type="string" required>
+  The slug of the product to delete.
+</ParamField>
+
+**Example request:**
+
+```bash
+curl -X DELETE \
+  -H "Authorization: Bearer $NERVES_HUB_TOKEN" \
+  "https://manage.nervescloud.com/api/orgs/acme/products/smart-thermostat"
+```
+
+Returns `204 No Content` on success.
+
+<Warning>
+  Deleting a product is irreversible and immediately disconnects all devices in that product. All firmware, deployment groups, and device records are permanently removed.
+</Warning>
+
+***
+
+## List CA Certificates
+
+List the CA certificates registered to an organization. NervesHub uses these certificates to automatically provision devices whose client certificates are signed by a known CA, without requiring each device to be pre-registered individually.
+
+```
+GET /api/orgs/{org_name}/ca_certificates
+```
+
+<ParamField path="org_name" type="string" required>
+  The slug of the organization.
+</ParamField>
+
+**Example request:**
+
+```bash
+curl -H "Authorization: Bearer $NERVES_HUB_TOKEN" \
+  "https://manage.nervescloud.com/api/orgs/acme/ca_certificates"
+```
+
+**Example response:**
+
+```json
+{
+  "data": [
+    {
+      "serial": "3c:a1:f2:88:de:44:bc:01",
+      "description": "Factory CA — Line 1",
+      "not_before": "2023-01-01T00:00:00Z",
+      "not_after": "2028-01-01T00:00:00Z"
+    },
+    {
+      "serial": "7e:b9:20:cc:1f:55:aa:09",
+      "description": "Factory CA — Line 2",
+      "not_before": "2023-06-01T00:00:00Z",
+      "not_after": "2028-06-01T00:00:00Z"
+    }
+  ]
+}
+```
+
+<ResponseField name="serial" type="string">
+  The hex serial number of the CA certificate. Use this value when deleting a certificate.
+</ResponseField>
+
+<ResponseField name="description" type="string">
+  A human-readable label you assigned when registering the certificate.
+</ResponseField>
+
+<ResponseField name="not_before" type="string">
+  ISO 8601 timestamp for the start of the certificate's validity period.
+</ResponseField>
+
+<ResponseField name="not_after" type="string">
+  ISO 8601 timestamp for the end of the certificate's validity period. NervesHub will reject device certificates signed by an expired CA.
+</ResponseField>
+
+***
+
+## Register a CA Certificate
+
+Upload a CA certificate to your organization. Any device certificate signed by this CA will be automatically trusted and the device provisioned on first connection.
+
+```
+POST /api/orgs/{org_name}/ca_certificates
+```
+
+<ParamField path="org_name" type="string" required>
+  The slug of the organization.
+</ParamField>
+
+<ParamField body="cert" type="string" required>
+  The PEM-encoded CA certificate. This is the public certificate only — do not include the private key.
+</ParamField>
+
+<ParamField body="description" type="string">
+  An optional human-readable label, e.g. `Factory CA — Line 1`, to identify this certificate in the UI and API.
+</ParamField>
+
+**Example request:**
+
+```bash
+curl -X POST \
+  -H "Authorization: Bearer $NERVES_HUB_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"cert\": \"$(cat factory-ca.pem)\",
+    \"description\": \"Factory CA — Line 1\"
+  }" \
+  "https://manage.nervescloud.com/api/orgs/acme/ca_certificates"
+```
+
+**Example response (`201 Created`):**
+
+```json
+{
+  "data": {
+    "serial": "3c:a1:f2:88:de:44:bc:01",
+    "description": "Factory CA — Line 1",
+    "not_before": "2023-01-01T00:00:00Z",
+    "not_after": "2028-01-01T00:00:00Z"
+  }
+}
+```
+
+<Note>
+  The CA certificate must be a valid X.509 certificate in PEM format. NervesHub only stores the public certificate — your CA private key should remain in your secure key management system. Registering and removing certificate authorities requires the `admin` role.
+</Note>
+
+***
+
+## Delete a CA Certificate
+
+Remove a CA certificate from your organization. Existing device certificates signed by this CA will no longer be valid for auto-provisioning; devices already provisioned are not automatically removed.
+
+```
+DELETE /api/orgs/{org_name}/ca_certificates/{serial}
+```
+
+<ParamField path="org_name" type="string" required>
+  The slug of the organization.
+</ParamField>
+
+<ParamField path="serial" type="string" required>
+  The hex serial number of the CA certificate, as returned by the list endpoint.
+</ParamField>
+
+**Example request:**
+
+```bash
+curl -X DELETE \
+  -H "Authorization: Bearer $NERVES_HUB_TOKEN" \
+  "https://manage.nervescloud.com/api/orgs/acme/ca_certificates/3c:a1:f2:88:de:44:bc:01"
+```
+
+Returns `204 No Content` on success.
+
+<Tip>
+  Before deleting a CA certificate, ensure no active devices depend on it for authentication. You can check by listing devices and filtering for those using certificates signed by this CA. Rotating rather than deleting — registering a new CA before removing the old one — ensures uninterrupted device connectivity.
+</Tip>

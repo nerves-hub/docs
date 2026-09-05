@@ -1,0 +1,193 @@
+---
+title: "NervesHub WebSocket Channel Events Complete Reference"
+sidebarTitle: "WebSocket Events"
+description: "Complete reference for server-to-device and device-to-server events on the NervesHub device WebSocket channel, with full payload schemas and field details."
+---
+
+The NervesHub device WebSocket channel sends and receives events for firmware updates, health reporting, and device control. Events flow in both directions: the server pushes update notifications and control commands to the device, and the device reports progress, status, and lifecycle signals back to the server. This page documents every event on the `device` topic.
+
+<Note>
+  `nerves_hub_link` sends and handles all of these events automatically on standard Nerves devices. This reference is for custom client implementations, alternative runtimes, or debugging unexpected channel behaviour.
+</Note>
+
+## Server → Device Events
+
+These events are pushed by NervesHub to a connected device. Your client must handle each event and respond appropriately.
+
+### `update`
+
+The server has determined that a firmware update is available for this device. The payload contains the firmware download URL and metadata needed to validate and apply the update.
+
+```json
+{
+  "update_available": true,
+  "deployment_id": "abc123",
+  "firmware_url": "https://firmware.nervescloud.com/signed/path/to/firmware.fw",
+  "firmware_meta": {
+    "uuid": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+    "architecture": "arm",
+    "platform": "rpi4",
+    "product": "my_project",
+    "version": "2.0.0",
+    "author": "alice",
+    "description": "Bug fixes and improvements",
+    "vcs_identifier": "abc1234",
+    "misc": ""
+  }
+}
+```
+
+<Warning>
+  The `firmware_url` is a signed, time-limited URL with a **10-minute TTL**. Your device must begin downloading the firmware immediately after receiving the `update` event. If the URL expires before the download completes, request a new URL by reconnecting or re-joining the channel.
+</Warning>
+
+**Payload fields:**
+
+| Field                          | Type    | Description                                                |
+| ------------------------------ | ------- | ---------------------------------------------------------- |
+| `update_available`             | boolean | Always `true` when an update is being pushed               |
+| `deployment_id`                | string  | Identifier of the deployment group that sent this update   |
+| `firmware_url`                 | string  | Signed URL to download the `.fw` firmware file             |
+| `firmware_meta.uuid`           | string  | Unique identifier for this firmware build                  |
+| `firmware_meta.architecture`   | string  | Target CPU architecture (e.g., `arm`, `aarch64`, `x86_64`) |
+| `firmware_meta.platform`       | string  | Target board or platform (e.g., `rpi4`, `bbb`)             |
+| `firmware_meta.product`        | string  | Product name as defined in the Nerves project              |
+| `firmware_meta.version`        | string  | Firmware version string                                    |
+| `firmware_meta.author`         | string  | Author or builder of the firmware                          |
+| `firmware_meta.description`    | string  | Human-readable description of the firmware release         |
+| `firmware_meta.vcs_identifier` | string  | Git SHA or other VCS reference for the build               |
+| `firmware_meta.misc`           | string  | Arbitrary metadata field, may be empty                     |
+
+***
+
+### `reboot`
+
+The server is requesting that the device perform a graceful reboot. The payload is an empty object.
+
+```json
+{}
+```
+
+Upon receiving this event, the device should send a `rebooting` event back to the server (see [Device → Server Events](#device-server-events)), then initiate a system reboot. This event is typically triggered from the NervesHub web console or via the management API.
+
+***
+
+### `phx_err`
+
+The Phoenix channel encountered an error, such as a duplicate join attempt or an unexpected channel crash. The server pushes this event before the channel is terminated.
+
+```json
+{ "reason": "duplicate_join" }
+```
+
+**Payload fields:**
+
+| Field    | Type   | Description                                       |
+| -------- | ------ | ------------------------------------------------- |
+| `reason` | string | Human-readable description of the error condition |
+
+When your client receives `phx_err`, tear down the current channel state and reconnect with exponential backoff.
+
+***
+
+### `phx_close`
+
+The Phoenix channel was gracefully closed by the server. The payload is an empty object.
+
+```json
+{}
+```
+
+This event signals a clean server-initiated shutdown of the channel — for example, during a planned server maintenance window. Reconnect using your standard backoff strategy after receiving this event.
+
+***
+
+## Device → Server Events
+
+These events are sent from the device to the NervesHub server. Send them in response to server events or to report ongoing status.
+
+### `rebooting`
+
+The device notifies the server that it is about to reboot. Send this event after receiving a `reboot` command from the server, before initiating the system reboot.
+
+```json
+{}
+```
+
+NervesHub uses this signal to update device status in the management console and to correctly attribute the upcoming disconnection to an intentional reboot rather than a fault.
+
+***
+
+### `fwup_progress`
+
+The device reports its current firmware update download and write progress. Send this event periodically during a firmware update so the server and management console can display real-time progress.
+
+```json
+{ "value": 45 }
+```
+
+**Payload fields:**
+
+| Field   | Type    | Description                              |
+| ------- | ------- | ---------------------------------------- |
+| `value` | integer | Progress percentage, `0`–`100` inclusive |
+
+<Tip>
+  Report progress at a reasonable cadence — every 5–10 percentage points is sufficient. Sending a progress event on every fwup callback at high frequency can create unnecessary channel traffic on large fleets.
+</Tip>
+
+***
+
+### `status_update`
+
+The device reports its current operational status. Send this event when the device's state changes — for example, when a firmware update fails or is deferred.
+
+```json
+{ "status": "idle" }
+```
+
+**Payload fields:**
+
+| Field    | Type   | Description                           |
+| -------- | ------ | ------------------------------------- |
+| `status` | string | One of the status values listed below |
+
+**Accepted `status` values:**
+
+| Value                | Meaning                                                        |
+| -------------------- | -------------------------------------------------------------- |
+| `idle`               | Device is connected, healthy, and waiting for instructions     |
+| `fwup_error`         | The `fwup` tool encountered an error during the update process |
+| `update_failed`      | The firmware update could not be applied                       |
+| `update_rescheduled` | The device deferred the update and will retry later            |
+| `unknown`            | The device cannot determine its current status                 |
+
+***
+
+## Channel Lifecycle Summary
+
+The sequence of events for a typical firmware update flow looks like this:
+
+<Steps>
+  <Step title="Device connects and joins the channel">
+    The device establishes a WebSocket connection and sends `phx_join` with `device_api_version`.
+  </Step>
+
+  <Step title="Server pushes an update event">
+    NervesHub sends an `update` event with `firmware_url` and `firmware_meta`.
+  </Step>
+
+  <Step title="Device downloads and applies the firmware">
+    The device streams progress via `fwup_progress` events (value 0 → 100).
+  </Step>
+
+  <Step title="Device signals reboot">
+    On successful application, the device sends a `rebooting` event, then reboots.
+  </Step>
+
+  <Step title="Device reconnects on new firmware">
+    After rebooting into the new firmware version, the device reconnects and rejoins the channel. NervesHub records the updated firmware version.
+  </Step>
+</Steps>
+
+If the update fails at any point, the device sends a `status_update` event with `status: "fwup_error"` or `status: "update_failed"` so NervesHub can record the failure. Repeated failures put the device in the **penalty box**, and once a group's fleet-wide failure threshold is crossed the group is flagged unhealthy.

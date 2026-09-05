@@ -1,0 +1,81 @@
+---
+title: "Create and Manage NervesHub Products for Your Fleet"
+sidebarTitle: "Products"
+description: "How to create products, organize devices and firmware into logical groups, and manage product settings including signing keys, extensions, and shared secrets."
+---
+
+Products are the top-level organizational unit in NervesHub. Every device, firmware binary, and deployment group belongs to exactly one product. Grouping related devices into a product lets you manage firmware rollouts, signing keys, and shared secret credentials independently for each product line. For example, you might have separate products for a gateway device and a sensor node even when both are managed by the same organization.
+
+## Creating a Product
+
+You can create a product from the NervesCloud web UI or with the `nh` CLI.
+
+**NervesCloud UI:**
+
+1. Sign in at [manage.nervescloud.com](https://manage.nervescloud.com).
+2. Select your organization from the top navigation.
+3. Click **Products** in the left sidebar, then click **New Product**.
+4. Enter a product name and click **Create**.
+
+**CLI:**
+
+```bash
+nh product create my-product
+```
+
+List all products in your organization or inspect a specific one:
+
+```bash
+nh product list
+nh product show my-product
+```
+
+## Setting the Default Product
+
+Most `nh` subcommands accept `--product` to specify which product to operate on. Setting the `NERVES_HUB_PRODUCT` environment variable saves you from typing it repeatedly:
+
+```bash
+export NERVES_HUB_PRODUCT=my-product
+```
+
+You can also export `NERVES_HUB_ORG` to avoid passing `--org` on every command:
+
+```bash
+export NERVES_HUB_ORG=my-org
+```
+
+Add both exports to your shell profile or CI/CD environment to make all `nh` commands use the correct context automatically.
+
+## Product Settings
+
+Navigate to **Products → my-product → Settings** in the NervesCloud UI to manage:
+
+* **Firmware Signing Keys** — public keys used to verify firmware signatures before a device applies an update. Add as many keys as needed to support key rotation. Devices reject firmware that is not signed by a trusted key.
+* **Shared Secret Credentials** — the `product_key` and `product_secret` pair used by devices configured with Shared Secret authentication. These values are shown once when generated; copy them into your firmware configuration or CI/CD secrets store.
+* **Extensions** — the optional device capabilities this product may use. Each one is off by default and must be enabled here before devices will send or accept its messages.
+
+### Extensions
+
+| Extension          | What it provides                                                           |
+| ------------------ | ---------------------------------------------------------------------------- |
+| `health`           | Device health reports, including alarms                                     |
+| `metrics`          | Time-series metric values, including your application's custom metrics      |
+| `geo`              | Device location, resolved by the configured location source                 |
+| `logging`          | Log lines shipped from the device and stored for later querying             |
+| `local_shell`      | An interactive system shell on the device, separate from the IEx console    |
+| `network_identity` | Network identity keys used to place a device on the organization's network  |
+| `error_reports`    | Structured crash and error reports raised by the device                     |
+
+<Note>
+  You can register multiple signing keys per product. This allows you to rotate keys without invalidating firmware already on devices — keep the old key active until all devices have migrated to firmware signed with the new key, then remove the old key.
+</Note>
+
+## Deleting a Product
+
+```bash
+nh product delete my-product
+```
+
+<Warning>
+  Deleting a product is **permanent and irreversible**. All devices, firmware binaries, deployment groups, and certificates associated with the product are removed immediately. There is no soft-delete or recovery path. Confirm you have decommissioned all associated devices and archived any firmware you need before running this command.
+</Warning>

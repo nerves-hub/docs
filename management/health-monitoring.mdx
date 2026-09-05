@@ -1,0 +1,129 @@
+---
+title: "NervesHub Health Monitoring: Metrics, Alarms, and Logs"
+sidebarTitle: "Health Monitoring"
+description: "Collect device health metrics, display CPU/memory/load charts, fire alarms on thresholds, and stream live logs from your NervesHub fleet."
+---
+
+NervesHub collects health metrics from your devices and surfaces them in the web UI and API so you can monitor fleet health at a glance. Rather than building your own telemetry pipeline, you get CPU usage, memory consumption, load averages, and application-specific metrics flowing into NervesHub automatically — alongside alarms that fire when something goes wrong.
+
+## Extensions
+
+Health data does not arrive on its own — it is delivered by **extensions**, optional capabilities a device negotiates with NervesHub when it connects. Each one is enabled per product, and a device only sends data for the extensions its product has turned on and its client library supports.
+
+| Extension          | What it provides                                                           |
+| ------------------ | ---------------------------------------------------------------------------- |
+| `health`           | Device health reports — the alarms described on this page                   |
+| `metrics`          | Time-series metric values, including your application's custom metrics      |
+| `geo`              | Device location, resolved by the configured location source                 |
+| `logging`          | Log lines shipped from the device and stored for later querying             |
+| `local_shell`      | An interactive system shell on the device, separate from the IEx console    |
+| `network_identity` | Network identity keys used to place a device on the organization's network  |
+| `error_reports`    | Structured crash and error reports raised by the device                     |
+
+Enable the ones you need under **Settings → Extensions** on the product, then confirm they are also enabled on the device itself — the device page shows which extensions the device actually negotiated.
+
+<Note>
+  Extensions are version-negotiated. A device advertises which versions of each extension it supports when it connects, and NervesHub picks a compatible one. An older client that does not know about an extension simply never receives its messages.
+</Note>
+
+## Built-in Metrics
+
+NervesHubLink reports the following system metrics automatically when the device is connected:
+
+* **CPU usage** — percentage of CPU time spent in user and kernel space, sampled periodically
+* **Memory usage** — total, used, and free memory in bytes, plus swap if present
+* **System load averages** — 1-minute, 5-minute, and 15-minute load averages, matching the output of `uptime` on Linux
+
+These metrics appear as time-series charts on the Device Detail page in NervesCloud. You can zoom into any time range to correlate a spike with a rollout or an alarm.
+
+## Custom Metrics
+
+Beyond the built-in system metrics, your application can report its own metrics through NervesHubLink. This lets you track application-specific values — such as the number of active connections, sensor readings, queue depths, or any other runtime measurement your firmware produces.
+
+Custom metrics appear alongside the built-in metrics on the Device Detail page and are available through the NervesHub API, so you can pull them into external dashboards or alerting systems using the same interface.
+
+## Alarms
+
+NervesHub fires alarms when metric values exceed configured thresholds. Alarms can be configured at the product level (applying to all devices) or overridden at the individual device level.
+
+When an alarm fires:
+
+* It appears on the Device Detail page under the **Alarms** section
+* It increments the alarm count shown on the Fleet Dashboard
+* It is recorded with a timestamp in the device's alarm history, so you can see when it started and when it cleared
+
+Alarm history lets you reconstruct what happened on a device during an incident even after the condition has resolved.
+
+## Viewing Health in the UI
+
+Open any device in the [NervesCloud UI](https://manage.nervescloud.com) and navigate to the **Health** tab on the Device Detail page. There you'll find:
+
+* Live charts for each metric, updating as new data arrives from the device
+* Historical charts letting you scroll back through past metric values
+* The current alarm state and a full alarm history with timestamps
+
+The Fleet Dashboard also shows an aggregate view of alarm counts across all devices in your product, so you can spot a widespread issue — such as a memory leak in a new firmware version — before it affects your entire fleet.
+
+## Device Logs
+
+NervesHub can stream and store logs from your devices, giving you visibility into what the device was doing at any point in time. Use the `nh` CLI to access logs directly from the terminal.
+
+<Note>
+  Logs require the `logging` extension to be enabled on the product and supported by the device's client library.
+</Note>
+
+Fetch recent logs from a device:
+
+```bash
+nh device logs my-device-001
+```
+
+Stream logs live as they arrive (follow mode):
+
+```bash
+nh device logs my-device-001 --follow
+```
+
+Filter to error-level logs from the past hour:
+
+```bash
+nh device logs my-device-001 --level error --since 1h
+```
+
+### Log Flags
+
+Use the following flags to narrow the log output to exactly what you need:
+
+<ParamField query="--level" type="string">
+  Filter by log level. Accepted values are `debug`, `info`, `warning`, and `error`. Only log entries at or above the specified level are returned.
+</ParamField>
+
+<ParamField query="--search" type="string">
+  Full-text search within log message content. Returns only entries whose message body contains the search string.
+</ParamField>
+
+<ParamField query="--since" type="string">
+  Return logs from this time onward. Accepts relative durations like `30m`, `2h`, `1d`, or absolute timestamps in RFC 3339 format.
+</ParamField>
+
+<ParamField query="--before" type="string">
+  Return logs up to this point in time. Accepts the same format as `--since`. Use together with `--since` to define a fixed time window.
+</ParamField>
+
+<ParamField query="--limit" type="integer">
+  Maximum number of log entries to return. Useful when you want a quick sample without paging through the full history.
+</ParamField>
+
+<ParamField query="-f / --follow" type="boolean">
+  Stream logs in real time as the device emits them, similar to `tail -f`. Press `Ctrl+C` to stop streaming.
+</ParamField>
+
+<Tip>
+  Use `--output json` with `nh device logs` to get structured log output suitable for feeding into a log aggregation pipeline:
+
+  ```bash
+  nh device logs my-device-001 --level error --since 24h --output json
+  ```
+
+  You can pipe this into tools like `jq`, forward it to a log collector, or store it alongside incident reports for post-mortem analysis.
+</Tip>

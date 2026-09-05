@@ -1,0 +1,240 @@
+---
+title: "nh CLI Command Reference: All Subcommands Documented"
+sidebarTitle: "Command Reference"
+description: "Full reference for every nh CLI subcommand: user, org, product, device, firmware, deployment, key, ca, script, config, and migrate commands with flags."
+---
+
+The `nh` CLI provides a subcommand for every NervesHub resource — organizations, products, devices, firmware, deployment groups, signing keys, CA certificates, and more. Every command and subcommand accepts `--help` to print detailed usage, available flags, and examples directly in your terminal.
+
+## User Commands
+
+Manage your NervesHub identity and session.
+
+```bash
+nh user auth          # Log in and store a session token
+nh user login         # Browser-based login
+nh user logout        # Log out and clear stored credentials
+nh user whoami        # Show the currently authenticated user
+```
+
+## Organization Commands
+
+List, inspect, and manage members of your NervesHub organizations.
+
+```bash
+nh org list                           # List all organizations you belong to
+nh org show [name]                    # Show details for an organization
+nh org members [name]                 # List all members of an organization
+nh org member <email>                 # Show details for a single member
+nh org invite <email> <role>          # Invite a user to the organization
+nh org set-role <email> <role>        # Change a member's role
+nh org remove-member <email>          # Remove a member from the organization
+```
+
+Organization roles (in decreasing order of permissions): `admin`, `manage`, `view`.
+
+| Role     | Grants                                                                                                                                               |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `admin`  | Everything `manage` can do, plus organization settings, inviting and removing members, and managing certificate authorities                           |
+| `manage` | Create, modify, and delete products, devices, firmware, deployment groups, signing keys, and support scripts; reboot, reconnect, and console a device |
+| `view`   | Read-only access to the organization's resources, plus permission to run existing support scripts                                                    |
+
+<Note>
+  Inviting members and changing roles requires the `admin` role.
+</Note>
+
+## Product Commands
+
+Create and manage products within your organization. A product groups a fleet of devices that share the same firmware lineage.
+
+```bash
+nh product list           # List all products in the current org
+nh product show <name>    # Show details for a product
+nh product create <name>  # Create a new product
+nh product delete <name>  # Delete a product
+```
+
+## Device Commands
+
+Manage individual devices, trigger remote actions, access consoles, and view logs.
+
+```bash
+nh device list                                  # List all devices in the current product
+nh device show <identifier>                     # Show details for a device
+nh device create <identifier>                   # Register a new device
+nh device update <identifier>                   # Update device metadata
+nh device delete <identifier>                   # Remove a device
+nh device upgrade <identifier> <firmware-uuid>  # Push a specific firmware version to a device
+nh device move <identifier>                     # Move a device to a different product
+nh device reboot <identifier>                   # Send a reboot command
+nh device reconnect <identifier>                # Force the device to reconnect to NervesHub
+nh device clear-penalty <identifier>            # Clear a device's update failure penalty
+```
+
+### Remote Access
+
+```bash
+nh device console <identifier>           # Open a remote IEx console session
+nh device shell <identifier>             # Open a remote shell session
+nh device iroh-console <identifier>      # Open a console via Iroh P2P (no server relay)
+```
+
+### Logs
+
+```bash
+nh device logs <identifier> [flags]
+```
+
+| Flag       | Description                                           |
+| ---------- | ----------------------------------------------------- |
+| `--level`  | Filter by log level (e.g. `error`, `warning`, `info`) |
+| `--search` | Full-text search within log messages                  |
+| `--since`  | Show logs after this timestamp                        |
+| `--before` | Show logs before this timestamp                       |
+| `--limit`  | Maximum number of log lines to return                 |
+| `-f`       | Follow (stream) logs in real time                     |
+
+### Remote Code Execution
+
+```bash
+nh device run-code <identifier> <code>        # Evaluate an Elixir expression on the device
+nh device scripts <identifier>                # List saved scripts available for this device
+nh device run-script <identifier> <name-or-id>  # Execute a saved script on the device
+```
+
+### Network Identities and Certificates
+
+```bash
+nh device network-identities <identifier>          # List network identities for a device
+nh device certificates list <identifier>           # List device certificates
+nh device certificates show <identifier> <serial>  # Show a specific certificate
+nh device certificates delete <identifier> <serial># Delete a certificate
+nh device certificates generate <identifier>       # Generate a new device certificate
+nh device certificates upload <identifier>         # Upload an existing certificate
+```
+
+## Firmware Commands
+
+Upload, inspect, download, and delete firmware artifacts. Firmware files use the fwup `.fw` format, signed with Ed25519 keys.
+
+```bash
+nh firmware list                # List all firmware for the current product
+nh firmware show <uuid>         # Show details and metadata for a firmware artifact
+nh firmware download <uuid>     # Download a firmware file by UUID
+nh firmware delete <uuid>       # Delete a firmware artifact
+```
+
+### Upload Firmware
+
+```bash
+nh firmware upload [path]
+```
+
+`upload` is also available as `nh firmware publish`. Key flags:
+
+| Flag                         | Description                                                                        |
+| ---------------------------- | ---------------------------------------------------------------------------------- |
+| `--deploy <deployment-name>` | Create a release on an existing deployment group immediately after upload          |
+| `--key <key-name>`           | Name of the signing key to use when signing the firmware                           |
+| `--skip-signing`             | Upload firmware that is already signed; skip the signing step                      |
+
+<Note>
+  If no `path` is provided, `nh firmware upload` looks for a `.fw` file in the current directory. When `--key` is omitted, the key configured in your CLI settings or `NERVES_HUB_FW_PRIVATE_KEY` is used.
+</Note>
+
+## Deployment Group Commands
+
+Deployment groups target a subset of devices (by tag and version condition) and control how firmware rolls out, including concurrency limits and failure thresholds. The CLI still spells the command `deployment`.
+
+```bash
+nh deployment list              # List all deployment groups for the current product
+nh deployment show <name>       # Show group configuration and status
+nh deployment create <name>     # Create a new deployment group
+nh deployment update <name>     # Update group settings (tags, version, limits, state)
+nh deployment delete <name>     # Delete a deployment group
+```
+
+## Signing Key Commands
+
+Ed25519 firmware signing keys are managed per-organization. A public key is stored in NervesHub; the private key never leaves your machine.
+
+```bash
+nh key list           # List all signing keys for the current org
+nh key show <name>    # Show details for a signing key
+nh key create <name>  # Generate and register a new Ed25519 signing key pair
+nh key delete <name>  # Remove a signing key from the org
+```
+
+## CA Certificate Commands
+
+CA certificates are used to bootstrap device identity through mutual TLS (mTLS). Devices that present a certificate signed by a registered CA are automatically authenticated.
+
+```bash
+nh ca generate             # Generate a new CA certificate and private key
+nh ca upload [name]        # Upload an existing CA certificate to the current org
+nh ca list                 # List all CA certificates registered with the org
+nh ca show <serial>        # Show details for a CA certificate by serial number
+nh ca delete <serial>      # Remove a CA certificate
+```
+
+<Note>
+  CA certificate commands require the `admin` role.
+</Note>
+
+## Iroh P2P Endpoint Commands
+
+Iroh endpoints enable direct peer-to-peer device connections without routing traffic through the NervesHub server — useful for low-latency console access or large file transfers.
+
+```bash
+nh iroh-endpoint list                    # List all registered Iroh endpoints
+nh iroh-endpoint register <identifier>  # Register a device as an Iroh endpoint
+nh iroh-endpoint show <identifier>      # Show Iroh endpoint details for a device
+nh iroh-endpoint delete <identifier>    # Remove an Iroh endpoint registration
+```
+
+## Script Commands
+
+Scripts are reusable Elixir code snippets stored in NervesHub that can be executed on devices remotely.
+
+```bash
+nh script list              # List all saved scripts for the current product
+nh script show <id>         # Show a script's content and metadata
+nh script create            # Create a new script (opens an editor)
+nh script update <id>       # Update an existing script
+nh script delete <id>       # Delete a script
+```
+
+<Note>
+  Creating, updating, and deleting scripts requires `manage`. Running an existing script only requires `view`.
+</Note>
+
+## Config Commands
+
+Read and write the `nh` CLI configuration, and manage named profiles for switching between environments.
+
+```bash
+nh config get                     # Print the full current configuration
+nh config set <key> <value>       # Set a configuration value
+nh config unset <key>             # Remove a configuration value (revert to default)
+nh config save <profile>          # Save current config to a named profile
+nh config load <profile>          # Load a previously saved profile
+nh config profiles                # List all saved profiles
+```
+
+## Migration
+
+```bash
+nh migrate    # Import credentials and settings from the legacy Elixir mix CLI
+```
+
+Run `nh migrate` once after installing `nh` if you previously used `mix nerves_hub.*` tasks. The command reads your existing Mix CLI configuration and imports it into the `nh` config format without removing the original files.
+
+***
+
+<Tip>
+  Run `nh <command> --help` or `nh <command> <subcommand> --help` at any time to see full flag documentation, argument descriptions, and usage examples for that specific subcommand.
+</Tip>
+
+<Note>
+  Every `nh` command supports `--output json` (or `-o json`) for machine-readable output. Use this flag when integrating `nh` into scripts, CI pipelines, or tooling that needs to parse the response programmatically.
+</Note>

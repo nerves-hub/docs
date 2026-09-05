@@ -1,0 +1,109 @@
+---
+title: "Remote IEx Console and Shell Access via NervesHub CLI"
+sidebarTitle: "Remote Console"
+description: "Connect to any online device for live debugging with IEx, a system shell, or one-off code execution — no SSH keys or inbound firewall rules required."
+---
+
+NervesHub lets you open a live IEx (Elixir REPL) or system shell session on any connected device directly from the browser or CLI — without physical access, without SSH keys, and without exposing your devices to the public internet. This makes it possible to debug a misbehaving device in the field, inspect runtime state, or run a one-off command on a remote device the same way you would on a device sitting on your desk.
+
+<Note>
+  Remote console requires `remote_iex: true` in your device firmware configuration. If you publish firmware without this setting, the console option will not be available for devices running that build.
+</Note>
+
+## Enable Remote IEx
+
+Add the following to your firmware's target config to enable the remote console feature in NervesHubLink:
+
+```elixir
+# config/target.exs
+config :nerves_hub_link,
+  remote_iex: true
+```
+
+Rebuild and ship your firmware after adding this setting. Devices running firmware without this flag will not accept console connections.
+
+## From the CLI
+
+### Open an IEx Console
+
+Connect to a live IEx REPL on a device using the `nh` CLI. The device must be online and running firmware with `remote_iex: true`.
+
+```bash
+nh device console my-device-001
+```
+
+This drops you into an interactive Elixir session on the remote device. You can call any function available in the device's runtime environment, inspect process state, and evaluate arbitrary Elixir expressions — exactly as if you had connected via `iex --name` locally.
+
+### Open a System Shell
+
+If you need access to the underlying Linux shell rather than the Elixir REPL:
+
+```bash
+nh device shell my-device-001
+```
+
+The shell session gives you access to the device's filesystem, running processes, and system tools available in the Nerves system image.
+
+<Note>
+  The system shell is delivered by the `local_shell` extension. Enable it on the product under **Settings → Extensions** before using it — the IEx console does not require it.
+</Note>
+
+### Run Code Without a Full Session
+
+For quick one-off evaluations where you don't need an interactive session, use `run-code` to send a single Elixir expression and get the result:
+
+```bash
+nh device run-code my-device-001 "System.version()"
+```
+
+This is useful for scripted checks — for example, querying the current firmware version or reading a configuration value across many devices without opening a full console session for each.
+
+## From the NervesCloud UI
+
+If you prefer a browser-based workflow, every device's Detail page in [NervesCloud](https://manage.nervescloud.com) includes a **Console** tab. Click it to open an in-browser IEx terminal connected directly to that device. The browser console behaves identically to the CLI console — the same Phoenix Channel backs both.
+
+No additional configuration is needed beyond enabling `remote_iex: true` in your firmware.
+
+## P2P Console via Iroh
+
+Devices behind strict NAT or firewalls that block outbound connections to NervesHub can still accept console connections using the Iroh peer-to-peer transport. Iroh establishes a direct encrypted tunnel between your machine and the device without requiring inbound firewall rules.
+
+First, register the device as an Iroh endpoint:
+
+```bash
+nh iroh-endpoint register my-device-001
+```
+
+Then open a console through the P2P tunnel:
+
+```bash
+nh device iroh-console my-device-001
+```
+
+The Iroh console provides the same IEx experience as the standard console — it simply uses a different transport layer to reach the device.
+
+## Support Scripts
+
+NervesHub supports reusable Elixir scripts that you can save to your organization and run on any device. This is useful for common support tasks like checking memory fragmentation, reading sensor state, or inspecting supervision tree health.
+
+List your saved scripts:
+
+```bash
+nh script list
+```
+
+Run a saved script on a device:
+
+```bash
+nh device run-script my-device-001 check-memory
+```
+
+Scripts run in the device's IEx context and return their output to the CLI, making it easy to run the same diagnostic across multiple devices or automate support workflows.
+
+<Note>
+  Creating, editing, and deleting support scripts requires the `manage` role. **Running** an existing script only requires `view`, so you can let a wider group execute vetted diagnostics without granting them the ability to change what those scripts do.
+</Note>
+
+<Warning>
+  The remote console grants full access to the device's Elixir runtime. Anyone with console access can read secrets from the application environment, modify running state, and call any function in the system. Console access requires the `manage` role — audit who holds it in production organizations.
+</Warning>

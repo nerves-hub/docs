@@ -1,0 +1,144 @@
+{
+  "projectType": "saas",
+  "projectName": "NervesHub",
+  "projectDescription": "NervesHub is an open-source firmware update and device management platform for Nerves-based IoT devices, offering secure OTA updates, remote console access, fleet monitoring, and a managed cloud offering via NervesCloud.",
+  "theme": "aspen",
+  "primaryColor": "#ef7025",
+  "lightColor": "#eec9bc",
+  "darkColor": "#4fa1ab",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "architecture"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/terminology",
+              "concepts/pki",
+              "concepts/firmware-signing",
+              "concepts/deployments"
+            ]
+          },
+          {
+            "group": "Setup",
+            "pages": [
+              "setup/add-to-project",
+              "setup/connecting",
+              "setup/products",
+              "setup/devices",
+              "setup/firmware",
+              "setup/deployments"
+            ]
+          },
+          {
+            "group": "Device Authentication",
+            "pages": [
+              "auth/shared-secret",
+              "auth/device-certificates",
+              "auth/nerveskey"
+            ]
+          },
+          {
+            "group": "Device Management",
+            "pages": [
+              "management/fleet-overview",
+              "management/remote-console",
+              "management/health-monitoring",
+              "management/delta-updates"
+            ]
+          },
+          {
+            "group": "CLI",
+            "pages": [
+              "cli/installation",
+              "cli/configuration",
+              "cli/reference"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "HTTP API",
+            "pages": [
+              "api/overview",
+              "api/authentication",
+              "api/devices",
+              "api/firmware",
+              "api/deployments",
+              "api/organizations"
+            ]
+          },
+          {
+            "group": "Device WebSocket",
+            "pages": [
+              "api/websocket-overview",
+              "api/websocket-events"
+            ]
+          },
+          {
+            "group": "NervesHubLink",
+            "pages": [
+              "api/nerveshublink-config",
+              "api/nerveshublink-client"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Signed over-the-air (OTA) firmware updates with Ed25519 cryptographic signatures",
+    "Delta firmware updates — ship only binary diffs (up to 95% size reduction)",
+    "Remote IEx console and shell access to any connected device",
+    "Deployment groups — target devices by tag and version condition with staged rollouts",
+    "Device health monitoring — CPU, memory, load, alarms, and custom metrics",
+    "Mutual TLS (mTLS) device authentication with X.509 certificates",
+    "NervesKey hardware security module support (ATECC508A/608A)",
+    "Shared Secret authentication for easy development onboarding",
+    "OpenAPI-documented HTTP REST API",
+    "Self-hosted or fully managed (NervesCloud) deployment options",
+    "Scales to 400,000+ devices per instance",
+    "nh CLI with Homebrew install, CI/CD-friendly environment variables"
+  ],
+  "publicApiSurface": [
+    "GET /users/me",
+    "GET /orgs/{org}/keys",
+    "POST /orgs/{org}/keys",
+    "GET /orgs/{org_name}/products",
+    "POST /orgs/{org_name}/products",
+    "PUT /orgs/{org_name}/products/{product_name}",
+    "DELETE /orgs/{org_name}/products/{product_name}",
+    "GET /devices/{id}",
+    "GET /orgs/{org_name}/products/{product_name}/deployments",
+    "POST /orgs/{org_name}/products/{product_name}/deployments",
+    "PUT /orgs/{org_name}/products/{product_name}/deployments/{name}",
+    "CRUD /orgs/{org_name}/products/{product_name}/firmwares",
+    "CRUD /orgs/{org_name}/products/{product_name}/devices/{id}/certificates",
+    "CRUD /orgs/{org_name}/ca_certificates",
+    "WSS wss://{host}/socket/websocket — Phoenix Channels device topic",
+    "WSS event: update (firmware_url, firmware_meta)",
+    "WSS event: reboot",
+    "WSS event: fwup_progress",
+    "WSS event: status_update",
+    "NervesHubLink.Client behaviour — update_available/1 callback",
+    "nh user auth / login / whoami",
+    "nh device list / show / create / update / delete / reboot / console / logs",
+    "nh firmware upload / sign / list / show / download",
+    "nh deployment create / update / list / show",
+    "nh key create / list / show / delete",
+    "nh ca generate / upload / list / delete",
+    "nh config set / get / unset"
+  ]
+}

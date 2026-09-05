@@ -1,0 +1,245 @@
+---
+title: "Custom Firmware Update Logic with NervesHubLink.Client"
+sidebarTitle: "Client Behaviour"
+description: "How to implement the NervesHubLink.Client behaviour to customize firmware update acceptance, scheduling, and device-side logic for your Nerves application."
+---
+
+The `NervesHubLink.Client` behaviour lets your Nerves application control how firmware updates are handled — you can apply updates immediately, defer them to a maintenance window, or make the decision based on your device's current runtime state. By default, `nerves_hub_link` applies all available updates immediately; implementing this behaviour gives you full control over that decision.
+
+## Implementing the Behaviour
+
+Create a module in your application that declares `@behaviour NervesHubLink.Client` and implements the `update_available/1` callback:
+
+```elixir
+defmodule MyApp.NervesHubLinkClient do
+  @behaviour NervesHubLink.Client
+
+  @impl NervesHubLink.Client
+  def update_available(data) do
+    if safe_to_update?() do
+      :apply
+    else
+      {:reschedule, 60_000}  # Retry in 60 seconds
+    end
+  end
+
+  defp safe_to_update? do
+    # Your custom logic here
+    # e.g., check if device is idle, not in a critical operation
+    true
+  end
+end
+```
+
+Once your module is defined, register it in your application config:
+
+```elixir
+# config/target.exs
+config :nerves_hub_link,
+  client: MyApp.NervesHubLinkClient
+```
+
+## The `update_available/1` Callback
+
+`update_available/1` is called each time the NervesHub server pushes an `update` event to your device. It receives a map of firmware metadata and must return one of three values.
+
+### Return Values
+
+| Value                       | Effect                                                       |
+| --------------------------- | ------------------------------------------------------------ |
+| `:apply`                    | Apply the firmware update immediately                        |
+| `:ignore`                   | Reject the update; the device will not update                |
+| `{:reschedule, timeout_ms}` | Defer the decision and retry after `timeout_ms` milliseconds |
+
+<Warning>
+  Returning `:ignore` permanently suppresses the update until the deployment group's configuration changes or you manually trigger an update by calling `NervesHubLink.update()`. Use `:ignore` only when you are certain the update should never be applied in the current device context — for example, if the firmware is incompatible with this hardware variant.
+</Warning>
+
+<Tip>
+  In most cases where you want to delay an update, prefer `{:reschedule, timeout_ms}` over `:ignore`. Rescheduling guarantees that the device will eventually apply the update, preserving the reliability guarantees of your rollout.
+</Tip>
+
+### The `data` Parameter
+
+The `data` map passed to `update_available/1` mirrors the payload from the server's `update` WebSocket event:
+
+| Field                           | Type   | Description                                          |
+| ------------------------------- | ------ | ---------------------------------------------------- |
+| `firmware_url`                  | string | Signed URL to download the firmware (10-minute TTL)  |
+| `firmware_meta`                 | map    | Firmware metadata from the build                     |
+| `firmware_meta["uuid"]`         | string | Unique identifier for this firmware build            |
+| `firmware_meta["version"]`      | string | Firmware version string                              |
+| `firmware_meta["architecture"]` | string | Target CPU architecture (e.g., `"arm"`, `"aarch64"`) |
+| `firmware_meta["platform"]`     | string | Target board or platform (e.g., `"rpi4"`, `"bbb"`)   |
+| `firmware_meta["product"]`      | string | Product name from the Nerves project                 |
+| `firmware_meta["author"]`       | string | Author or builder of the firmware                    |
+| `firmware_meta["description"]`  | string | Human-readable description of the firmware release   |
+
+You can use the metadata to make fine-grained decisions — for example, only auto-apply patch versions while requiring explicit approval for major version bumps.
+
+## Examples
+
+<AccordionGroup>
+  <Accordion title="Defer updates to a nightly maintenance window">
+    Apply firmware updates only between 2am and 5am UTC to minimise disruption during business hours:
+
+    ```elixir
+    defmodule MyApp.NervesHubLinkClient do
+      @behaviour NervesHubLink.Client
+
+      require Logger
+
+      @impl NervesHubLink.Client
+      def update_available(data) do
+        hour = DateTime.utc_now().hour
+
+        # Only update between 2am–5am UTC
+        if hour >= 2 and hour < 5 do
+          Logger.info("NervesHub: applying update to #{get_in(data, ["firmware_meta", "version"])}")
+          :apply
+        else
+          # Reschedule for 1 hour and check again
+          Logger.info("NervesHub: deferring update outside maintenance window, retrying in 1 hour")
+          {:reschedule, 60 * 60 * 1_000}
+        end
+      end
+    end
+    ```
+  </Accordion>
+
+  <Accordion title="Skip incompatible firmware versions">
+    Inspect the firmware metadata and reject updates that target a different hardware platform:
+
+    ```elixir
+    defmodule MyApp.NervesHubLinkClient do
+      @behaviour NervesHubLink.Client
+
+      require Logger
+
+      # The platform this firmware was compiled for
+      @expected_platform to_string(Mix.target())
+
+      @impl NervesHubLink.Client
+      def update_available(data) do
+        incoming_platform = get_in(data, ["firmware_meta", "platform"])
+
+        if incoming_platform == @expected_platform do
+          Logger.info("NervesHub: platform matches, applying update")
+          :apply
+        else
+          Logger.warning(
+            "NervesHub: ignoring update for platform #{incoming_platform}, expected #{@expected_platform}"
+          )
+          :ignore
+        end
+      end
+    end
+    ```
+
+    <Note>
+      A deployment group records the platform and architecture of the firmware it was created with and rejects mismatched releases server-side, so this check is a belt-and-braces guard rather than the primary defence.
+    </Note>
+  </Accordion>
+
+  <Accordion title="Defer when a critical operation is in progress">
+    Check your application state before applying an update. If the device is in the middle of a critical task, reschedule and retry shortly:
+
+    ```elixir
+    defmodule MyApp.NervesHubLinkClient do
+      @behaviour NervesHubLink.Client
+
+      require Logger
+
+      @impl NervesHubLink.Client
+      def update_available(data) do
+        version = get_in(data, ["firmware_meta", "version"])
+
+        cond do
+          MyApp.State.critical_operation_running?() ->
+            Logger.warning("NervesHub: critical operation in progress, rescheduling update to #{version}")
+            {:reschedule, 5 * 60 * 1_000}  # Retry in 5 minutes
+
+          MyApp.State.battery_level() < 20 ->
+            Logger.warning("NervesHub: battery too low for update, rescheduling")
+            {:reschedule, 15 * 60 * 1_000}  # Retry in 15 minutes
+
+          true ->
+            Logger.info("NervesHub: applying update to #{version}")
+            :apply
+        end
+      end
+    end
+    ```
+  </Accordion>
+
+  <Accordion title="Notify an external system before updating">
+    Send a notification to your backend or a local UI before the device applies an update:
+
+    ```elixir
+    defmodule MyApp.NervesHubLinkClient do
+      @behaviour NervesHubLink.Client
+
+      require Logger
+
+      @impl NervesHubLink.Client
+      def update_available(data) do
+        version = get_in(data, ["firmware_meta", "version"])
+        description = get_in(data, ["firmware_meta", "description"])
+
+        Logger.info("NervesHub: update available — version=#{version} description=#{description}")
+
+        # Notify your backend asynchronously so we don't block the callback
+        Task.start(fn ->
+          MyApp.Telemetry.report_update_started(version)
+        end)
+
+        :apply
+      end
+    end
+    ```
+  </Accordion>
+</AccordionGroup>
+
+<Warning>
+  Repeatedly failing to apply an update counts against the deployment group's device failure thresholds. A device that trips them is placed in the **penalty box** and stops receiving update notifications until the timeout expires — so prefer `{:reschedule, ms}` over letting an update attempt fail.
+</Warning>
+
+## Manually Triggering an Update
+
+If you returned `:ignore` for an update, or you want to trigger an update outside of the normal server-push flow, call `NervesHubLink.update/0` directly from your application:
+
+```elixir
+NervesHubLink.update()
+```
+
+This re-checks the device's deployment group for a pending update and invokes `update_available/1` on your client module again if one is found.
+
+## Logging Update Decisions
+
+<Note>
+  Log all meaningful update decisions — apply, ignore, and reschedule — at an appropriate log level. When investigating fleet issues, having a record of why a device deferred or rejected an update is invaluable for diagnosing version skew across large deployments.
+</Note>
+
+Use `Logger` metadata to make logs easier to correlate with device identity in your log aggregation system:
+
+```elixir
+@impl NervesHubLink.Client
+def update_available(data) do
+  version = get_in(data, ["firmware_meta", "version"])
+  uuid = get_in(data, ["firmware_meta", "uuid"])
+
+  Logger.metadata(firmware_version: version, firmware_uuid: uuid)
+  Logger.info("NervesHub: evaluating update")
+
+  decision = do_decide(data)
+  Logger.info("NervesHub: update decision=#{inspect(decision)}")
+
+  decision
+end
+```
+
+## Callback Summary
+
+| Callback             | Required | Description                                                                                         |
+| -------------------- | -------- | --------------------------------------------------------------------------------------------------- |
+| `update_available/1` | Yes      | Called when the server pushes a firmware update. Return `:apply`, `:ignore`, or `{:reschedule, ms}` |

@@ -1,0 +1,141 @@
+---
+title: "NervesHub System Architecture: Components and Flow"
+sidebarTitle: "Architecture"
+description: "Understand how NervesHub's server, device client, CLI, object storage, and security model fit together to manage firmware updates at scale."
+---
+
+NervesHub is composed of several distinct components that work together: a central server that coordinates updates and stores device state, an object store that holds firmware artifacts, a device-side Elixir library that maintains the persistent connection, a CLI for operator and CI workflows, and the **fwup** tool that packages and applies firmware on the device. Understanding how these pieces fit together helps you reason about security boundaries, failure modes, and where to look when something goes wrong.
+
+## Component Overview
+
+<CardGroup cols={2}>
+  <Card title="NervesHub Server" icon="server">
+    The core Phoenix/Elixir web application. It exposes the management UI, a REST API for automation, and a Phoenix Channels WebSocket endpoint that devices connect to. The server tracks device state, manages deployment groups, enforces their conditions (tags, version constraints, concurrency limits), and proxies remote console sessions.
+  </Card>
+
+  <Card title="Object Storage" icon="database">
+    Firmware `.fw` files are stored in S3-compatible object storage (AWS S3 on NervesCloud; any compatible store when self-hosting). The server holds only metadata — devices download firmware artifacts directly from object storage, keeping large binary transfers off the server and making the architecture highly scalable.
+  </Card>
+
+  <Card title="nerves_hub_link" icon="microchip">
+    The device-side Elixir library added to your Nerves project. It establishes and maintains a Phoenix WebSocket channel to the NervesHub server, handles update notifications, coordinates the firmware download and fwup application, reports health metrics, and multiplexes remote console sessions — all over a single persistent connection.
+  </Card>
+
+  <Card title="CLI — nh" icon="terminal">
+    The `nh` binary used by engineers and CI systems to upload firmware, manage signing keys, create and activate deployment groups, and interact with devices. It communicates with the NervesHub REST API using a token obtained via `nh user auth`.
+  </Card>
+
+  <Card title="fwup" icon="wrench">
+    The firmware packaging and application tool. fwup creates ZIP-based `.fw` archives, signs them with Ed25519 keys at build time, and applies updates atomically on the device using a dual-partition A/B scheme. fwup runs on both the build host (packaging) and the device (application).
+  </Card>
+
+  <Card title="NervesKey (Optional)" icon="key">
+    An optional hardware security module based on the ATECC508A/608A secure element. NervesKey stores the device's private key in tamper-resistant hardware, so the private key material never exists in software. It integrates transparently with the mTLS handshake performed by `nerves_hub_link`.
+  </Card>
+</CardGroup>
+
+<Note>
+  fwup (`.fw`) is the production firmware path. NervesHub can also ingest ESP-IDF application images (`.bin`), AtomVM packbeam archives (`.avm`), and RAUC bundles (`.raucb`), but that support is **experimental** — ESP-IDF is gated behind a server setting, and the AtomVM and RAUC integrations currently cover the server side only.
+</Note>
+
+## How a Firmware Update Flows
+
+When a deployment group is activated, the following sequence occurs:
+
+1. The **NervesHub server** evaluates which connected devices match the group's tag and version conditions.
+2. Matching devices receive an update notification over their **Phoenix WebSocket channel**.
+3. `nerves_hub_link` on the device downloads the firmware `.fw` file directly from **object storage** using a pre-signed URL provided by the server.
+4. `nerves_hub_link` passes the downloaded file to **fwup**, which verifies the Ed25519 signature and atomically writes the new firmware to the inactive partition.
+5. The device reboots into the new partition. On successful boot, it reports back to the server, which marks the update as applied.
+
+<Info>
+  Delta updates follow the same flow but the server generates a binary diff between the current firmware on the device and the target firmware — **xdelta3** for fwup firmware. Only the diff is downloaded, dramatically reducing transfer size on constrained links.
+</Info>
+
+## Deployment Options
+
+<Tabs>
+  <Tab title="NervesCloud (Managed)">
+    NervesCloud is the fully managed NervesHub service operated at **manage.nervescloud.com**. Devices connect to **devices.nervescloud.com**.
+
+    With NervesCloud you get:
+
+    * No infrastructure to provision or maintain
+    * Managed PostgreSQL, object storage, and TLS termination
+    * Automatic upgrades to the latest NervesHub server version
+    * A free tier suitable for development and small deployments
+    * The same open-source server code — nothing proprietary runs on your devices
+
+    To use NervesCloud, set `host: "devices.nervescloud.com"` in your `nerves_hub_link` configuration and authenticate your devices with your NervesCloud credentials.
+
+    ```elixir
+    config :nerves_hub_link,
+      host: "devices.nervescloud.com",
+      remote_iex: true,
+      shared_secret: [
+        product_key: System.fetch_env!("NERVES_HUB_PRODUCT_KEY"),
+        product_secret: System.fetch_env!("NERVES_HUB_PRODUCT_SECRET")
+      ]
+    ```
+  </Tab>
+
+  <Tab title="Self-Hosted (Open Source)">
+    Self-hosting gives you full control over data residency, networking, and upgrade cadence. The NervesHub server is a standard Phoenix/Elixir application available at [github.com/nerves-hub/nerves\\_hub\\_web](https://github.com/nerves-hub/nerves_hub_web).
+
+    Self-hosted requirements:
+
+    * **Elixir / OTP** runtime environment
+    * **PostgreSQL** for device state and metadata
+    * **S3-compatible object storage** for firmware artifacts (AWS S3, MinIO, etc.)
+    * TLS termination with certificates your devices trust (for mTLS device certificate auth)
+    * A load balancer or proxy capable of passing through client TLS certificates if using device certificate authentication
+
+    Point your devices at your own server by setting the `host` configuration key to your NervesHub instance's hostname.
+
+    ```elixir
+    config :nerves_hub_link,
+      host: "nerveshub.example.com",
+      remote_iex: true
+    ```
+  </Tab>
+</Tabs>
+
+## Security Model
+
+NervesHub's security architecture is built around two independent guarantees: **connection authenticity** (only legitimate devices can connect) and **firmware integrity** (only signed firmware can be applied).
+
+### Connection Security — mTLS
+
+Devices connect to the NervesHub WebSocket endpoint over TLS. For device certificate and NervesKey authentication modes, **mutual TLS (mTLS)** is used: the device presents its X.509 client certificate during the TLS handshake, and the server validates it against a trusted CA certificate you register with NervesHub.
+
+<Note>
+  **Your private keys never leave your infrastructure.** NervesHub stores only the public CA certificate you register. Device private keys are generated and stored on the device itself (or in a NervesKey hardware element) and are never uploaded to the server.
+</Note>
+
+### Firmware Integrity — Ed25519 Signatures
+
+Every firmware file is signed with an Ed25519 key pair using **fwup** at build time. The signing private key lives on your build machine or in your CI secrets store. NervesHub stores and distributes the public key.
+
+When a device applies a firmware update, fwup verifies the Ed25519 signature against the registered public keys **before writing a single byte to flash**. A firmware image that fails verification is discarded and the update is aborted — the device continues running its current firmware safely.
+
+### Summary of Security Boundaries
+
+| Boundary                     | Mechanism                | Who Holds the Secret                        |
+| ---------------------------- | ------------------------ | ------------------------------------------- |
+| Device ↔ Server connection   | TLS / mTLS               | Device (private key on device or NervesKey) |
+| Device identity verification | X.509 certificate chain  | You (CA private key never shared)           |
+| Firmware authenticity        | Ed25519 signature (fwup) | You (signing key in build environment)      |
+| API access (CLI / CI)        | Bearer token             | Engineer / CI system                        |
+
+## Scale and Reliability
+
+NervesHub's architecture is proven at **400,000+ devices per instance**. Several design decisions contribute to this scale:
+
+* **Firmware is served from object storage**, not the NervesHub server, so large binary downloads don't consume server resources.
+* **Phoenix Channels** provide efficient, long-lived WebSocket connections with low per-connection overhead.
+* The server is a standard **horizontally scalable Elixir application** — add nodes to the cluster to increase connection capacity.
+* **Concurrency limits** on a deployment group allow you to roll out updates gradually, reducing the risk of overloading your backend with simultaneous device reboots.
+
+<Tip>
+  When self-hosting at scale, size your object storage and CDN capacity around firmware download volume, not around NervesHub server capacity. The server handles signalling; the heavy bandwidth is handled by your storage layer.
+</Tip>

@@ -1,0 +1,217 @@
+---
+title: "Get Started with NervesHub Using Shared Secret Auth"
+sidebarTitle: "Quickstart"
+description: "Go from a new Nerves project to your first over-the-air firmware update on NervesCloud in minutes using Shared Secret authentication."
+---
+
+This guide walks you through the fastest path to a working NervesHub setup: a new Nerves project connected to NervesCloud via Shared Secret authentication, culminating in your first live OTA firmware update. Shared Secret auth requires no certificate infrastructure, making it ideal for development and evaluation. You can migrate to X.509 device certificates later for production deployments.
+
+<Note>
+  NervesCloud offers a free tier that covers everything in this guide. Create your account at [manage.nervescloud.com](https://manage.nervescloud.com) — no credit card required to get started.
+</Note>
+
+<Steps>
+  <Step title="Create a Nerves Project">
+    If you don't already have a Nerves project, generate one now. Set your target to match the hardware you're using — this guide uses a Raspberry Pi 4.
+
+    ```bash
+    mix nerves.new my_project
+    cd my_project
+    export MIX_TARGET=rpi4
+    ```
+
+    If you're working with an existing project, just export the `MIX_TARGET` environment variable and continue from the next step.
+  </Step>
+
+  <Step title="Install the NervesHub CLI">
+    The `nh` CLI is the primary tool for uploading firmware and managing rollouts from your terminal or CI pipeline. Install it now so you can create a signing key before building your first firmware image.
+
+    <Tabs>
+      <Tab title="macOS (Homebrew)">
+        ```bash
+        brew install nerves-hub/tap/nh
+        ```
+      </Tab>
+
+      <Tab title="Linux / macOS (curl)">
+        ```bash
+        curl -sL https://nerves-hub.org/install/nh.sh | sh
+        ```
+      </Tab>
+    </Tabs>
+
+    After installing, authenticate with your NervesCloud account:
+
+    ```bash
+    nh user auth
+    ```
+
+    This opens a browser window to complete authentication and stores a token locally for subsequent CLI commands.
+  </Step>
+
+  <Step title="Create a Product on NervesCloud">
+    Sign up or log in at [manage.nervescloud.com](https://manage.nervescloud.com). Once inside your organization:
+
+    1. Navigate to **Products** and click **New Product**.
+    2. Give your product a name that matches your project (e.g. `my_project`).
+    3. Under **Authentication**, select **Shared Secret**.
+    4. Copy the **Product Key** and **Product Secret** — you'll need them in the next step.
+
+    Shared Secret authentication means any device that presents a valid key/secret pair can register itself with NervesCloud without a pre-provisioned certificate.
+  </Step>
+
+  <Step title="Create a Firmware Signing Key">
+    NervesHub requires firmware to be signed before it can be uploaded. Create an Ed25519 signing key pair with the CLI:
+
+    ```bash
+    nh key create my-key
+    ```
+
+    This generates a key pair and registers the **public key** with NervesCloud. The private key is stored locally and is never transmitted.
+
+    Next, retrieve the base64-encoded public key so you can embed it in your firmware image. Devices use this key to independently verify every OTA update before applying it:
+
+    ```bash
+    nh key list
+    ```
+
+    Copy the **Public Key** value shown for `my-key` — you'll add it to your project configuration in the next step.
+
+    <Warning>
+      Back up your signing key's private key material. If you lose it, you cannot sign future firmware updates with the same key, and you may need to provision a new key to your devices out-of-band.
+    </Warning>
+  </Step>
+
+  <Step title="Add nerves_hub_link to Your Project">
+    Open `mix.exs` and add `nerves_hub_link` to your dependencies:
+
+    ```elixir
+    # mix.exs
+    defp deps do
+      [
+        # ... your existing deps ...
+        {:nerves_hub_link, "~> 2.7", targets: @all_targets}
+      ]
+    end
+    ```
+
+    Then fetch the new dependency:
+
+    ```bash
+    mix deps.get
+    ```
+  </Step>
+
+  <Step title="Configure NervesHub in config/target.exs">
+    Add the NervesHub configuration to `config/target.exs`. This file is only compiled when building for a hardware target, so your NervesCloud credentials stay out of your host/test environment.
+
+    ```elixir
+    # config/target.exs
+    config :nerves_hub_link,
+      host: "devices.nervescloud.com",
+      remote_iex: true,
+      fwup_public_keys: ["YOUR_BASE64_PUBLIC_KEY"],
+      shared_secret: [
+        product_key: "YOUR_PRODUCT_KEY",
+        product_secret: "YOUR_PRODUCT_SECRET"
+      ]
+    ```
+
+    Replace `YOUR_BASE64_PUBLIC_KEY` with the public key value from `nh key list`, and replace `YOUR_PRODUCT_KEY` / `YOUR_PRODUCT_SECRET` with the values you copied from NervesCloud.
+
+    The `fwup_public_keys` list tells the device which signing keys to trust when verifying OTA firmware. A device will reject any firmware update whose signature does not match a key in this list.
+
+    <Tip>
+      Move the product key and secret to environment variables (e.g. `System.fetch_env!("NERVES_HUB_PRODUCT_KEY")`) before committing to version control so credentials are not stored in your repository.
+    </Tip>
+  </Step>
+
+  <Step title="Build and Burn the Initial Firmware">
+    Build the firmware image and write it to your SD card or storage device:
+
+    ```bash
+    mix firmware
+    mix burn
+    ```
+
+    `mix firmware` compiles your project and packages it as a signed `.fw` file using **fwup**. `mix burn` writes the image to your connected storage device. The public key you embedded in `fwup_public_keys` is now compiled into the device's firmware, enabling it to verify all future OTA updates.
+  </Step>
+
+  <Step title="Boot the Device and Verify It Appears Online">
+    Insert the SD card into your device and power it on. Once it has connected to your network, navigate to **Devices** inside your product on [manage.nervescloud.com](https://manage.nervescloud.com).
+
+    Within a few seconds of booting, your device should appear with a status of **Online**. The device automatically registers itself on first boot using the shared secret credentials. If it doesn't appear after a minute, check your network connection and confirm the host and credentials in `config/target.exs` are correct.
+  </Step>
+
+  <Step title="Build, Sign, and Upload Updated Firmware">
+    Make a visible change to your project (for example, update the `@version` field in `mix.exs` to `"0.2.0"`), then build and upload the firmware:
+
+    ```bash
+    mix firmware
+    nh firmware upload ./_build/rpi4_dev/nerves/images/my_project.fw --key my-key
+    ```
+
+    The `nh firmware upload` command signs the `.fw` file with `my-key`, uploads it to NervesCloud object storage, and registers it as a new firmware artifact. You'll receive a firmware **UUID** in the output — note it for the next step.
+
+    <Tip>
+      Use the `--deploy` flag to combine uploading and shipping in a single command — ideal for CI pipelines:
+
+      ```bash
+      nh firmware upload ./_build/rpi4_dev/nerves/images/my_project.fw \
+        --key my-key \
+        --deploy production \
+        --tag main
+      ```
+    </Tip>
+  </Step>
+
+  <Step title="Create and Activate a Deployment Group">
+    A **deployment group** tells NervesHub which devices should receive a firmware update and under what conditions. Create one targeting devices tagged `main`, then activate it:
+
+    ```bash
+    nh deployment create \
+      --name "production" \
+      --firmware <UUID> \
+      --tag "main"
+    
+    nh deployment update "production" state on
+    ```
+
+    Replace `<UUID>` with the firmware UUID from the previous step. The group will target all devices in the product that carry the `main` tag.
+
+    <Note>
+      The web console calls these **deployment groups**, while the `nh` CLI still uses the `deployment` command name. They are the same object.
+    </Note>
+  </Step>
+
+  <Step title="Watch Your Device Auto-Update">
+    With the group active, your online device will receive the update notification over its WebSocket connection to NervesCloud. It will:
+
+    1. Download the new firmware.
+    2. Verify the Ed25519 signature against the embedded public key.
+    3. Apply the update using **fwup**.
+    4. Reboot into the new firmware.
+
+    Monitor the update progress from the **Devices** view in NervesCloud — you'll see the device go offline briefly during the reboot and come back online running the new firmware version.
+  </Step>
+</Steps>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Device Certificates" icon="certificate" href="/auth/device-certificates">
+    Upgrade from Shared Secret to X.509 mTLS device certificates for production-grade security.
+  </Card>
+
+  <Card title="Delta Updates" icon="arrows-minimize" href="/management/delta-updates">
+    Reduce update bandwidth dramatically by sending only the binary diff between firmware versions.
+  </Card>
+
+  <Card title="Deployment Groups" icon="rocket" href="/concepts/deployments">
+    Learn how to configure concurrency limits, failure thresholds, and staged rollouts.
+  </Card>
+
+  <Card title="Remote Console" icon="terminal" href="/management/remote-console">
+    Access a live IEx session on any connected device directly from the NervesCloud UI.
+  </Card>
+</CardGroup>

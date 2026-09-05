@@ -1,0 +1,148 @@
+---
+title: "Authenticate with NervesKey Hardware Security Modules"
+sidebarTitle: "NervesKey"
+description: "Use NervesKey with ATECC508A/608A secure elements to store device private keys in hardware. Keys are generated on-chip and never leave the device."
+---
+
+NervesKey is a hardware security module (HSM) built on the Microchip ATECC508A or ATECC608A secure element. It generates and stores your device's private key directly on the chip — the key is never exported, never sits in RAM, and cannot be read back by software. This makes NervesKey the strongest authentication option available for NervesHub devices: even if an attacker gains full access to the device's filesystem or memory, the private key remains protected inside the tamper-resistant silicon.
+
+<Warning>
+  NervesKey chips ship **unprogrammed**. Some configuration slots can only be written **once** — locking them is irreversible. Read the provisioning documentation at [github.com/nerves-hub/nerves\\_key](https://github.com/nerves-hub/nerves_key) carefully before running any provisioning commands on production hardware.
+</Warning>
+
+## Hardware Options
+
+You have three ways to add a NervesKey to your device:
+
+<CardGroup cols={3}>
+  <Card title="Custom Board Integration" icon="microchip">
+    Attach an ATECC508A or ATECC608A chip directly to the I2C bus on your custom PCB. This is the standard path for production hardware designs.
+  </Card>
+
+  <Card title="NervesKey for Raspberry Pi" icon="raspberry-pi" href="https://www.tindie.com/products/troodonsw/nerveskey/">
+    A small add-on board available on Tindie that solders directly to the Raspberry Pi GPIO header. Ideal for prototyping and low-volume production on Raspberry Pi hardware.
+  </Card>
+
+  <Card title="USB NervesKey" icon="usb">
+    A USB-connected NervesKey for development machines or devices without an I2C bus. Contact the NervesHub team for availability.
+  </Card>
+</CardGroup>
+
+## Why Use NervesKey
+
+<Accordion title="Key never leaves the hardware">
+  The ATECC508A/608A generates its private key internally during provisioning. No code path — including your own — can retrieve the raw key bytes. Cryptographic operations (signing the TLS handshake) happen inside the chip; only the result leaves.
+</Accordion>
+
+<Accordion title="Individual device identity at scale">
+  Every chip gets a unique key and certificate. Revoking one compromised device has zero impact on the rest of your fleet. This is critical when managing tens of thousands of devices or more.
+</Accordion>
+
+<Accordion title="Tamper-resistant hardware">
+  The ATECC608A includes active tamper-detection circuitry. Physical attacks that attempt to probe the key are detected and the chip erases itself.
+</Accordion>
+
+## Add the Dependency
+
+Add `nerves_key` to your project's dependencies in `mix.exs`:
+
+```elixir
+# mix.exs
+def deps do
+  [
+    {:nerves_hub_link, "~> 2.7"},
+    {:nerves_key, "~> 0.5"}
+  ]
+end
+```
+
+Run `mix deps.get` to fetch the package.
+
+## Getting Started with Raspberry Pi
+
+The following steps walk through attaching and provisioning a NervesKey on a Raspberry Pi. Steps for custom boards follow the same sequence — adjust pin and I2C bus numbers for your hardware.
+
+<Steps>
+  <Step title="Attach the NervesKey">
+    Solder the NervesKey board to the Raspberry Pi GPIO header according to the instructions included with the board. The chip communicates over I2C (typically bus 1 on Raspberry Pi).
+  </Step>
+
+  <Step title="Enable I2C in your Nerves configuration">
+    Add I2C support to your Nerves target configuration. For most Raspberry Pi targets this is already enabled; verify by checking your `config/target.exs`:
+
+    ```elixir
+    # config/target.exs
+    config :nerves_key,
+      i2c_bus: 1
+    ```
+  </Step>
+
+  <Step title="Provision the key (one-time operation)">
+    Connect to your device over IEx and run the provisioning helper. **This step is irreversible** — the private key is generated on-chip and configuration slots are locked:
+
+    ```elixir
+    # In an IEx session on the device
+    iex> NervesKey.provision(NervesKey.default_config("my-device-001"))
+    :ok
+    ```
+
+    Refer to the [nerves\\_key README](https://github.com/nerves-hub/nerves_key) for the full provisioning API, including how to embed your organization's CA certificate into the chip.
+  </Step>
+
+  <Step title="Register the certificate with NervesHub">
+    After provisioning, read the device certificate from the chip and upload it to NervesHub using the `nh` CLI:
+
+    ```elixir
+    # In an IEx session — export the certificate to a file
+    iex> {:ok, cert_pem} = NervesKey.device_cert(:primary) |> X509.Certificate.to_pem()
+    iex> File.write!("/data/device_cert.pem", cert_pem)
+    ```
+
+    ```bash
+    # On your development machine — register the device
+    nh device certificates upload my-device-001 /data/device_cert.pem
+    ```
+
+    Alternatively, NervesHub auto-registers the device on its first successful connection if the signing CA is already registered with your organization.
+  </Step>
+</Steps>
+
+## Configure NervesHubLink
+
+When the `nerves_key` library is present in your project, `nerves_hub_link` detects it automatically and uses the hardware module for TLS authentication. Your configuration is minimal:
+
+```elixir
+# config/target.exs
+config :nerves_hub_link,
+  host: "devices.nervescloud.com",
+  remote_iex: true
+  # NervesKey is auto-detected when the nerves_key library is present.
+  # No ssl: certfile/keyfile paths are needed.
+```
+
+`nerves_hub_link` calls into the `nerves_key` library to sign the TLS handshake using the on-chip key. The private key never leaves the ATECC chip during this process.
+
+<Note>
+  Full configuration options for the `nerves_key` library — including I2C bus selection, auxiliary certificate slots, and advanced provisioning parameters — are documented in the [nerves\\_key project README](https://github.com/nerves-hub/nerves_key).
+</Note>
+
+## Auxiliary Device Certificate
+
+The ATECC508A/608A provides multiple certificate slots. NervesKey uses a **primary** slot for the production device certificate and an **auxiliary** slot for a secondary certificate — for example, a certificate signed by a development CA that grants access to a staging NervesHub instance. This lets you ship a single piece of hardware that can authenticate to both environments without re-provisioning.
+
+```elixir
+# Read the auxiliary certificate from the chip
+iex> {:ok, cert_pem} = NervesKey.device_cert(:aux) |> X509.Certificate.to_pem()
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="nerves_key on GitHub" icon="github" href="https://github.com/nerves-hub/nerves_key">
+    Full provisioning documentation, hardware schematics, and advanced configuration options for the nerves\\_key library.
+  </Card>
+
+  <Card title="Device Certificates" icon="certificate" href="./device-certificates">
+    Learn how software-based X.509 device certificates work — a good stepping stone before moving to hardware-backed keys.
+  </Card>
+</CardGroup>

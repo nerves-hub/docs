@@ -1,0 +1,145 @@
+---
+title: "Register and Manage Devices in Your NervesHub Fleet"
+sidebarTitle: "Devices"
+description: "How to register devices, assign tags for deployment group targeting, bulk provision via CSV, manage device certificates, and run remote device actions."
+---
+
+Devices are the core entities in NervesHub. Each device has a unique identifier and belongs to exactly one product. NervesHub tracks the device's current firmware version, online status, health metrics, and update history. Registering a device before it first connects is optional — NervesHub can auto-register devices on first connection when configured to do so — but explicit registration gives you full control over identifiers, tags, and certificates before any hardware is deployed.
+
+<Tip>
+  Most `nh` device commands accept `--org` and `--product` flags to scope the operation. Set the `NERVES_HUB_ORG` and `NERVES_HUB_PRODUCT` environment variables to avoid repeating these flags on every command:
+
+  ```bash
+  export NERVES_HUB_ORG=my-org
+  export NERVES_HUB_PRODUCT=my-product
+  ```
+</Tip>
+
+## Registering a Device
+
+Create a new device record with a unique identifier:
+
+```bash
+nh device create my-device-001
+```
+
+List all devices in a product, or inspect a specific device:
+
+```bash
+nh device list
+nh device show my-device-001
+```
+
+The device identifier is permanent. Choose identifiers that match your hardware serial numbers or manufacturing labels to make physical-to-digital traceability straightforward.
+
+## Assigning Tags
+
+Tags control which deployment groups a device falls into. A group lists one or more tags and a tag operator — `Require all` (the default) or `Allow any` — so assigning the right tags is how you route firmware updates to the correct subset of your fleet:
+
+```bash
+nh device update my-device-001 tags main qa
+```
+
+This command sets the device's tags to `main` and `qa`, replacing any previously assigned tags. A device can hold multiple tags simultaneously.
+
+Common tagging strategies:
+
+* **By environment** — `dev`, `staging`, `production`
+* **By cohort** — `beta`, `canary`, `stable`
+* **By hardware revision** — `hw-rev-a`, `hw-rev-b`
+
+## Bulk Registration
+
+For large manufacturing runs, use the **CSV import** feature in the NervesCloud UI:
+
+1. Navigate to **Products → my-product → Devices**.
+2. Click **Import Devices**.
+3. Upload a CSV file with one device identifier per row (and optional tag columns).
+
+For scripted workflows, use the `nh` CLI in a loop:
+
+```bash
+for id in $(cat device-ids.txt); do
+  nh device create "$id" --tags production
+done
+```
+
+## Device Certificates
+
+For mTLS authentication, each device needs a certificate signed by a CA that you have registered with NervesHub. The `nh` CLI manages the full certificate lifecycle.
+
+**List certificates for a device:**
+
+```bash
+nh device certificates list my-device-001
+```
+
+**Generate a new certificate (development/testing):**
+
+```bash
+nh device certificates generate my-device-001
+```
+
+This creates a certificate and private key pair locally. For production devices, provision certificates at the factory using your own PKI infrastructure and upload only the certificate (never the private key) to NervesHub.
+
+**Upload an existing certificate:**
+
+```bash
+nh device certificates upload my-device-001 cert.pem
+```
+
+NervesHub stores the public certificate so it can verify the device's identity during the TLS handshake. The private key never leaves the device.
+
+## Device Actions
+
+Trigger remote actions on a connected device directly from the CLI:
+
+**Reboot the device:**
+
+```bash
+nh device reboot my-device-001
+```
+
+**Reconnect the device to NervesHub** (closes and re-opens the WebSocket channel):
+
+```bash
+nh device reconnect my-device-001
+```
+
+**Open a remote IEx console:**
+
+```bash
+nh device console my-device-001
+```
+
+The console streams an interactive IEx session over the NervesHub channel. Press `Ctrl+C` twice to exit without affecting the running device.
+
+<Note>
+  A device that repeatedly fails to apply an update is placed in the **penalty box** and stops receiving update notifications until its timeout expires. You can clear it from the device page in the console, or with the API, once you have addressed the underlying problem.
+</Note>
+
+## Device Logs
+
+Stream or review logs from a device:
+
+```bash
+nh device logs my-device-001 --follow
+```
+
+The `--follow` flag tails the log stream in real time. Omit it to retrieve a snapshot of recent log lines. Logs are useful for diagnosing connection issues, firmware crashes, or unexpected reboots without requiring physical access to the device.
+
+<Note>
+  Device logs require the `logging` extension to be enabled on the product, and the device's client library must support it.
+</Note>
+
+## Deleting a Device
+
+Remove a device record from NervesHub when a device is decommissioned:
+
+```bash
+nh device delete my-device-001
+```
+
+<Warning>
+  Deleting a device removes it from NervesHub immediately, including its certificate associations and update history. The physical device will no longer be able to connect and receive updates. Ensure the device is properly decommissioned and offline before deleting it.
+</Warning>

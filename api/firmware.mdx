@@ -1,0 +1,303 @@
+---
+title: "NervesHub Firmware API: Upload, Sign, and Manage Firmware"
+sidebarTitle: "Firmware"
+description: "HTTP API endpoints to list, upload, download, and delete firmware files and manage Ed25519 firmware signing keys in NervesHub products."
+---
+
+The Firmware API lets you manage firmware files for your products programmatically — upload signed `.fw` archives, inspect metadata, and maintain the signing keys that NervesHub uses to verify firmware integrity before distributing updates to devices.
+
+## List Firmware
+
+Retrieve all firmware versions uploaded to a product.
+
+```
+GET /api/orgs/{org_name}/products/{product_name}/firmwares
+```
+
+<ParamField path="org_name" type="string" required>
+  The slug of your organization.
+</ParamField>
+
+<ParamField path="product_name" type="string" required>
+  The slug of the product.
+</ParamField>
+
+**Example request:**
+
+```bash
+curl -H "Authorization: Bearer $NERVES_HUB_TOKEN" \
+  "https://manage.nervescloud.com/api/orgs/acme/products/smart-lock/firmwares"
+```
+
+**Example response:**
+
+```json
+{
+  "data": [
+    {
+      "uuid": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+      "version": "1.4.2",
+      "architecture": "arm",
+      "platform": "rpi4",
+      "author": "ci-builder",
+      "size": 18457600,
+      "inserted_at": "2024-11-10T12:00:00Z"
+    },
+    {
+      "uuid": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+      "version": "1.4.1",
+      "architecture": "arm",
+      "platform": "rpi4",
+      "author": "ci-builder",
+      "size": 18300928,
+      "inserted_at": "2024-10-28T09:45:00Z"
+    }
+  ]
+}
+```
+
+<ResponseField name="uuid" type="string">
+  The unique identifier for this firmware artifact. Use this UUID when creating a deployment group or release.
+</ResponseField>
+
+<ResponseField name="version" type="string">
+  Semantic version string extracted from the firmware metadata at upload time.
+</ResponseField>
+
+<ResponseField name="architecture" type="string">
+  CPU architecture the firmware targets, e.g. `arm`, `arm64`, `x86_64`.
+</ResponseField>
+
+<ResponseField name="platform" type="string">
+  Board or platform identifier, e.g. `rpi4`, `rpi0_2`, `bbb`.
+</ResponseField>
+
+<ResponseField name="author" type="string">
+  The NervesHub user or CI identity that uploaded the firmware.
+</ResponseField>
+
+<ResponseField name="size" type="integer">
+  Size of the `.fw` file in bytes.
+</ResponseField>
+
+***
+
+## Upload Firmware
+
+Upload a signed `.fw` firmware archive to a product. This is the typical step run in CI after `mix firmware` and firmware signing.
+
+```
+POST /api/orgs/{org_name}/products/{product_name}/firmwares
+```
+
+<ParamField path="org_name" type="string" required>
+  The slug of your organization.
+</ParamField>
+
+<ParamField path="product_name" type="string" required>
+  The slug of the product.
+</ParamField>
+
+<ParamField body="firmware" type="file" required>
+  The `.fw` binary file, sent as a `multipart/form-data` upload.
+</ParamField>
+
+**Example request:**
+
+```bash
+curl -X POST \
+  -H "Authorization: Bearer $NERVES_HUB_TOKEN" \
+  -F "firmware=@_build/rpi4/prod/nerves/images/smart_lock.fw" \
+  "https://manage.nervescloud.com/api/orgs/acme/products/smart-lock/firmwares"
+```
+
+**Example response (`201 Created`):**
+
+```json
+{
+  "data": {
+    "uuid": "c9d8e7f6-a5b4-3210-fedc-ba9876543210",
+    "version": "1.4.3",
+    "architecture": "arm",
+    "platform": "rpi4",
+    "author": "ci-builder",
+    "size": 18534400,
+    "inserted_at": "2024-11-15T16:00:00Z"
+  }
+}
+```
+
+<Note>
+  Firmware must be signed with an Ed25519 key before uploading. NervesHub verifies the signature against the signing keys registered to your organization and rejects unsigned or unrecognized firmware. Sign your firmware with `fwup --sign` before calling this endpoint.
+</Note>
+
+***
+
+## Get Firmware Metadata
+
+Retrieve metadata for a specific firmware version by its UUID.
+
+```
+GET /api/orgs/{org_name}/products/{product_name}/firmwares/{uuid}
+```
+
+<ParamField path="org_name" type="string" required>
+  The slug of your organization.
+</ParamField>
+
+<ParamField path="product_name" type="string" required>
+  The slug of the product.
+</ParamField>
+
+<ParamField path="uuid" type="string" required>
+  The UUID of the firmware artifact.
+</ParamField>
+
+**Example request:**
+
+```bash
+curl -H "Authorization: Bearer $NERVES_HUB_TOKEN" \
+  "https://manage.nervescloud.com/api/orgs/acme/products/smart-lock/firmwares/f47ac10b-58cc-4372-a567-0e02b2c3d479"
+```
+
+**Example response:**
+
+```json
+{
+  "data": {
+    "uuid": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+    "version": "1.4.2",
+    "architecture": "arm",
+    "platform": "rpi4",
+    "author": "ci-builder",
+    "size": 18457600,
+    "inserted_at": "2024-11-10T12:00:00Z"
+  }
+}
+```
+
+***
+
+## Delete Firmware
+
+Remove a firmware artifact from NervesHub. You cannot delete firmware that is referenced by an active deployment group.
+
+```
+DELETE /api/orgs/{org_name}/products/{product_name}/firmwares/{uuid}
+```
+
+<ParamField path="org_name" type="string" required>
+  The slug of your organization.
+</ParamField>
+
+<ParamField path="product_name" type="string" required>
+  The slug of the product.
+</ParamField>
+
+<ParamField path="uuid" type="string" required>
+  The UUID of the firmware to delete.
+</ParamField>
+
+**Example request:**
+
+```bash
+curl -X DELETE \
+  -H "Authorization: Bearer $NERVES_HUB_TOKEN" \
+  "https://manage.nervescloud.com/api/orgs/acme/products/smart-lock/firmwares/a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+```
+
+Returns `204 No Content` on success.
+
+<Warning>
+  Deleting firmware that devices are currently downloading will interrupt those updates. Deactivate any deployment groups referencing this firmware before deleting it.
+</Warning>
+
+***
+
+## List Firmware Signing Keys
+
+List the Ed25519 public keys registered for an organization. NervesHub validates firmware signatures against these keys at upload time.
+
+```
+GET /api/orgs/{org_name}/keys
+```
+
+<ParamField path="org_name" type="string" required>
+  The slug of your organization.
+</ParamField>
+
+**Example request:**
+
+```bash
+curl -H "Authorization: Bearer $NERVES_HUB_TOKEN" \
+  "https://manage.nervescloud.com/api/orgs/acme/keys"
+```
+
+**Example response:**
+
+```json
+{
+  "data": [
+    {
+      "name": "ci-release-key",
+      "key": "MCowBQYDK2VwAyEA...",
+      "inserted_at": "2024-01-15T10:00:00Z"
+    }
+  ]
+}
+```
+
+***
+
+## Register a Firmware Signing Key
+
+Upload a new Ed25519 public key to your organization. Any firmware signed with the corresponding private key will pass signature verification on upload.
+
+```
+POST /api/orgs/{org_name}/keys
+```
+
+<ParamField path="org_name" type="string" required>
+  The slug of your organization.
+</ParamField>
+
+<ParamField body="name" type="string" required>
+  A human-readable label for the key, e.g. `ci-release-key` or `hardware-signing-key`.
+</ParamField>
+
+<ParamField body="key" type="string" required>
+  The base64-encoded Ed25519 public key. Generate a key pair with `fwup --gen-keys` and supply the `.pub` file contents here.
+</ParamField>
+
+**Example request:**
+
+```bash
+curl -X POST \
+  -H "Authorization: Bearer $NERVES_HUB_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "ci-release-key",
+    "key": "MCowBQYDK2VwAyEA7x3fK9mP..."
+  }' \
+  "https://manage.nervescloud.com/api/orgs/acme/keys"
+```
+
+**Example response (`201 Created`):**
+
+```json
+{
+  "data": {
+    "name": "ci-release-key",
+    "key": "MCowBQYDK2VwAyEA7x3fK9mP...",
+    "inserted_at": "2024-11-15T17:00:00Z"
+  }
+}
+```
+
+<Note>
+  Creating and deleting signing keys requires the `manage` role.
+</Note>
+
+<Tip>
+  Generate a signing key pair offline using `fwup --gen-keys`. Store the private key in your secrets manager (GitHub Actions secrets, HashiCorp Vault, etc.) and only register the public key here. The private key never leaves your build environment.
+</Tip>

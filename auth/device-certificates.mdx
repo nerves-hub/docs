@@ -1,0 +1,170 @@
+---
+title: "NervesHub Device Authentication with X.509 Certificates"
+sidebarTitle: "Device Certificates"
+description: "Provision each device with a unique X.509 client certificate and register your CA with NervesHub for mutual TLS authentication in production."
+---
+
+Device Certificates use mutual TLS (mTLS) with X.509 client certificates to authenticate every device individually. Each device carries a unique certificate signed by a Device CA that you control. When the device opens its WebSocket connection to NervesHub, both sides present and verify certificates, establishing a cryptographically authenticated channel with no shared secrets. This is the recommended authentication approach for production fleets because every device has an independent identity that can be individually revoked without affecting other devices.
+
+<Note>
+  The private key associated with your Device CA Certificate is **never shared with or seen by NervesHub**. You register only the public CA certificate. NervesHub uses it to verify device certificates at connection time — your signing key stays entirely under your control.
+</Note>
+
+## How It Works
+
+When a device connects, it presents its device certificate along with the CA certificate that signed it. NervesHub checks whether the CA certificate is registered to your organization, verifies the device certificate's signature chain, and — on the device's first-ever connection — automatically creates a device record in your product. Subsequent connections are verified against the registered CA without any manual intervention.
+
+This flow means you can pre-provision device certificates at manufacturing time and ship devices that self-register on first boot.
+
+## Create a Device CA Certificate
+
+Use the `nh` CLI to generate a new CA certificate and its associated private key:
+
+```bash
+nh ca generate
+```
+
+This creates a CA certificate and key pair in your current directory. Store the private key securely — you will use it to sign individual device certificates, and it should never be placed on a device or committed to source control.
+
+<Accordion title="Generate with OpenSSL (existing CA infrastructure)">
+  If you already operate a PKI or want to integrate with an existing CA, you can generate a compatible CA certificate using OpenSSL:
+
+  ```bash
+  # Generate the CA private key
+  openssl ecparam -name prime256v1 -genkey -noout -out ca_key.pem
+  
+  # Generate a self-signed CA certificate (10-year validity)
+  openssl req -new -x509 -key ca_key.pem -out ca_cert.pem \
+    -days 3650 \
+    -subj "/O=My Organization/CN=NervesHub Device CA"
+  ```
+
+  You can use this `ca_cert.pem` with the `nh ca upload` command in the next step.
+</Accordion>
+
+## Register Your CA Certificate with NervesHub
+
+Upload your CA certificate so NervesHub can verify device certificates signed by it:
+
+```bash
+nh ca upload my-ca-cert.pem
+```
+
+List all CA certificates registered to your organization at any time:
+
+```bash
+nh ca list
+```
+
+Each registered CA has a unique identifier you can reference when auditing or revoking certificates.
+
+<Note>
+  Registering and removing certificate authorities requires the `admin` role in the organization.
+</Note>
+
+## Provision Device Certificates
+
+Generate a certificate for a specific device using the `nh` CLI. The device identifier (e.g., a serial number) becomes part of the certificate's common name:
+
+```bash
+nh device certificates generate my-device-001
+```
+
+This produces a certificate and private key pair for the device. Copy these to the device's filesystem during manufacturing or provisioning — typically to a dedicated data partition that survives firmware updates.
+
+<Accordion title="Generate device certificates programmatically">
+  For high-volume provisioning, generate certificates in Elixir using the `x509` library:
+
+  ```elixir
+  # mix.exs deps
+  {:x509, "~> 0.8"}
+  ```
+
+  ```elixir
+  # Read your CA key and cert from secure storage
+  {:ok, ca_key_pem}  = File.read("ca_key.pem")
+  {:ok, ca_cert_pem} = File.read("ca_cert.pem")
+
+  ca_key  = X509.PrivateKey.from_pem!(ca_key_pem)
+  ca_cert = X509.Certificate.from_pem!(ca_cert_pem)
+
+  # Generate a unique key and signed cert for each device
+  device_key  = X509.PrivateKey.new_ec(:prime256v1)
+  device_cert = X509.Certificate.new(
+    X509.PublicKey.derive(device_key),
+    "/CN=my-device-001",
+    ca_cert,
+    ca_key,
+    validity: 365 * 10,
+    extensions: [
+      subject_alt_name: X509.Certificate.Extension.subject_alt_name(["my-device-001"])
+    ]
+  )
+
+  # Export to PEM for writing to the device
+  File.write!("device_cert.pem", X509.Certificate.to_pem(device_cert))
+  File.write!("device_key.pem",  X509.PrivateKey.to_pem(device_key))
+  ```
+</Accordion>
+
+## Configure NervesHubLink
+
+Point `nerves_hub_link` at the certificate and key files on the device filesystem. These paths should live on a partition that persists across firmware updates (e.g., `/data`):
+
+```elixir
+# mix.exs
+def deps do
+  [
+    {:nerves_hub_link, "~> 2.7"}
+  ]
+end
+```
+
+```elixir
+# config/target.exs
+config :nerves_hub_link,
+  host: "devices.nervescloud.com",
+  remote_iex: true,
+  ssl: [
+    certfile: "/data/certs/device_cert.pem",
+    keyfile:  "/data/certs/device_key.pem"
+  ]
+```
+
+<Tip>
+  Keep device certificate files on a dedicated data partition (e.g., `/data/certs/`) rather than the read-only firmware partition. This lets you re-provision certificates in the field without reflashing firmware, and they survive OTA updates.
+</Tip>
+
+## First Connection and Auto-Registration
+
+On the device's first connection to NervesHub, the following happens automatically:
+
+<Steps>
+  <Step title="Device presents its certificate chain">
+    `nerves_hub_link` sends the device certificate and the CA certificate during the TLS handshake.
+  </Step>
+
+  <Step title="NervesHub verifies the CA">
+    NervesHub checks whether the CA certificate is registered to your organization. If it is not recognized, the connection is rejected.
+  </Step>
+
+  <Step title="Device is auto-registered">
+    If the CA is recognized and the device does not yet exist in your product, NervesHub creates a new device record using the certificate's common name as the device identifier.
+  </Step>
+
+  <Step title="Subsequent connections are seamless">
+    On all future connections, NervesHub verifies the certificate against the registered CA. No additional steps are required.
+  </Step>
+</Steps>
+
+## Revoking a Device
+
+To prevent a specific device from connecting, navigate to the device in the NervesCloud UI and disable or delete it. Because each device has a unique certificate, revoking one device has no effect on the rest of your fleet.
+
+## Next Steps
+
+For the highest level of security — where the private key is physically protected and cannot be extracted even if a device is compromised — consider upgrading to hardware-backed key storage:
+
+<Card title="NervesKey Hardware Security Module" icon="microchip" href="./nerveskey">
+  Store device private keys in an ATECC508A/608A hardware security module. The key never leaves the chip, making it ideal for large production fleets.
+</Card>

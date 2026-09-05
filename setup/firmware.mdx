@@ -1,0 +1,107 @@
+---
+title: "Build, Sign, and Upload Nerves Firmware to NervesHub"
+sidebarTitle: "Firmware"
+description: "How to build a fwup firmware file with Nerves, sign it with an Ed25519 key, and upload it to NervesHub for delivery to your device fleet."
+---
+
+NervesHub stores firmware as fwup-format `.fw` files — ZIP-based archives that carry a cryptographic Ed25519 signature alongside the filesystem image. Before a device applies an update, it verifies the signature against a trusted public key registered with NervesHub. This end-to-end signing chain ensures that no untrusted firmware can be installed on your devices, even if your update infrastructure is compromised.
+
+<Note>
+  A firmware entry's UUID is derived from the content of the `.fw` file. Uploading the same binary twice produces the same UUID, and NervesHub will skip the upload on the second attempt. This makes CI pipelines idempotent — re-running a failed upload job is always safe.
+</Note>
+
+## Build Firmware
+
+Build your Nerves firmware with the standard Mix workflow. Set `MIX_TARGET` to your hardware target before running `mix firmware`:
+
+```bash
+export MIX_TARGET=rpi4
+mix firmware
+```
+
+The compiled `.fw` file is written to `./_build/${MIX_TARGET}_dev/nerves/images/my_project.fw` by default. Adjust the path to match your application name and `MIX_ENV`.
+
+## Create a Signing Key
+
+If you have not yet created a signing key for your product, create one now. The `nh key create` command generates an Ed25519 keypair and registers the public key with NervesHub:
+
+```bash
+nh key create my-key
+```
+
+Store the private key material in a secure location (a secrets manager, HSM, or encrypted CI/CD variable). You will need it every time you upload firmware. The public key is stored in NervesHub and distributed to devices automatically.
+
+## Sign Firmware
+
+You can sign a firmware file independently of uploading it — useful when the signing step runs on a separate secure host or HSM, and the resulting signed file is then passed to a build or deployment system:
+
+```bash
+nh firmware sign my_project.fw --key my-key
+```
+
+This writes the Ed25519 signature into the `.fw` archive in place. The signing key's private key material must be accessible to the host running this command.
+
+## Upload Firmware
+
+Upload a firmware file to NervesHub. The CLI signs the firmware with your registered key before uploading:
+
+```bash
+nh firmware upload ./_build/rpi4_dev/nerves/images/my_project.fw
+```
+
+If you manage multiple signing keys, specify which key to use:
+
+```bash
+nh firmware upload my_project.fw --key my-key
+```
+
+A successful upload prints the firmware UUID. Save this UUID if you intend to create a release manually in the next step.
+
+## List and Inspect Firmware
+
+List all firmware binaries uploaded to the current product:
+
+```bash
+nh firmware list
+```
+
+Inspect the metadata for a specific firmware entry by UUID:
+
+```bash
+nh firmware show <UUID>
+```
+
+The metadata includes the firmware version, platform, architecture, upload timestamp, and the signing key used.
+
+## Download and Delete Firmware
+
+Download a firmware binary to inspect it locally or re-sign it with a different key:
+
+```bash
+nh firmware download <UUID>
+```
+
+Delete a firmware entry that is no longer needed. You cannot delete firmware that is referenced by an active deployment group:
+
+```bash
+nh firmware delete <UUID>
+```
+
+## CI/CD Pattern
+
+Automate firmware builds and uploads in your CI/CD pipeline using environment variables. The example below builds firmware and uploads it, optionally shipping it to a named deployment group in a single command:
+
+```bash
+export NERVES_HUB_TOKEN=$NH_TOKEN
+export NERVES_HUB_ORG=my-org
+export NERVES_HUB_PRODUCT=my-product
+
+mix firmware
+
+nh firmware upload ./_build/${MIX_TARGET}_dev/nerves/images/my_project.fw \
+  --deploy "production"
+```
+
+`NERVES_HUB_TOKEN` is a personal access token or CI token generated in the NervesCloud UI under **Account → API Tokens**. Store it as a protected secret in your CI/CD system — never commit it to source control.
+
+The `--deploy` flag creates a release against the existing deployment group named `"production"` with the newly uploaded firmware, combining the upload and rollout steps into one command.

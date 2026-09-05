@@ -1,0 +1,114 @@
+---
+title: "Sign and Upload NervesHub Firmware with Ed25519 Keys"
+sidebarTitle: "Firmware Signing"
+description: "How to create Ed25519 signing keys, embed public keys in your Nerves firmware, sign and upload firmware, and manage multiple keys for production safety."
+---
+
+Firmware signing ensures that only firmware produced by a party you trust can run on your devices. Before a device applies any OTA update, it verifies the Ed25519 signature embedded in the `.fw` file against a public key that was compiled into the firmware at build time. This verification happens entirely on the device — independently of NervesHub — so the chain of trust holds even if the server or the network is compromised.
+
+## How It Works
+
+NervesHub uses **Ed25519** keypairs via **libsodium**, implemented inside the `fwup` tool that packages Nerves firmware. Signing is a two-step distribution:
+
+1. At build time, you embed the Ed25519 **public key** into your firmware image via the `fwup_public_keys` configuration. Every device that runs that firmware will only accept OTA updates signed by the corresponding private key.
+2. When you upload firmware to NervesHub, the server checks the signature against the public keys registered for your product. Unsigned firmware or firmware signed by an unregistered key is rejected at upload time.
+
+The **private key** is used only during the signing step and should never leave your secure build environment.
+
+## Creating a Signing Key
+
+Use the `nh` CLI to generate an Ed25519 keypair and register the public key with your NervesHub product in one step:
+
+```bash
+nh key create my-key
+```
+
+This command creates the keypair locally and uploads the public key to NervesHub. The private key is stored in your local `nh` configuration directory — treat it with the same care as any other secret credential.
+
+If you are using the legacy Mix-based workflow, you can create a key with:
+
+```bash
+mix nerves_hub.key create devkey --org my-org
+```
+
+<Warning>
+  Never commit signing private keys to source control. In CI/CD pipelines, pass the private key via the `NERVES_HUB_FW_PRIVATE_KEY` environment variable rather than writing it to disk. Rotate any key that has been exposed and remove the corresponding public key from NervesHub immediately.
+</Warning>
+
+## Embedding the Public Key in Firmware
+
+For a device to verify firmware signatures independently, the public key must be compiled into the firmware image at build time. Add the base64-encoded public key to your `config/target.exs`:
+
+```elixir
+# config/target.exs
+config :nerves_hub_link,
+  fwup_public_keys: ["base64_encoded_public_key_here"]
+```
+
+You can retrieve the base64-encoded public key for any registered key from the NervesHub console or with:
+
+```bash
+nh key list
+```
+
+Replace `"base64_encoded_public_key_here"` with the value shown for your key. Rebuild and re-flash any devices that need to accept firmware signed by the new key — the embedded public keys are part of the firmware itself and cannot be updated over the air without a matching signed update.
+
+## Signing and Uploading Firmware
+
+Once you have a signing key registered, sign your firmware and upload it to NervesHub in a single command:
+
+```bash
+nh firmware upload my_project.fw --key my-key
+```
+
+The CLI signs the `.fw` file with the private key associated with `my-key` and then uploads the signed binary to NervesHub. The server verifies the signature against the registered public key before accepting the upload.
+
+<Tip>
+  If your build system already signs the firmware (for example, in a CI pipeline using a hardware signing service), pass `--skip-signing` to upload the pre-signed file without re-signing it:
+
+  ```bash
+  nh firmware upload my_project.fw --skip-signing
+  ```
+
+  The server will still verify the signature against registered keys — `--skip-signing` only skips the client-side signing step.
+</Tip>
+
+## Using Multiple Signing Keys
+
+Maintaining more than one signing key is a best practice for production fleets. A common setup uses two keys:
+
+* **Production key** — tightly controlled; used only in your release pipeline; private key stored in a secrets manager or HSM.
+* **Development key** — used for internal builds and QA; acceptable to store in developer workstations.
+
+To support multiple keys:
+
+1. Register each key with NervesHub:
+   ```bash
+   nh key create production-key
+   nh key create dev-key
+   ```
+
+2. Embed all accepted public keys in your firmware. A device will accept firmware signed by **any** of the keys listed in `fwup_public_keys`:
+   ```elixir
+   # config/target.exs
+   config :nerves_hub_link,
+     fwup_public_keys: [
+       "base64_production_public_key",
+       "base64_dev_public_key"
+     ]
+   ```
+
+3. Sign each firmware with the appropriate key for its intended audience:
+   ```bash
+   # Release build — sign with production key
+   nh firmware upload my_project.fw --key production-key
+
+   # QA build — sign with development key
+   nh firmware upload my_project_qa.fw --key dev-key
+   ```
+
+Production devices can be built with only the production public key embedded (removing the dev key from `fwup_public_keys` in your production Mix target), ensuring that development-signed firmware cannot be installed on production hardware even if an attacker gains access to the dev key.
+
+<Note>
+  Removing a public key from `fwup_public_keys` and rebuilding only affects devices that receive the new firmware. Devices still running older firmware will continue to accept the keys that were embedded when that firmware was built.
+</Note>

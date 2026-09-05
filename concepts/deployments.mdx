@@ -1,0 +1,154 @@
+---
+title: "How NervesHub Deployment Groups Target and Update Devices"
+sidebarTitle: "Deployment Groups"
+description: "How deployment groups target devices by tag and version, how releases and workflow steps stage a rollout, and the controls that keep a bad update contained."
+---
+
+A deployment group is the primary mechanism for rolling out firmware to your fleet. It links a set of targeting rules to a sequence of firmware **releases**, giving you control over which devices update, when, and at what pace. Rather than pushing firmware to individual devices, you define the group's conditions once and NervesHub notifies every matching device as it comes online.
+
+<Note>
+  The web console calls these **deployment groups**. The REST API and the `nh` CLI still address them under `deployment` / `deployments` paths — for example `GET /api/orgs/{org}/products/{product}/deployments`. The two names refer to the same object.
+</Note>
+
+## How Deployment Groups Work
+
+A deployment group holds targeting conditions and an ordered list of releases. Each release points at a firmware build (and optionally an archive), and the group tracks which release is current.
+
+When the group is active, NervesHub evaluates connected devices against its conditions. Matching devices receive a notification over their WebSocket channel telling them an update is available. The device then downloads the firmware and applies it — either immediately or at the next opportunity, depending on your `NervesHubLink.Client` configuration.
+
+Devices that are offline when a release goes out are evaluated the next time they connect, so a group keeps catching devices as they come back online with nothing to re-trigger manually.
+
+<Tip>
+  A deployment group does not "finish". It stays active indefinitely, waiting for devices that match its conditions — including devices you register months later. Completion is tracked on the workflow steps within a release, not on the group itself.
+</Tip>
+
+## Targeting Devices
+
+A deployment group targets devices on two conditions, both of which must match:
+
+### Tags
+
+Tags are arbitrary strings you assign to devices — for example `main`, `qa`, `beta`, `factory`, or `region-us-east`. A group lists one or more tags and a **tag operator** that decides how they are matched:
+
+| Tag operator              | Behaviour                                                |
+| ------------------------- | -------------------------------------------------------- |
+| `Require all` *(default)* | A device matches only if it carries **every** listed tag |
+| `Allow any`               | A device matches if it carries **any** listed tag        |
+
+So a group listing `beta` and `region-us-east` targets only devices carrying both under `Require all`, and every device carrying either one under `Allow any`.
+
+You assign tags when you register a device or update it later through the console, the API, or the CLI. Tags give you free-form grouping with no fixed hierarchy.
+
+### Version condition
+
+A group also filters on the firmware version a device is currently running. The version condition is a semver expression such as `>= 1.0.0`, `~> 1.2`, or `< 2.0.0`; only devices satisfying it are eligible. Leave it empty to match on tags alone.
+
+Version conditions let you orchestrate multi-step migration paths — requiring devices to be on `~> 1.x` before they can receive `2.0` — without devices on unsupported older versions picking up a breaking update.
+
+<Note>
+  A deployment group also records the **platform** and **architecture** of the firmware it was created with, and every later release must match them. This stops firmware for one board from being rolled out to a group full of another.
+</Note>
+
+## Releases
+
+Firmware reaches a group through a release. Releases are numbered in the order they are created, each carries the firmware (and optional archive) being shipped plus an optional description and notes, and the group points at whichever one is current.
+
+Because the history is kept, you can see exactly which firmware a group shipped and when, and roll forward to a new release without losing that record.
+
+## Staged Rollouts with Workflows
+
+A release can carry a **workflow definition**: an ordered list of up to six steps that stages the rollout instead of updating every matching device at once. Steps run in order and come in three types:
+
+| Step type           | What it does                                                             |
+| ------------------- | ------------------------------------------------------------------------ |
+| `update_devices`    | Updates the devices this step matches, then moves on                     |
+| `approval_required` | Halts the rollout until someone approves it                              |
+| `catch_all`         | Sweeps up every remaining device that has not yet been covered by a step |
+
+Each `update_devices` step narrows the devices it covers with its own matching conditions — any combination of:
+
+* **`tags`** — a device must carry every listed tag
+* **`network_interfaces`** — the interface the device most recently connected over (`wifi`, `ethernet`, `cellular`, or `unknown`), so you can hold cellular devices back until a release is proven
+* **`match_limit`** — a hard cap on how many devices the step covers
+
+A step also sets its own `concurrent_updates` and a `failure_tolerance`, expressed as either a number of devices or a percentage. Exceeding that tolerance fails the step and stops the rollout there rather than continuing into the next one.
+
+Each step reports its own status as the rollout progresses: `waiting`, `in_progress`, `completed`, `skipped`, or `error`.
+
+A typical shape is a small canary step, an approval gate, then a `catch_all`:
+
+1. `update_devices` — 20 devices tagged `canary`, 5 at a time
+2. `approval_required` — an engineer confirms the canaries are healthy
+3. `catch_all` — everything else
+
+## Rollout Safety Controls
+
+Beyond workflow steps, each group carries controls that limit the blast radius of a bad release:
+
+| Setting                       | Default | What it controls                                                        |
+| ----------------------------- | ------- | ----------------------------------------------------------------------- |
+| `concurrent_updates`          | `10`    | How many devices update at the same time                                |
+| `device_failure_threshold`    | `3`     | Failures on a single device before it is put in the penalty box         |
+| `device_failure_rate_amount`  | `5`     | Failures on a single device within the rate window before penalising it |
+| `device_failure_rate_seconds` | `180`   | The rate window, in seconds                                             |
+| `failure_threshold`           | `50`    | Fleet-wide failures before the group is flagged unhealthy               |
+| `penalty_timeout_minutes`     | `1440`  | How long a penalised device waits before it may try again               |
+| `queue_management`            | `FIFO`  | Whether the update queue is drained oldest-first or newest-first        |
+
+A device that trips its failure thresholds is placed in the **penalty box** and stops receiving update notifications until the timeout expires — which keeps one device stuck in a reboot loop from consuming rollout capacity. You can clear the penalty box manually from the device page.
+
+Refer to the [step-by-step setup guide](/setup/deployments) for where each of these lives in the UI and the values worth using in production.
+
+## Device Response to Updates
+
+When a device receives an update notification, the default behavior is to download and apply the firmware immediately. If you need custom logic — deferring updates during active use, checking battery level, or prompting a local UI — implement the `NervesHubLink.Client` behaviour in your application:
+
+```elixir
+defmodule MyApp.NervesHubClient do
+  @behaviour NervesHubLink.Client
+
+  @impl true
+  def update_available(data) do
+    if MyApp.safe_to_update?() do
+      :apply
+    else
+      # Check again in 60 seconds
+      {:reschedule, 60_000}
+    end
+  end
+end
+```
+
+Configure your client module in `config/target.exs`:
+
+```elixir
+config :nerves_hub_link,
+  client: MyApp.NervesHubClient
+```
+
+The `update_available/1` callback receives metadata about the available firmware (version, UUID, description) and must return `:apply` to proceed, `:ignore` to skip this notification, or `{:reschedule, ms}` to retry after a delay.
+
+## CLI Examples
+
+Create and manage deployment groups from the `nh` CLI:
+
+```bash
+# Create a group targeting devices tagged "main" running firmware ~> 1.0
+nh deployment create --name "v2.0-rollout" --firmware <UUID> --version "~> 1.0" --tag "main"
+
+# Activate the group so devices start receiving notifications
+nh deployment update "v2.0-rollout" state on
+
+# Deactivate it to halt the rollout
+nh deployment update "v2.0-rollout" state off
+```
+
+For a streamlined release workflow, use the `--deploy` flag on firmware upload to sign, upload, and attach the firmware in a single command:
+
+```bash
+nh firmware upload my_project.fw --deploy "v2.0-rollout"
+```
+
+<Tip>
+  The `--deploy` flag on `nh firmware upload` is the fastest path from a compiled `.fw` file to live devices. It uploads the firmware, registers it, and creates the release against the named group — no need to copy the firmware UUID and run a separate command.
+</Tip>

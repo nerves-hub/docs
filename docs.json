@@ -1,0 +1,153 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "name": "NervesHub",
+  "theme": "aspen",
+  "colors": {
+    "primary": "#6366f1",
+    "light": "#818cf8",
+    "dark": "#4f46e5"
+  },
+  "favicon": "/favicon.svg",
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/nerves-hub/nerves_hub_web"
+    },
+    "links": [
+      {
+        "href": "https://help.nervescloud.com/roadmap",
+        "label": "Roadmap"
+      },
+      {
+        "href": "https://help.nervescloud.com/changelog",
+        "label": "Changelog"
+      },
+      {
+        "href": "https://help.nervescloud.com",
+        "label": "Feedback"
+      }
+    ]
+  },
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "architecture"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/terminology",
+              "concepts/pki",
+              "concepts/firmware-signing",
+              "concepts/deployments"
+            ]
+          },
+          {
+            "group": "Setup",
+            "pages": [
+              "setup/add-to-project",
+              "setup/connecting",
+              "setup/products",
+              "setup/devices",
+              "setup/firmware",
+              "setup/deployments"
+            ]
+          },
+          {
+            "group": "Device Authentication",
+            "pages": [
+              "auth/shared-secret",
+              "auth/device-certificates",
+              "auth/nerveskey"
+            ]
+          },
+          {
+            "group": "Device Management",
+            "pages": [
+              "management/fleet-overview",
+              "management/remote-console",
+              "management/health-monitoring",
+              "management/delta-updates"
+            ]
+          },
+          {
+            "group": "CLI",
+            "pages": [
+              "cli/installation",
+              "cli/configuration",
+              "cli/reference"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "HTTP API",
+            "pages": [
+              "api/overview",
+              "api/authentication",
+              "api/devices",
+              "api/firmware",
+              "api/deployments",
+              "api/organizations"
+            ]
+          },
+          {
+            "group": "Device WebSocket",
+            "pages": [
+              "api/websocket-overview",
+              "api/websocket-events"
+            ]
+          },
+          {
+            "group": "NervesHubLink",
+            "pages": [
+              "api/nerveshublink-config",
+              "api/nerveshublink-client"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "HTTP API",
+            "pages": [
+              "api/overview",
+              "api/authentication",
+              "api/devices",
+              "api/firmware",
+              "api/deployments",
+              "api/organizations"
+            ]
+          },
+          {
+            "group": "Device WebSocket",
+            "pages": [
+              "api/websocket-overview",
+              "api/websocket-events"
+            ]
+          },
+          {
+            "group": "NervesHubLink",
+            "pages": [
+              "api/nerveshublink-config",
+              "api/nerveshublink-client"
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

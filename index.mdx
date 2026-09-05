@@ -1,0 +1,74 @@
+---
+title: "NervesHub: Open-Source IoT Firmware Update Platform"
+sidebarTitle: "Home"
+description: "NervesHub is an open-source firmware update and device management platform for Nerves-based IoT devices. Secure OTA updates, remote console access, and fleet monitoring."
+---
+
+NervesHub gives you a complete platform for managing firmware updates and monitoring your fleet of Nerves-based IoT devices. Every firmware update is cryptographically signed end-to-end, devices connect securely via mutual TLS, and you can reach any device for live debugging — all from one place.
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Go from zero to your first OTA update in minutes using Shared Secret authentication.
+  </Card>
+
+  <Card title="Architecture" icon="sitemap" href="/architecture">
+    Understand how NervesHub, your devices, and firmware storage fit together.
+  </Card>
+
+  <Card title="CLI Reference" icon="terminal" href="/cli/reference">
+    Install the `nh` CLI and manage devices, firmware, and deployment groups from the command line.
+  </Card>
+
+  <Card title="API Reference" icon="code" href="/api/overview">
+    Explore the full HTTP REST API and Device WebSocket protocol.
+  </Card>
+</CardGroup>
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="Signed OTA Updates" icon="shield-check" href="/concepts/firmware-signing">
+    Every firmware file is signed with Ed25519 keys. Devices independently verify signatures before applying any update.
+  </Card>
+
+  <Card title="Delta Updates" icon="compress" href="/management/delta-updates">
+    Ship only binary diffs between firmware versions — a 58 MB release can shrink to ~100 KB.
+  </Card>
+
+  <Card title="Remote Console" icon="display" href="/management/remote-console">
+    Open a live IEx or shell session on any connected device directly from your browser.
+  </Card>
+
+  <Card title="Fleet Health" icon="heart-pulse" href="/management/health-monitoring">
+    Monitor CPU, memory, load, and custom metrics across your entire fleet with configurable alarms.
+  </Card>
+
+  <Card title="Staged Rollouts" icon="layer-group" href="/concepts/deployments">
+    Roll a release out in stages — a canary batch, an approval gate, then everything else — with failure limits on each step.
+  </Card>
+
+  <Card title="Flexible Authentication" icon="key" href="/auth/device-certificates">
+    Use Shared Secrets for development, X.509 certificates for production, or NervesKey hardware security modules for maximum security.
+  </Card>
+</CardGroup>
+
+## Get Started
+
+<Steps>
+  <Step title="Add NervesHubLink to your project">
+    Add `{:nerves_hub_link, "~> 2.7"}` to your Nerves project's `mix.exs` and configure it with your product credentials.
+  </Step>
+  <Step title="Install the CLI">
+    Install the `nh` CLI via Homebrew or the install script, then authenticate with `nh user auth`.
+  </Step>
+  <Step title="Create a signing key and publish firmware">
+    Run `nh key create my-key`, build your firmware with `mix firmware`, then publish it with `nh firmware upload`.
+  </Step>
+  <Step title="Create a deployment group">
+    Target devices by tag and version, activate the group, and watch your fleet update automatically.
+  </Step>
+</Steps>
+
+<Note>
+  New to NervesHub? Follow the [Quickstart guide](/quickstart) for a complete end-to-end walkthrough using Shared Secret authentication — no hardware security module required.
+</Note>

@@ -1,0 +1,103 @@
+---
+title: "NervesHub Fleet Overview: Monitor Devices in Real Time"
+sidebarTitle: "Fleet Overview"
+description: "View real-time online/offline status, connection history, firmware version distribution, and health metrics across your entire device fleet."
+---
+
+The fleet overview in NervesHub gives you a real-time picture of every device in your organization — what's online, what firmware each device is running, and how your fleet has been connecting over time. Whether you're managing ten devices or hundreds of thousands, NervesHub surfaces the information you need to stay on top of your fleet without writing custom monitoring infrastructure.
+
+## Fleet Dashboard
+
+When you open your product in the NervesCloud UI, the Fleet Dashboard is the first thing you see. It gives you a high-level summary of your entire device population at a glance:
+
+* **Online / Offline counts** — a live count of devices currently connected via WebSocket versus those that have gone silent
+* **Connection history** — a time-series chart showing how many devices were online at each point in the past, useful for spotting patterns like overnight disconnects or rollout-related disruptions
+* **Firmware version distribution** — a breakdown of how many devices are running each firmware version, so you can track rollout progress and identify devices stuck on older builds
+* **Alarm summary** — a count of devices currently in an alarmed state, linking directly to the filtered device list
+
+The dashboard refreshes automatically, so you always see the current state of your fleet without needing to reload the page.
+
+## Device List
+
+The Device List shows every device registered under your product. You can sort, filter, and search to find exactly the devices you need:
+
+* **Search by identifier** — type a device identifier or partial match to narrow the list instantly
+* **Filter by status** — show only online, offline, or never-connected devices
+* **Filter by firmware version** — isolate devices running a specific build
+* **Filter by tag** — tags are the primary mechanism for fleet segmentation in NervesHub; use them to separate production from staging, or to group devices by region, hardware revision, or customer
+* **Sort by last connection time** — find devices that haven't checked in recently
+
+Each row in the device list shows the device identifier, current firmware version, connection status, last-seen timestamp, and any active alarms.
+
+## CLI: List Devices
+
+You can inspect your fleet from the terminal using the `nh` CLI. The commands below assume you are authenticated and have your org and product configured.
+
+List all devices in the current product:
+
+```bash
+nh device list
+```
+
+Filter the list to devices carrying a specific tag:
+
+```bash
+nh device list --tag main
+```
+
+Show full detail for a single device:
+
+```bash
+nh device show my-device-001
+```
+
+<Tip>
+  Use `--output json` with any `nh device` command to get machine-readable output. You can then pipe it into `jq` for scripted fleet inspection — for example, to find all offline devices:
+
+  ```bash
+  nh device list --output json | jq '.[] | select(.status == "offline")'
+  ```
+
+  This is useful for building alerting scripts, populating dashboards, or generating reports without hitting the HTTP API directly.
+</Tip>
+
+## Device Detail
+
+Clicking any device in the list opens the Device Detail page. This per-device view consolidates everything NervesHub knows about a single device:
+
+* **Firmware validation status** — whether the device has confirmed the firmware as valid after the last update
+* **Connection history** — a timeline of every connect and disconnect event, with timestamps and duration
+* **Health metrics** — CPU usage, memory usage, and system load averages charted over time (see [Health Monitoring](/management/health-monitoring))
+* **Active alarms** — any alarms currently firing on the device
+* **Geolocation** — if the `geo` extension is enabled, NervesHub can plot the device on a map
+* **Update history** — the sequence of firmware updates the device has received
+
+## Connection Status
+
+A device appears as **online** when it maintains an active WebSocket connection to the NervesHub server at `wss://{host}/socket/websocket`. The connection uses Phoenix Channels over mTLS, so both the server and the device authenticate each other before any data flows.
+
+A device transitions to **offline** as soon as the WebSocket connection drops — whether from a reboot, a network outage, or a firmware update in progress. NervesHub records the exact timestamp of each transition, so you have a complete connection history for every device.
+
+There is no polling interval to worry about: NervesHub detects disconnections immediately via the WebSocket heartbeat.
+
+## Filtering by Tag and Version
+
+Tags are strings you assign to devices to segment your fleet. A device can carry multiple tags. Deployment groups target devices by tag, so your tagging strategy directly controls which devices receive which firmware.
+
+Common tagging patterns include:
+
+| Tag              | Purpose                                       |
+| ---------------- | --------------------------------------------- |
+| `main`           | Devices tracking your primary release channel |
+| `beta`           | Opt-in devices for pre-release firmware       |
+| `region-us-east` | Geographic grouping                           |
+| `hw-rev-3`       | Hardware revision gating                      |
+
+To view all devices with a given tag in the UI, use the tag filter on the Device List page. From the CLI:
+
+```bash
+nh device list --tag beta
+nh device list --tag hw-rev-3
+```
+
+Combining tag filtering with version filtering lets you answer questions like "which beta devices are still on the previous release?" without writing any custom queries.
