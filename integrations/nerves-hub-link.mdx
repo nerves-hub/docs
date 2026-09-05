@@ -13,9 +13,27 @@ Added to your project as an Elixir dependency, it maintains the WebSocket connec
 {:nerves_hub_link, "~> 2.7"}
 ```
 
-## Where to go next
+## Library documentation
 
-This client is covered in depth elsewhere in these docs rather than repeated here:
+The library documents itself on HexDocs, and that is the authoritative reference — it ships with the library, so it is always current for the version you are running.
+
+<Card title="nerves_hub_link on HexDocs" icon="book" href="https://nerves-hub-link.hexdocs.pm/">
+  Full documentation for the library: every configuration key, the client behaviour, the extensions, and the module reference.
+</Card>
+
+Worth knowing where things are:
+
+| Guide | Covers |
+| --- | --- |
+| [Configuration](https://nerves-hub-link.hexdocs.pm/configuration.html) | Every option: connection, authentication, signing keys, update behaviour, sockets |
+| [Extensions](https://nerves-hub-link.hexdocs.pm/extensions.html) | Configuring health, metrics, geo and the local shell on the device |
+| [Debugging](https://nerves-hub-link.hexdocs.pm/debugging.html) | Working out why a device is not connecting or not updating |
+| [`NervesHubLink.Client`](https://nerves-hub-link.hexdocs.pm/NervesHubLink.Client.html) | Deciding when an update is applied, deferred or refused |
+| [`NervesHubLink.Configurator`](https://nerves-hub-link.hexdocs.pm/NervesHubLink.Configurator.html) | Supplying credentials at runtime rather than compile time |
+
+## Getting a device connected
+
+These pages cover the NervesHub side — creating the product, getting credentials, and pointing a device at them:
 
 <CardGroup cols={2}>
   <Card title="Add to Project" icon="plus" href="/setup/add-to-project">
@@ -24,14 +42,6 @@ This client is covered in depth elsewhere in these docs rather than repeated her
 
   <Card title="Connecting" icon="plug" href="/setup/connecting">
     Point a device at NervesCloud or your own instance, and configure runtime credentials.
-  </Card>
-
-  <Card title="Configuration Reference" icon="sliders" href="/api/nerveshublink-config">
-    Every configuration key: connection, authentication, signing keys, socket tuning.
-  </Card>
-
-  <Card title="Client Behaviour" icon="code" href="/api/nerveshublink-client">
-    Control when updates are applied by implementing `NervesHubLink.Client`.
   </Card>
 </CardGroup>
 
