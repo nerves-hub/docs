@@ -25,12 +25,6 @@ nh key create my-key
 
 This command creates the keypair locally and uploads the public key to NervesHub. The private key is stored in your local `nh` configuration directory — treat it with the same care as any other secret credential.
 
-If you are using the legacy Mix-based workflow, you can create a key with:
-
-```bash
-mix nerves_hub.key create devkey --org my-org
-```
-
 <Warning>
   Never commit signing private keys to source control. In CI/CD pipelines, pass the private key via the `NERVES_HUB_FW_PRIVATE_KEY` environment variable rather than writing it to disk. Rotate any key that has been exposed and remove the corresponding public key from NervesHub immediately.
 </Warning>
