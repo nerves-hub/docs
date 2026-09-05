@@ -72,6 +72,16 @@
         ]
       },
       {
+        "tab": "Integrations",
+        "pages": [
+          "integrations/overview",
+          "integrations/nerves-hub-link",
+          "integrations/atomvm-esp32",
+          "integrations/linux-agent",
+          "integrations/yocto"
+        ]
+      },
+      {
         "tab": "CLI",
         "pages": [
           "cli/installation",

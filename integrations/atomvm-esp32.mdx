@@ -1,0 +1,126 @@
+---
+title: "AtomVM on ESP32"
+sidebarTitle: "AtomVM on ESP32"
+description: "Connect an ESP32 running AtomVM to NervesHub with the Erlang device agent, or the Elixir layer over it, including the custom VM build both require."
+---
+
+[nerves_hub_link_atomvm_esp32](https://github.com/nerves-hub/nerves_hub_link_atomvm_esp32) is a NervesHub device agent for [AtomVM](https://www.atomvm.net/) on the ESP32, written in Erlang. [nerves_hub_link_atomvm_esp32_ex](https://github.com/nerves-hub/nerves_hub_link_atomvm_esp32_ex) is an Elixir layer over it — a convenience wrapper rather than an abstraction, so the two can be mixed freely.
+
+<Warning>
+  A device needs **AtomVM built from source**. The WebSocket transport is an ESP-IDF component, so a stock AtomVM build cannot reach NervesHub at all. This is a prerequisite for connecting, not for an optional feature.
+</Warning>
+
+## Building the VM
+
+Three changes to an AtomVM build, each buying one thing:
+
+| Change | Needed for |
+| --- | --- |
+| The [WebSocket transport](https://github.com/nerves-hub/atomvm_websocket_client) as an ESP-IDF component | Connecting at all |
+| Two packbeam partitions, `main.avm` and `alt.avm` | Over-the-air updates |
+| `AVM_USE_LIBSODIUM=ON` and a 16K main task stack | Verifying firmware signatures |
+
+Only the first is mandatory. Leaving the partitions out gives a device that connects, reports what it is running, answers the console and carries the extensions — it simply has nowhere to put an update other than the partition it is executing from. Leaving libsodium out means a device configured with `firmware_keys` reports `verification_unavailable` rather than accepting an update it cannot check. Both are supported choices.
+
+The agent ships the files the VM needs in `priv/atomvm`. The repository's [building the VM](https://github.com/nerves-hub/nerves_hub_link_atomvm_esp32#building-the-vm) section has the full sequence.
+
+<Note>
+  Use `idf.py set-target` rather than `reconfigure` when adding the transport component. CMake caches its component list, so a plain `idf.py build` afterwards reports success without ever compiling the new component — a silent failure. Supported ESP-IDF versions are **v5.2 to v5.5**; AtomVM does not build against v6.
+</Note>
+
+From Elixir, a mix task does the VM preparation for you:
+
+```bash
+. $IDF_PATH/export.sh
+mix nerves_hub.atomvm.vm ~/src/AtomVM ~/src/atomvm_websocket_client
+```
+
+## Installing
+
+<Tabs>
+  <Tab title="Erlang">
+    ```erlang
+    {deps, [
+        {nerves_hub_link_atomvm_esp32, "~> 0.1"},
+        {atomvm_websocket_client,
+            {git, "https://github.com/nerves-hub/atomvm_websocket_client.git",
+                {branch, "main"}}}
+    ]}.
+    ```
+
+    The transport stays a git dependency because it is not published — it is an ESP-IDF component first and an Erlang library second, and the half that matters is compiled into the VM rather than fetched by rebar3.
+  </Tab>
+
+  <Tab title="Elixir">
+    ```elixir
+    defp deps do
+      [
+        {:nerves_hub_link_atomvm_esp32_ex, "~> 0.1"},
+        {:atomvm_websocket_client,
+         github: "nerves-hub/atomvm_websocket_client", manager: :rebar3}
+      ]
+    end
+    ```
+
+    The Erlang agent is not listed and does not need to be — this package depends on it, so mix resolves and builds it for you. The transport does need listing, because nothing depends on it.
+  </Tab>
+</Tabs>
+
+## Connecting
+
+<Tabs>
+  <Tab title="Erlang">
+    ```erlang
+    {ok, _Pid} = nerves_hub_link:start(#{
+        identifier    => <<"my-device">>,
+        shared_secret => {Key, Secret}
+    }).
+    ```
+  </Tab>
+
+  <Tab title="Elixir">
+    ```elixir
+    {:ok, agent} =
+      NervesHubLink.start_link(
+        identifier: "my-device",
+        shared_secret: {key, secret},
+        console: true,
+        extensions: :all
+      )
+    ```
+  </Tab>
+</Tabs>
+
+There is no URL in either call — where it connects is worked out for you.
+
+## Handling events
+
+The agent sends `{nerves_hub, Event}` to the calling process, or in Elixir to whichever process is named as its `:handler`, so a device is naturally written as a `GenServer` receiving them in `handle_info/2`.
+
+| Event | Meaning |
+| --- | --- |
+| `{joined, Response}` | The device channel is live |
+| `{join_error, Reason}` | The server refused the join |
+| `{update_started, Pid}` | An update is downloading |
+| `{update_ready, Slot}` | Written and armed; reboot when convenient |
+| `{update_failed, Reason}` | Refused, or the write failed |
+| `{firmware_committed, Slot}` | The running update proved itself |
+| `identify` | Blink something |
+| `reboot_requested` | Only with `reboot => manual` |
+| `console_joined` | Someone opened the console |
+| `{disconnected, Reason}` | The socket dropped; the transport reconnects |
+| `{transport_error, Reason}` | TLS or network failure |
+
+And the device reports back:
+
+```erlang
+nerves_hub_link:update_progress(Pid, 42, <<"downloading">>),
+nerves_hub_link:firmware_validated(Pid),
+nerves_hub_link:update_failed(Pid, <<"flash write failed">>).
+```
+
+## Partition sizing
+
+`main.avm` and `alt.avm` must be the same size, since either has to hold the archive. Read the offsets off the device rather than from a checkout — writing from a stale copy of the table lands the application inside `boot.avm`, and the only symptom is `Failed app start: invalid_avm`.
+
+Both repositories document the reasoning behind each partition size. In short: `boot.avm` is larger than stock because an Elixir device needs `elixir_esp32boot.avm`, and `factory` is larger because libsodium adds around 140K. An Erlang device without signature verification can use the stock sizes for both.

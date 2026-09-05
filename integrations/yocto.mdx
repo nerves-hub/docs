@@ -1,0 +1,62 @@
+---
+title: "Yocto Layer"
+sidebarTitle: "Yocto"
+description: "Package the NervesHub Linux agent into a Yocto image with meta-nerveshub, including the layers it depends on and the DISTRO_FEATURES it needs."
+---
+
+[meta-nerveshub](https://github.com/nerves-hub/meta-nerveshub) is a Yocto layer that packages the [Linux agent](/integrations/linux-agent) into an image. The layer is only the agent — [meta-rauc](https://github.com/rauc/meta-rauc) does the bundle and slot work.
+
+```bash
+bitbake-layers add-layer /path/to/meta-nerveshub
+```
+
+```bitbake
+IMAGE_INSTALL:append = " nerves-hub-link-agent"
+```
+
+## Layers it depends on
+
+```bash
+bitbake-layers add-layer /path/to/meta-rauc
+bitbake-layers add-layer /path/to/meta-rust-bin
+bitbake-layers add-layer /path/to/meta-nerveshub
+```
+
+Both are declared in `LAYERDEPENDS`, so a missing one fails when the layer is added rather than deep into a build.
+
+**meta-rauc** supplies the `rauc` the agent shells out to. The agent talks to `rauc install` over D-Bus, so the image needs `rauc` and its service running.
+
+**[meta-rust-bin](https://github.com/rust-embedded/meta-rust-bin)** supplies the toolchain. The agent needs Rust 1.85 — where edition 2024 was stabilised — and no released Yocto ships one that new: scarthgap has cargo 1.75, walnascar 1.84. meta-rust-bin packages prebuilt upstream toolchains and spans kirkstone through wrynose, so the Rust version stops being a function of the Yocto release. The recipe inherits `cargo_bin` from that layer rather than poky's `cargo`.
+
+<Note>
+  That tradeoff is worth knowing before you adopt it. In meta-rust-bin's own words, prebuilt toolchains "will never be able to support architectures or options not supported by the Rust team itself", and the prebuilt standard library may be less efficient than a custom-compiled one. They are also upstream binaries rather than something your build system compiled, which matters if you have reproducibility or audit requirements.
+</Note>
+
+## Required DISTRO_FEATURES
+
+Both `rauc` and `systemd` have to be present:
+
+```bitbake
+DISTRO_FEATURES:append = " rauc"
+INIT_MANAGER = "systemd"
+```
+
+`rauc` is meta-rauc's requirement rather than this layer's; without it meta-rauc warns and the image has no RAUC support to speak of.
+
+<Warning>
+  Without systemd, `systemd_system_unitdir` expands to nothing and the unit installs nowhere — the package builds, ships a binary with nothing to start it, and says nothing. The recipe guards the install so that is a missing unit rather than a broken one, but the image still needs systemd for the agent to run as intended.
+</Warning>
+
+## Updating the crate list
+
+Yocto fetches offline, so every crate is declared as a source rather than resolved by cargo during `do_compile`. After a `Cargo.lock` change:
+
+```bash
+bitbake -c update_crates nerves-hub-link-agent
+```
+
+That rewrites `nerves-hub-link-agent-crates.inc`.
+
+## Configuring the agent
+
+Packaging puts the binary and its unit in the image; it does not configure it. See [Linux Agent](/integrations/linux-agent) for the TOML config, and the agent's [`docs/deploying.md`](https://github.com/nerves-hub/nerves-hub-link-agent/blob/main/docs/deploying.md) for the service user, the device identifier and the rest of the deployment contract.

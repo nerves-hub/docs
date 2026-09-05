@@ -1,0 +1,38 @@
+---
+title: "Choosing a Device Client"
+sidebarTitle: "Overview"
+description: "The ways a device can connect to NervesHub: NervesHubLink for Nerves, AtomVM on the ESP32, a Rust agent for other Linux systems, and a Yocto layer."
+---
+
+A device connects to NervesHub over a Phoenix Channels WebSocket and speaks the [device protocol](/api/websocket-overview). Nothing about that protocol is Elixir-specific, so a client is whatever software on the device speaks it — reporting the firmware it is running, accepting update assignments, and handing the download to whatever writes firmware on that platform.
+
+Several clients already exist. Which one you want follows from what the device runs.
+
+## The options
+
+| Client | Language | Runs on | Writes firmware with |
+| --- | --- | --- | --- |
+| [NervesHubLink](/integrations/nerves-hub-link) | Elixir | Nerves | fwup |
+| [AtomVM agent](/integrations/atomvm-esp32) | Erlang, with an Elixir layer | AtomVM on the ESP32 | packbeam partitions |
+| [Linux agent](/integrations/linux-agent) | Rust | Linux that is not Nerves | fwup or RAUC |
+| [meta-nerveshub](/integrations/yocto) | BitBake | Yocto builds | packages the Linux agent |
+
+<Note>
+  `meta-nerveshub` is a packaging layer rather than a separate client. It builds the Rust Linux agent into a Yocto image; the agent is what actually connects.
+</Note>
+
+## Choosing
+
+**Running Nerves?** Use [NervesHubLink](/integrations/nerves-hub-link). It is the reference client, the one the protocol is designed against, and the one every other client is measured by.
+
+**On an ESP32 with AtomVM?** Use the [AtomVM agent](/integrations/atomvm-esp32). Be aware that it needs AtomVM built from source rather than a stock build — the WebSocket transport is an ESP-IDF component, so a stock VM cannot reach NervesHub at all.
+
+**On Linux, but not Nerves?** Use the [Linux agent](/integrations/linux-agent). It is a single Rust binary that leaves your application alone in whatever language it is already written in, and shells out to `fwup` or `rauc` to write firmware.
+
+**Building that Linux image with Yocto?** Add [meta-nerveshub](/integrations/yocto) to package the agent, alongside `meta-rauc` and `meta-rust-bin`.
+
+## Writing your own
+
+None of these are privileged. The server has no notion of an official client — it speaks the documented protocol, and anything that speaks it back is a device.
+
+If you are targeting a runtime none of the above covers, the [Device WebSocket Protocol](/api/websocket-overview) and [WebSocket Channel Events](/api/websocket-events) references describe the connection, the join, and every message in both directions. The existing clients are also worth reading as reference implementations, particularly for reconnect behaviour and update progress reporting.

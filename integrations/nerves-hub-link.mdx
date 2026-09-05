@@ -1,0 +1,40 @@
+---
+title: "NervesHubLink for Nerves"
+sidebarTitle: "NervesHubLink"
+description: "The reference NervesHub client for Nerves devices: an Elixir library that maintains the device connection, applies firmware updates, and carries the extensions."
+---
+
+[NervesHubLink](https://github.com/nerves-hub/nerves_hub_link) is the client for devices running [Nerves](https://nerves-project.org/). It is the reference implementation of the device protocol — the one the server is developed against, and the one the other clients are measured by.
+
+Added to your project as an Elixir dependency, it maintains the WebSocket connection, reports the firmware the device is running, downloads and applies updates through `fwup`, serves the remote console, and carries the [extensions](/management/health-monitoring) that report health, metrics, geo and logs.
+
+```elixir
+# mix.exs
+{:nerves_hub_link, "~> 2.7"}
+```
+
+## Where to go next
+
+This client is covered in depth elsewhere in these docs rather than repeated here:
+
+<CardGroup cols={2}>
+  <Card title="Add to Project" icon="plus" href="/setup/add-to-project">
+    Add the dependency, pick an authentication method, and configure `config/target.exs`.
+  </Card>
+
+  <Card title="Connecting" icon="plug" href="/setup/connecting">
+    Point a device at NervesCloud or your own instance, and configure runtime credentials.
+  </Card>
+
+  <Card title="Configuration Reference" icon="sliders" href="/api/nerveshublink-config">
+    Every configuration key: connection, authentication, signing keys, socket tuning.
+  </Card>
+
+  <Card title="Client Behaviour" icon="code" href="/api/nerveshublink-client">
+    Control when updates are applied by implementing `NervesHubLink.Client`.
+  </Card>
+</CardGroup>
+
+## Not running Nerves?
+
+If your device runs Linux without Nerves, or an ESP32 under AtomVM, see [Choosing a Device Client](/integrations/overview) for the other options.
