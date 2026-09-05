@@ -1,27 +1,20 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "name": "NervesHub",
-  "theme": "aspen",
+  "name": "NervesCloud",
+  "theme": "palm",
   "colors": {
     "primary": "#6366f1",
-    "light": "#818cf8",
-    "dark": "#4f46e5"
+    "light": "#f19758",
+    "dark": "#c2591a"
   },
   "favicon": "/favicon.svg",
   "navbar": {
     "primary": {
-      "type": "github",
-      "href": "https://github.com/nerves-hub/nerves_hub_web"
+      "type": "button",
+      "href": "https://manage.nervescloud.com",
+      "label": "Dashboard"
     },
     "links": [
-      {
-        "href": "https://help.nervescloud.com/roadmap",
-        "label": "Roadmap"
-      },
-      {
-        "href": "https://help.nervescloud.com/changelog",
-        "label": "Changelog"
-      },
       {
         "href": "https://help.nervescloud.com",
         "label": "Feedback"
@@ -149,5 +142,19 @@
         ]
       }
     ]
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/nerves-hub"
+    }
+  },
+  "contextual": {
+    "options": [
+      "copy",
+      "view",
+      "chatgpt",
+      "claude"
+    ],
+    "display": "header"
   }
 }
