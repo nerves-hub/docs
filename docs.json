@@ -70,7 +70,7 @@
             "pages": [
               "concepts/pki",
               "concepts/firmware-signing",
-              "concepts/deployments"
+              "concepts/deployment-workflows"
             ]
           }
         ]
@@ -132,6 +132,11 @@
     {
       "source": "/api/nerveshublink-client",
       "destination": "/integrations/nerves-hub-link",
+      "permanent": true
+    },
+    {
+      "source": "/concepts/deployments",
+      "destination": "/setup/deployments",
       "permanent": true
     }
   ],
