@@ -12,11 +12,6 @@
     "dark": "/images/favicon.svg"
   },
   "navbar": {
-    "primary": {
-      "type": "button",
-      "href": "https://manage.nervescloud.com",
-      "label": "Dashboard"
-    },
     "links": [
       {
         "href": "https://nervescloud.com",
