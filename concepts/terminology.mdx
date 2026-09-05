@@ -43,7 +43,7 @@ NervesHub organizes its data model as a hierarchy: an **Organization** contains 
 </Accordion>
 
 <Accordion title="Firmware">
-  Firmware in NervesHub refers to a `.fw` file in the **fwup** format — a ZIP archive that contains your compiled Nerves system image along with metadata (product name, version, platform, architecture, description) and an Ed25519 cryptographic signature. NervesHub stores firmware and makes it available for download by devices during an OTA update.
+  Firmware in NervesHub refers to a `.fw` file in the **fwup** format — a ZIP archive that contains your compiled Nerves system image along with metadata (product name, version, platform, architecture, description) and a cryptographic signature. NervesHub stores firmware and makes it available for download by devices during an OTA update.
 
   Firmware is always associated with a single product and must be signed by a Firmware Signing Key that is registered for that product before it can be shipped to devices.
 </Accordion>
@@ -53,7 +53,7 @@ NervesHub organizes its data model as a hierarchy: an **Organization** contains 
 </Accordion>
 
 <Accordion title="Firmware Signing Key">
-  A Firmware Signing Key is an Ed25519 public/private keypair used to prove that a firmware binary was produced by a trusted party. The private key signs the firmware at build time (via `fwup`/libsodium). The corresponding public key is:
+  A Firmware Signing Key is a public/private keypair used to prove that a firmware binary was produced by a trusted party. The private key signs the firmware at build time (via `fwup`). The corresponding public key is:
 
   * **Uploaded to NervesHub** so the server can confirm the firmware is signed by a key registered for the product.
   * **Embedded in device firmware** via `fwup_public_keys` configuration so the device can independently verify the signature before applying an update — even without trusting NervesHub.

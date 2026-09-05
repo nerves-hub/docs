@@ -115,7 +115,7 @@ nh device certificates upload <identifier>         # Upload an existing certific
 
 ## Firmware Commands
 
-Upload, inspect, download, and delete firmware artifacts. Firmware files use the fwup `.fw` format, signed with Ed25519 keys.
+Upload, inspect, download, and delete firmware artifacts. Firmware files use the fwup `.fw` format and are signed before upload.
 
 ```bash
 nh firmware list                # List all firmware for the current product
@@ -156,12 +156,12 @@ nh deployment delete <name>     # Delete a deployment group
 
 ## Signing Key Commands
 
-Ed25519 firmware signing keys are managed per-organization. A public key is stored in NervesHub; the private key never leaves your machine.
+Firmware signing keys are managed per-organization. A public key is stored in NervesHub; the private key never leaves your machine.
 
 ```bash
 nh key list           # List all signing keys for the current org
 nh key show <name>    # Show details for a signing key
-nh key create <name>  # Generate and register a new Ed25519 signing key pair
+nh key create <name>  # Generate and register a new signing key pair
 nh key delete <name>  # Remove a signing key from the org
 ```
 

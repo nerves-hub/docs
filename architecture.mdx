@@ -26,7 +26,7 @@ NervesHub is composed of several distinct components that work together: a centr
   </Card>
 
   <Card title="fwup" icon="wrench">
-    The firmware packaging and application tool. fwup creates ZIP-based `.fw` archives, signs them with Ed25519 keys at build time, and applies updates atomically on the device using a dual-partition A/B scheme. fwup runs on both the build host (packaging) and the device (application).
+    The firmware packaging and application tool. fwup creates ZIP-based `.fw` archives, signs them at build time, and applies updates atomically on the device using a dual-partition A/B scheme. fwup runs on both the build host (packaging) and the device (application).
   </Card>
 
   <Card title="NervesKey (Optional)" icon="key">
@@ -45,7 +45,7 @@ When a deployment group is activated, the following sequence occurs:
 1. The **NervesHub server** evaluates which connected devices match the group's tag and version conditions.
 2. Matching devices receive an update notification over their **Phoenix WebSocket channel**.
 3. `nerves_hub_link` on the device downloads the firmware `.fw` file directly from **object storage** using a pre-signed URL provided by the server.
-4. `nerves_hub_link` passes the downloaded file to **fwup**, which verifies the Ed25519 signature and atomically writes the new firmware to the inactive partition.
+4. `nerves_hub_link` passes the downloaded file to **fwup**, which verifies the signature and atomically writes the new firmware to the inactive partition.
 5. The device reboots into the new partition. On successful boot, it reports back to the server, which marks the update as applied.
 
 <Info>
@@ -112,11 +112,11 @@ Devices connect to the NervesHub WebSocket endpoint over TLS. For device certifi
   **Your private keys never leave your infrastructure.** NervesHub stores only the public CA certificate you register. Device private keys are generated and stored on the device itself (or in a NervesKey hardware element) and are never uploaded to the server.
 </Note>
 
-### Firmware Integrity — Ed25519 Signatures
+### Firmware Integrity — Signed Images
 
-Every firmware file is signed with an Ed25519 key pair using **fwup** at build time. The signing private key lives on your build machine or in your CI secrets store. NervesHub stores and distributes the public key.
+Every firmware file is signed with **fwup** at build time. The signing private key lives on your build machine or in your CI secrets store. NervesHub stores and distributes the public key.
 
-When a device applies a firmware update, fwup verifies the Ed25519 signature against the registered public keys **before writing a single byte to flash**. A firmware image that fails verification is discarded and the update is aborted — the device continues running its current firmware safely.
+When a device applies a firmware update, fwup verifies the signature against the registered public keys **before writing a single byte to flash**. A firmware image that fails verification is discarded and the update is aborted — the device continues running its current firmware safely.
 
 ### Summary of Security Boundaries
 
@@ -124,7 +124,7 @@ When a device applies a firmware update, fwup verifies the Ed25519 signature aga
 | ---------------------------- | ------------------------ | ------------------------------------------- |
 | Device ↔ Server connection   | TLS / mTLS               | Device (private key on device or NervesKey) |
 | Device identity verification | X.509 certificate chain  | You (CA private key never shared)           |
-| Firmware authenticity        | Ed25519 signature (fwup) | You (signing key in build environment)      |
+| Firmware authenticity        | Signed image (fwup)      | You (signing key in build environment)      |
 | API access (CLI / CI)        | Bearer token             | Engineer / CI system                        |
 
 ## Scale and Reliability

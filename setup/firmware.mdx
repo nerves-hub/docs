@@ -1,10 +1,10 @@
 ---
 title: "Build, Sign, and Upload Nerves Firmware to NervesHub"
 sidebarTitle: "Firmware"
-description: "How to build a fwup firmware file with Nerves, sign it with an Ed25519 key, and upload it to NervesHub for delivery to your device fleet."
+description: "How to build a fwup firmware file with Nerves, sign it, and upload it to NervesHub for delivery to your device fleet."
 ---
 
-NervesHub stores firmware as fwup-format `.fw` files — ZIP-based archives that carry a cryptographic Ed25519 signature alongside the filesystem image. Before a device applies an update, it verifies the signature against a trusted public key registered with NervesHub. This end-to-end signing chain ensures that no untrusted firmware can be installed on your devices, even if your update infrastructure is compromised.
+NervesHub stores firmware as fwup-format `.fw` files — ZIP-based archives that carry a cryptographic signature alongside the filesystem image. Before a device applies an update, it verifies the signature against a trusted public key registered with NervesHub. This end-to-end signing chain ensures that no untrusted firmware can be installed on your devices, even if your update infrastructure is compromised.
 
 <Note>
   A firmware entry's UUID is derived from the content of the `.fw` file. Uploading the same binary twice produces the same UUID, and NervesHub will skip the upload on the second attempt. This makes CI pipelines idempotent — re-running a failed upload job is always safe.
@@ -23,7 +23,7 @@ The compiled `.fw` file is written to `./_build/${MIX_TARGET}_dev/nerves/images/
 
 ## Create a Signing Key
 
-If you have not yet created a signing key for your product, create one now. The `nh key create` command generates an Ed25519 keypair and registers the public key with NervesHub:
+If you have not yet created a signing key for your product, create one now. The `nh key create` command generates a signing keypair and registers the public key with NervesHub:
 
 ```bash
 nh key create my-key
@@ -39,7 +39,7 @@ You can sign a firmware file independently of uploading it — useful when the s
 nh firmware sign my_project.fw --key my-key
 ```
 
-This writes the Ed25519 signature into the `.fw` archive in place. The signing key's private key material must be accessible to the host running this command.
+This writes the signature into the `.fw` archive in place. The signing key's private key material must be accessible to the host running this command.
 
 ## Upload Firmware
 

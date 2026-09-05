@@ -1,7 +1,7 @@
 ---
 title: "NervesHub Firmware API: Upload, Sign, and Manage Firmware"
 sidebarTitle: "Firmware"
-description: "HTTP API endpoints to list, upload, download, and delete firmware files and manage Ed25519 firmware signing keys in NervesHub products."
+description: "HTTP API endpoints to list, upload, download, and delete firmware files and manage firmware signing keys in NervesHub products."
 ---
 
 The Firmware API lets you manage firmware files for your products programmatically — upload signed `.fw` archives, inspect metadata, and maintain the signing keys that NervesHub uses to verify firmware integrity before distributing updates to devices.
@@ -128,7 +128,7 @@ curl -X POST \
 ```
 
 <Note>
-  Firmware must be signed with an Ed25519 key before uploading. NervesHub verifies the signature against the signing keys registered to your organization and rejects unsigned or unrecognized firmware. Sign your firmware with `fwup --sign` before calling this endpoint.
+  Firmware must be signed before uploading. NervesHub verifies the signature against the signing keys registered to your organization and rejects unsigned or unrecognized firmware. Sign your firmware with `fwup --sign` before calling this endpoint.
 </Note>
 
 ***
@@ -216,7 +216,7 @@ Returns `204 No Content` on success.
 
 ## List Firmware Signing Keys
 
-List the Ed25519 public keys registered for an organization. NervesHub validates firmware signatures against these keys at upload time.
+List the public signing keys registered for an organization. NervesHub validates firmware signatures against these keys at upload time.
 
 ```
 GET /api/orgs/{org_name}/keys
@@ -251,7 +251,7 @@ curl -H "Authorization: Bearer $NERVES_HUB_TOKEN" \
 
 ## Register a Firmware Signing Key
 
-Upload a new Ed25519 public key to your organization. Any firmware signed with the corresponding private key will pass signature verification on upload.
+Upload a new public signing key to your organization. Any firmware signed with the corresponding private key will pass signature verification on upload.
 
 ```
 POST /api/orgs/{org_name}/keys
@@ -266,7 +266,7 @@ POST /api/orgs/{org_name}/keys
 </ParamField>
 
 <ParamField body="key" type="string" required>
-  The base64-encoded Ed25519 public key. Generate a key pair with `fwup --gen-keys` and supply the `.pub` file contents here.
+  The base64-encoded public key. Generate a key pair with `fwup --gen-keys` and supply the `.pub` file contents here.
 </ParamField>
 
 **Example request:**

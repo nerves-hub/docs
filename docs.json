@@ -39,16 +39,8 @@
             "pages": [
               "introduction",
               "quickstart",
-              "architecture"
-            ]
-          },
-          {
-            "group": "Core Concepts",
-            "pages": [
-              "concepts/terminology",
-              "concepts/pki",
-              "concepts/firmware-signing",
-              "concepts/deployments"
+              "architecture",
+              "concepts/terminology"
             ]
           },
           {
@@ -77,6 +69,14 @@
               "management/remote-console",
               "management/health-monitoring",
               "management/delta-updates"
+            ]
+          },
+          {
+            "group": "Advanced",
+            "pages": [
+              "concepts/pki",
+              "concepts/firmware-signing",
+              "concepts/deployments"
             ]
           },
           {

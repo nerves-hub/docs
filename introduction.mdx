@@ -10,7 +10,7 @@ NervesHub is an open-source firmware update and device management platform built
 
 IoT firmware management is deceptively hard. Devices are often deployed in locations you can't physically reach, running software that must be updated without breaking anything, on hardware that may have constrained connectivity. NervesHub is designed to solve exactly these problems:
 
-* **Reliable OTA updates** — firmware is signed with Ed25519 keys and verified on the device before applying, so a corrupted or tampered image is never applied.
+* **Reliable OTA updates** — firmware is cryptographically signed and verified on the device before applying, so a corrupted or tampered image is never applied.
 * **Safe rollouts** — deployment groups target devices by tag and version condition, with configurable concurrency limits and automatic failure thresholds to stop a bad update from spreading.
 * **Remote access** — connect to a live IEx console or remote shell on any device in your fleet without a VPN or physical access.
 * **Fleet visibility** — track device health metrics (CPU, memory, load), firmware versions, and online/offline status across your entire fleet in real time.
@@ -34,7 +34,7 @@ NervesHub is Apache-2.0 licensed with no vendor lock-in. You can run it yourself
 
 <CardGroup cols={2}>
   <Card title="Signed OTA Updates" icon="shield-check">
-    Every firmware file is signed with an Ed25519 key using the **fwup** format. Devices reject any image that fails signature verification, protecting your fleet from tampered or corrupted updates.
+    Every firmware file is signed before it is published. Devices reject any image that fails signature verification, protecting your fleet from tampered or corrupted updates.
   </Card>
 
   <Card title="Delta Updates" icon="arrows-minimize">

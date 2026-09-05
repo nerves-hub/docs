@@ -1,7 +1,7 @@
 ---
 title: "NervesHub PKI: Device Authentication and Firmware Trust"
 sidebarTitle: "PKI"
-description: "How NervesHub uses asymmetric cryptography to authenticate device connections with mTLS and to validate firmware integrity with Ed25519 signatures."
+description: "How NervesHub uses asymmetric cryptography to authenticate device connections with mTLS and to validate firmware integrity with signed firmware images."
 ---
 
 NervesHub uses asymmetric cryptography for two distinct and complementary purposes: authenticating device connections to the server, and validating the integrity of firmware before a device applies an update. These two mechanisms use different key types and operate independently, so a compromise of one does not affect the other.
@@ -43,9 +43,9 @@ You have several options for creating device certificates depending on your prov
 
 NervesHub requires a cryptographic signature on every firmware binary before it can be uploaded or shipped. This signature lets a device verify independently — without trusting any network infrastructure — that the firmware it is about to apply was produced by a party you authorized.
 
-### Signature algorithm
+### Signing keys are not certificates
 
-Firmware signatures use **Ed25519** via **libsodium**, implemented inside the `fwup` tool that Nerves uses to build and apply firmware archives. This is a separate mechanism from X.509: firmware signing keys are raw Ed25519 keypairs, not certificates, and they are not part of the TLS trust chain.
+Firmware signing is implemented inside the `fwup` tool that Nerves uses to build and apply firmware archives. This is a separate mechanism from X.509: firmware signing keys are raw key pairs, not certificates, and they are not part of the TLS trust chain.
 
 ### How the public key is distributed
 
@@ -76,14 +76,14 @@ Because the signature is embedded in the firmware and the public key is embedded
 
 ```text
 [Build system]
-  signs .fw with Ed25519 private key
+  signs .fw with the private signing key
         ↓
 [NervesHub]
   validates signature at upload time
         ↓
 [Device]
   downloads .fw over WebSocket
-  verifies Ed25519 signature locally using embedded public key
+  verifies signature locally using embedded public key
   applies update only if signature is valid
 ```
 
