@@ -22,7 +22,7 @@
           {
             "group": "Core Concepts",
             "pages": [
-              "concepts/terminology",
+              "terminology",
               "concepts/pki",
               "concepts/firmware-signing",
               "concepts/deployments"
@@ -99,7 +99,7 @@
     ]
   },
   "keyFeatures": [
-    "Signed over-the-air (OTA) firmware updates with Ed25519 cryptographic signatures",
+    "Signed over-the-air (OTA) firmware updates with cryptographic signatures",
     "Delta firmware updates — ship only binary diffs (up to 95% size reduction)",
     "Remote IEx console and shell access to any connected device",
     "Deployment groups — target devices by tag and version condition with staged rollouts",

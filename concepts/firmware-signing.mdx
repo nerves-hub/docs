@@ -1,23 +1,23 @@
 ---
-title: "Sign and Upload NervesHub Firmware with Ed25519 Keys"
+title: "Sign and Upload NervesHub Firmware"
 sidebarTitle: "Firmware Signing"
-description: "How to create Ed25519 signing keys, embed public keys in your Nerves firmware, sign and upload firmware, and manage multiple keys for production safety."
+description: "How to create signing keys, embed public keys in your Nerves firmware, sign and upload firmware, and manage multiple keys for production safety."
 ---
 
-Firmware signing ensures that only firmware produced by a party you trust can run on your devices. Before a device applies any OTA update, it verifies the Ed25519 signature embedded in the `.fw` file against a public key that was compiled into the firmware at build time. This verification happens entirely on the device — independently of NervesHub — so the chain of trust holds even if the server or the network is compromised.
+Firmware signing ensures that only firmware produced by a party you trust can run on your devices. Before a device applies any OTA update, it verifies the signature embedded in the `.fw` file against a public key that was compiled into the firmware at build time. This verification happens entirely on the device — independently of NervesHub — so the chain of trust holds even if the server or the network is compromised.
 
 ## How It Works
 
-NervesHub uses **Ed25519** keypairs via **libsodium**, implemented inside the `fwup` tool that packages Nerves firmware. Signing is a two-step distribution:
+Signing happens inside the `fwup` tool that packages Nerves firmware, using a public/private key pair you create. The signature is then checked in two places:
 
-1. At build time, you embed the Ed25519 **public key** into your firmware image via the `fwup_public_keys` configuration. Every device that runs that firmware will only accept OTA updates signed by the corresponding private key.
+1. At build time, you embed the **public key** into your firmware image via the `fwup_public_keys` configuration. Every device that runs that firmware will only accept OTA updates signed by the corresponding private key.
 2. When you upload firmware to NervesHub, the server checks the signature against the public keys registered for your product. Unsigned firmware or firmware signed by an unregistered key is rejected at upload time.
 
 The **private key** is used only during the signing step and should never leave your secure build environment.
 
 ## Creating a Signing Key
 
-Use the `nh` CLI to generate an Ed25519 keypair and register the public key with your NervesHub product in one step:
+Use the `nh` CLI to generate a keypair and register the public key with your NervesHub product in one step:
 
 ```bash
 nh key create my-key

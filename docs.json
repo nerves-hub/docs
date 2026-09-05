@@ -42,16 +42,8 @@
             "pages": [
               "introduction",
               "quickstart",
-              "architecture"
-            ]
-          },
-          {
-            "group": "Core Concepts",
-            "pages": [
-              "concepts/terminology",
-              "concepts/pki",
-              "concepts/firmware-signing",
-              "concepts/deployments"
+              "architecture",
+              "terminology"
             ]
           },
           {
@@ -80,6 +72,14 @@
               "management/remote-console",
               "management/health-monitoring",
               "management/delta-updates"
+            ]
+          },
+          {
+            "group": "Advanced",
+            "pages": [
+              "concepts/pki",
+              "concepts/firmware-signing",
+              "concepts/deployments"
             ]
           },
           {
@@ -124,6 +124,13 @@
       }
     ]
   },
+  "redirects": [
+    {
+      "source": "/concepts/terminology",
+      "destination": "/terminology",
+      "permanent": true
+    }
+  ],
   "footer": {
     "socials": {
       "github": "https://github.com/nerves-hub"

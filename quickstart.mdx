@@ -44,7 +44,7 @@ This guide uses `manage.nervescloud.com` as the host. Swap in your own if self-h
     This opens a browser window to complete authentication and stores a token locally for subsequent CLI commands.
   </Step>
   <Step title="Create a Firmware Signing Key">
-    NervesHub requires firmware to be signed before it can be uploaded. Create an Ed25519 signing key pair with the CLI:
+    NervesHub requires firmware to be signed before it can be uploaded. Create a signing key pair with the CLI:
 
     ```bash
     nh key create my-key
@@ -206,7 +206,7 @@ This guide uses `manage.nervescloud.com` as the host. Swap in your own if self-h
     With the group active, your online device will receive the update notification over its WebSocket connection to NervesCloud. It will:
 
     1. Download the new firmware.
-    2. Verify the Ed25519 signature against the embedded public key.
+    2. Verify the signature against the embedded public key.
     3. Apply the update using **fwup**.
     4. Reboot into the new firmware.
 
