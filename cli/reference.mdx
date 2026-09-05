@@ -224,10 +224,10 @@ nh config profiles                # List all saved profiles
 ## Migration
 
 ```bash
-nh migrate    # Import credentials and settings from the legacy Elixir mix CLI
+nh migrate    # Import settings and signing keys from the Elixir CLI
 ```
 
-Run `nh migrate` once after installing `nh` if you previously used `mix nerves_hub.*` tasks. The command reads your existing Mix CLI configuration and imports it into the `nh` config format without removing the original files.
+Run `nh migrate` once if you previously used the Elixir `nerves_hub_cli`. It reads that CLI's data directory (`~/.nerves-hub`, or `$NERVES_HUB_HOME`) and copies your saved defaults, API token, and signing keys into `nh`'s own data directory. Signing keys are re-encoded rather than decrypted, so no key password is required and password-protected keys keep theirs.
 
 ***
 

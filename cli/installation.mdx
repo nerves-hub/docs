@@ -1,7 +1,7 @@
 ---
 title: "NervesHub nh CLI: Installation Guide (macOS, Linux, Windows)"
 sidebarTitle: "Installation"
-description: "Install the nh CLI on macOS, Linux, or Windows using Homebrew, a curl install script, or prebuilt binaries — no Elixir toolchain required."
+description: "Install the nh CLI on macOS, Linux, or Windows using Homebrew, a prebuilt binary, or Go — no Elixir toolchain required."
 ---
 
 The `nh` CLI is a standalone binary that lets you manage your NervesHub organization, devices, firmware, and deployment groups directly from the command line or inside CI/CD pipelines — no Elixir toolchain required. Choose the installation method that fits your operating system and workflow below.
@@ -9,68 +9,65 @@ The `nh` CLI is a standalone binary that lets you manage your NervesHub organiza
 ## Install Options
 
 <Tabs>
-  <Tab title="macOS (Homebrew)">
-    The fastest way to install `nh` on macOS is through the official Homebrew tap. Homebrew also handles future upgrades with `brew upgrade`.
+  <Tab title="macOS / Linux (Homebrew)">
+    The quickest way to install `nh`. Homebrew also handles future upgrades.
 
     ```bash
-    brew install nerves-hub/tap/nh
+    brew install nerves-hub/tap/nh-cli
     ```
 
     To upgrade an existing installation:
 
     ```bash
-    brew upgrade nerves-hub/tap/nh
+    brew upgrade nerves-hub/tap/nh-cli
     ```
+
+    <Warning>
+      The same tap also carries an older Elixir build of the CLI as `nerves-hub/tap/nh`, which provides its own `nh` command. If you have it installed, remove it first so the two do not collide:
+
+      ```bash
+      brew uninstall nerves-hub/tap/nh
+      ```
+    </Warning>
 
     <Note>
       If macOS reports that the `nh` binary is not trusted after installation, open **System Settings → Privacy & Security**, scroll to the Security section, and click **Open Anyway** next to the `nh` entry. Then re-run `nh` in your terminal.
     </Note>
   </Tab>
 
-  <Tab title="Linux / macOS (curl)">
-    Use the official install script to download and install the latest release for your platform. The script detects your OS and architecture automatically and places the `nh` binary in `/usr/local/bin`.
-
-    ```bash
-    curl --proto '=https' --tlsv1.2 -fsSL \
-      https://raw.githubusercontent.com/nerves-hub/nerves_hub_cli/master/install.sh | sh
-    ```
-
-    <Warning>
-      Always review install scripts before piping them to a shell. You can inspect the script at the URL above before running it.
-    </Warning>
-
-    To install to a custom directory, set the `INSTALL_DIR` environment variable before running the script:
-
-    ```bash
-    INSTALL_DIR=~/.local/bin curl --proto '=https' --tlsv1.2 -fsSL \
-      https://raw.githubusercontent.com/nerves-hub/nerves_hub_cli/master/install.sh | sh
-    ```
-  </Tab>
-
-  <Tab title="Windows / Prebuilt Binaries">
-    Download a prebuilt binary directly from the [GitHub Releases page](https://github.com/nerves-hub/nh/releases). Each release provides archives for common platforms:
-
-    | Platform                      | Archive                  |
-    | ----------------------------- | ------------------------ |
-    | Windows (amd64)               | `nh_windows_amd64.zip`   |
-    | macOS (amd64)                 | `nh_darwin_amd64.tar.gz` |
-    | macOS (arm64 / Apple Silicon) | `nh_darwin_arm64.tar.gz` |
-    | Linux (amd64)                 | `nh_linux_amd64.tar.gz`  |
-    | Linux (arm64)                 | `nh_linux_arm64.tar.gz`  |
+  <Tab title="Prebuilt binary">
+    Download an archive from the [latest release](https://github.com/nerves-hub/nh/releases/latest). Archives are named `nh_<version>_<os>_<arch>`, where `os` is `darwin`, `linux`, or `windows`, and `arch` is `amd64` or `arm64`. Windows archives are `.zip`; everything else is `.tar.gz`.
 
     <Steps>
       <Step title="Download the release archive">
-        Visit [https://github.com/nerves-hub/nh/releases](https://github.com/nerves-hub/nh/releases) and download the archive for your platform.
+        Pick the archive matching your OS and CPU — for example `nh_1.2.0_darwin_arm64.tar.gz` on Apple Silicon.
       </Step>
 
       <Step title="Extract the binary">
-        Extract the archive to a directory of your choice, for example `C:\Tools\nh\` on Windows or `~/.local/bin/` on Linux.
+        Extract it to a directory of your choice, for example `C:\Tools\nh\` on Windows or `~/.local/bin/` on Linux and macOS.
       </Step>
 
       <Step title="Add to PATH">
-        Add the directory containing the `nh` (or `nh.exe`) binary to your system `PATH` so it is accessible from any terminal.
+        Add the directory containing the `nh` (or `nh.exe`) binary to your system `PATH` so it is available from any terminal.
       </Step>
     </Steps>
+  </Tab>
+
+  <Tab title="From source (Go)">
+    Building `nh` yourself requires Go 1.26.4 or newer.
+
+    ```bash
+    go install github.com/nerves-hub/nh@latest
+    ```
+
+    Or clone the repository and build it directly:
+
+    ```bash
+    git clone https://github.com/nerves-hub/nh.git
+    cd nh
+    go build -o nh .
+    mv nh /usr/local/bin/
+    ```
   </Tab>
 </Tabs>
 
@@ -94,26 +91,20 @@ A successful installation prints the version string, for example:
 nh version 0.x.y
 ```
 
-## Migrating from the Legacy Mix CLI
+## Runtime Dependency
 
-If you previously used the `nerves_hub_cli` Hex package and `mix nerves_hub.*` tasks, run the migration command once to import your existing credentials, configuration, and signing keys into the new `nh` config format:
+Signing and uploading firmware shells out to [`fwup`](https://github.com/fwup-home/fwup), which must be on your `PATH`. No other command needs it, and it is not required when uploading with `--skip-signing`.
+
+## Migrating from the Elixir CLI
+
+If you previously used the Elixir `nerves_hub_cli`, import its settings once:
 
 ```bash
 nh migrate
 ```
 
-The migration is non-destructive — your Mix CLI configuration files are left in place. You can continue using `mix nerves_hub.*` tasks while you transition, but `nh` is the actively maintained path going forward.
-
-## Legacy Mix CLI
-
-The older `nerves_hub_cli` Hex package (mix tasks under `mix nerves_hub.*`) remains available for projects that have not yet migrated. Add it to your `mix.exs` dependencies if you need it:
-
-```elixir
-{:nerves_hub_cli, "~> 0.10", runtime: false}
-```
-
-New projects should use `nh` instead. It ships as a single executable with no dependency on your Elixir or Erlang installation, making it easier to use in CI and on machines without a full Nerves toolchain.
+This reads that CLI's data directory (`~/.nerves-hub`, or `$NERVES_HUB_HOME`) and copies your saved defaults, API token, and signing keys into `nh`'s own data directory. It leaves the original files in place, and signing keys are re-encoded rather than decrypted, so no key password is required and password-protected keys keep theirs.
 
 <Note>
-  `nh` is open source and released under the Apache-2.0 license. View the source code, report issues, and track releases at [https://github.com/nerves-hub/nh](https://github.com/nerves-hub/nh).
+  `nh` is open source under the MIT license. View the source code, report issues, and track releases at [github.com/nerves-hub/nh](https://github.com/nerves-hub/nh).
 </Note>
