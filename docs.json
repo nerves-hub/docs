@@ -40,7 +40,7 @@
               "introduction",
               "quickstart",
               "architecture",
-              "concepts/terminology"
+              "terminology"
             ]
           },
           {
@@ -121,6 +121,13 @@
       }
     ]
   },
+  "redirects": [
+    {
+      "source": "/concepts/terminology",
+      "destination": "/terminology",
+      "permanent": true
+    }
+  ],
   "footer": {
     "socials": {
       "github": "https://github.com/nerves-hub"

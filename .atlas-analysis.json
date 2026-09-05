@@ -22,7 +22,7 @@
           {
             "group": "Core Concepts",
             "pages": [
-              "concepts/terminology",
+              "terminology",
               "concepts/pki",
               "concepts/firmware-signing",
               "concepts/deployments"
