@@ -7,7 +7,7 @@ description: "Go from a new Nerves project to your first over-the-air firmware u
 This quickstart gets a Nerves device receiving an OTA update from NervesCloud using the simplest setup: **shared-secret auth**. The end result is a Nerves project connected to NervesHub, a device visible in the web UI, signed firmware uploaded, and a deployment group that ships the update.
 
 <Note>
-  Shared secrets suit hobby and R&D projects. For production, use certificate auth. See [Device authentication & mTLS](/concepts/device-authentication-mtls).
+  Shared secrets suit hobby and R&D projects. For production, use certificate auth. See [X.509 device certificates](/auth/device-certificates).
 </Note>
 
 ## Prerequisites
@@ -221,7 +221,7 @@ This guide uses `manage.nervescloud.com` as the host. Swap in your own if self-h
     ```
 
     <Info>
-      Paths and variable names vary by CLI version and platform. See the [CLI reference](/reference/cli-nh). The `NERVES_HUB_*` equivalents also work.
+      Paths and variable names vary by CLI version and platform. See the [CLI reference](/cli/reference). The `NERVES_HUB_*` equivalents also work.
     </Info>
   </Step>
   <Step title="Build and publish signed firmware">
@@ -241,7 +241,7 @@ This guide uses `manage.nervescloud.com` as the host. Swap in your own if self-h
     2. Set targeting **conditions** (version + tags). Leave tags empty for now so it matches your device.
     3. Save and mark it **active**.
 
-    Full options: [Deployment groups & releases](/guides/deployment-groups-releases).
+    Full options: [How deployment groups work](/concepts/deployments).
   </Step>
   <Step title="Watch it update">
     With an active group pointing at newer firmware, NervesHub offers the update. The device downloads it, verifies the signature, applies it, and reboots into the new version. Track progress on the device's page.
@@ -269,8 +269,3 @@ This guide uses `manage.nervescloud.com` as the host. Swap in your own if self-h
     Access a live IEx session on any connected device directly from the NervesCloud UI.
   </Card>
 </CardGroup>
-
-- [Device authentication & mTLS](/concepts/device-authentication-mtls)
-- [Deployment groups & releases](/guides/deployment-groups-releases)
-- [Firmware deltas](/concepts/firmware-deltas)
-- [Remote console & local shell](/guides/remote-console)
