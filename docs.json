@@ -17,7 +17,12 @@
       "href": "https://manage.nervescloud.com",
       "label": "Dashboard"
     },
-    "links": []
+    "links": [
+      {
+        "href": "https://nervescloud.com",
+        "label": "NervesCloud"
+      }
+    ]
   },
   "navigation": {
     "tabs": [
