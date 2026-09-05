@@ -17,20 +17,7 @@
       "href": "https://manage.nervescloud.com",
       "label": "Dashboard"
     },
-    "links": [
-      {
-        "href": "https://help.nervescloud.com/roadmap",
-        "label": "Roadmap"
-      },
-      {
-        "href": "https://help.nervescloud.com/changelog",
-        "label": "Changelog"
-      },
-      {
-        "href": "https://help.nervescloud.com",
-        "label": "Feedback"
-      }
-    ]
+    "links": []
   },
   "navigation": {
     "tabs": [
