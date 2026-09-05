@@ -109,13 +109,6 @@
               "api/websocket-overview",
               "api/websocket-events"
             ]
-          },
-          {
-            "group": "NervesHubLink",
-            "pages": [
-              "api/nerveshublink-config",
-              "api/nerveshublink-client"
-            ]
           }
         ]
       }
@@ -125,6 +118,16 @@
     {
       "source": "/concepts/terminology",
       "destination": "/terminology",
+      "permanent": true
+    },
+    {
+      "source": "/api/nerveshublink-config",
+      "destination": "/integrations/nerves-hub-link",
+      "permanent": true
+    },
+    {
+      "source": "/api/nerveshublink-client",
+      "destination": "/integrations/nerves-hub-link",
       "permanent": true
     }
   ],
