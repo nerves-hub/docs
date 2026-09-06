@@ -170,7 +170,8 @@
       "copy",
       "view",
       "chatgpt",
-      "claude"
+      "claude",
+      "download-pdf"
     ],
     "display": "toc"
   },
