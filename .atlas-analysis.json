@@ -72,11 +72,7 @@
             "group": "HTTP API",
             "pages": [
               "api/overview",
-              "api/authentication",
-              "api/devices",
-              "api/firmware",
-              "api/deployments",
-              "api/organizations"
+              "api/authentication"
             ]
           },
           {

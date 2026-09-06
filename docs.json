@@ -100,12 +100,12 @@
             "group": "HTTP API",
             "pages": [
               "api/overview",
-              "api/authentication",
-              "api/devices",
-              "api/firmware",
-              "api/deployments",
-              "api/organizations"
+              "api/authentication"
             ]
+          },
+          {
+            "group": "Endpoints",
+            "openapi": "https://manage.nervescloud.com/api/openapi"
           },
           {
             "group": "Device WebSocket",
@@ -137,6 +137,26 @@
     {
       "source": "/concepts/deployments",
       "destination": "/setup/deployments",
+      "permanent": true
+    },
+    {
+      "source": "/api/devices",
+      "destination": "/api/overview",
+      "permanent": true
+    },
+    {
+      "source": "/api/firmware",
+      "destination": "/api/overview",
+      "permanent": true
+    },
+    {
+      "source": "/api/deployments",
+      "destination": "/api/overview",
+      "permanent": true
+    },
+    {
+      "source": "/api/organizations",
+      "destination": "/api/overview",
       "permanent": true
     }
   ],
