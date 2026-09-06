@@ -172,7 +172,7 @@
       "chatgpt",
       "claude"
     ],
-    "display": "header"
+    "display": "toc"
   },
   "logo": {
     "light": "/images/logo-lockup-light-t.png",
