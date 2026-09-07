@@ -1,30 +1,40 @@
 ---
-title: "Open-Source IoT Firmware Updates"
+title: "NervesHub: Open-Source IoT Firmware Update Platform"
 sidebarTitle: "Home"
 description: "NervesHub is an open-source firmware update and device management platform for Nerves-based IoT devices. Secure OTA updates, remote console access, and fleet monitoring."
 ---
 
-NervesHub gives you a complete platform for managing firmware updates and monitoring your fleet of Nerves-based IoT devices. Every firmware update is cryptographically signed end-to-end, devices connect securely via mutual TLS, and you can reach any device for live debugging — all from one place.
+NervesCloud is a hosted, production-grade platform for delivering secure OTA firmware updates and managing fleets of Nerves devices. This documentation covers getting started, common workflows, deeper concepts, and full reference for the CLI and configuration.
 
 <CardGroup cols={2}>
   <Card title="Quickstart" icon="rocket" href="/quickstart">
-    Go from zero to your first OTA update in minutes using Shared Secret authentication.
+    Connect a device and ship your first OTA update in a few minutes.
   </Card>
 
-  <Card title="Architecture" icon="sitemap" href="/architecture">
-    Understand how NervesHub, your devices, and firmware storage fit together.
+  <Card title="Introduction" icon="book-open" href="/getting-started/introduction">
+    What NervesCloud is, what it manages, and how it fits into a Nerves project.
+  </Card>
+
+  <Card title="How-to Guides" icon="wrench" href="/guides/manage-devices">
+    Step-by-step recipes for products, devices, firmware, and deployments.
   </Card>
 
   <Card title="CLI Reference" icon="terminal" href="/cli/reference">
     Install the `nh` CLI and manage devices, firmware, and deployment groups from the command line.
   </Card>
 
-  <Card title="API Reference" icon="code" href="/api/overview">
-    Explore the full HTTP REST API and Device WebSocket protocol.
+  <Card title="Concepts" icon="lightbulb" href="/concepts/architecture">
+    Architecture, authentication, deltas, and the ideas behind the platform.
+  </Card>
+
+  <Card title="Production Setup" icon="shield-check" href="/tutorials/production-setup-nerveskey">
+    Move from a hobby project to certificate-based mTLS with NervesKey hardware.
+  </Card>
+
+  <Card title="Reference" icon="code" href="/reference/cli-nh">
+    The nh CLI, NervesHubLink config, device socket API, and self-hosting variables.
   </Card>
 </CardGroup>
-
-## Key Features
 
 <CardGroup cols={2}>
   <Card title="Signed OTA Updates" icon="shield-check" href="/concepts/firmware-signing">
@@ -43,7 +53,7 @@ NervesHub gives you a complete platform for managing firmware updates and monito
     Monitor CPU, memory, load, and custom metrics across your entire fleet with configurable alarms.
   </Card>
 
-  <Card title="Staged Rollouts" icon="layer-group" href="/concepts/deployment-workflows">
+  <Card title="Staged Rollouts" icon="layer-group" href="/concepts/deployments">
     Roll a release out in stages — a canary batch, an approval gate, then everything else — with failure limits on each step.
   </Card>
 
@@ -51,8 +61,6 @@ NervesHub gives you a complete platform for managing firmware updates and monito
     Use Shared Secrets for development, X.509 certificates for production, or NervesKey hardware security modules for maximum security.
   </Card>
 </CardGroup>
-
-## Get Started
 
 <Steps>
   <Step title="Add NervesHubLink to your project">
@@ -68,7 +76,3 @@ NervesHub gives you a complete platform for managing firmware updates and monito
     Target devices by tag and version, activate the group, and watch your fleet update automatically.
   </Step>
 </Steps>
-
-<Note>
-  New to NervesHub? Follow the [Quickstart guide](/quickstart) for a complete end-to-end walkthrough using Shared Secret authentication — no hardware security module required.
-</Note>
