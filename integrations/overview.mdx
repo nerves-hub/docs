@@ -4,7 +4,7 @@ sidebarTitle: "Overview"
 description: "The ways a device can connect to NervesHub: NervesHubLink for Nerves, AtomVM on the ESP32, a Rust agent for other Linux systems, and a Yocto layer."
 ---
 
-A device connects to NervesHub over a Phoenix Channels WebSocket and speaks the [device protocol](/api/websocket-overview). Nothing about that protocol is Elixir-specific, so a client is whatever software on the device speaks it — reporting the firmware it is running, accepting update assignments, and handing the download to whatever writes firmware on that platform.
+A device connects to NervesHub over a Phoenix Channels WebSocket and speaks the [device protocol](/device-api/websocket-overview). Nothing about that protocol is Elixir-specific, so a client is whatever software on the device speaks it — reporting the firmware it is running, accepting update assignments, and handing the download to whatever writes firmware on that platform.
 
 Several clients already exist. Which one you want follows from what the device runs.
 
@@ -35,4 +35,4 @@ Several clients already exist. Which one you want follows from what the device r
 
 None of these are privileged. The server has no notion of an official client — it speaks the documented protocol, and anything that speaks it back is a device.
 
-If you are targeting a runtime none of the above covers, the [Device WebSocket Protocol](/api/websocket-overview) and [WebSocket Channel Events](/api/websocket-events) references describe the connection, the join, and every message in both directions. The existing clients are also worth reading as reference implementations, particularly for reconnect behaviour and update progress reporting.
+If you are targeting a runtime none of the above covers, the [Device WebSocket Protocol](/device-api/websocket-overview) and [WebSocket Channel Events](/device-api/websocket-events) references describe the connection, the join, and every message in both directions. The existing clients are also worth reading as reference implementations, particularly for reconnect behaviour and update progress reporting.
