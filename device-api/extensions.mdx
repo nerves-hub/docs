@@ -1,0 +1,221 @@
+---
+title: "Device Extensions"
+sidebarTitle: "Extensions"
+description: "Reference for the NervesHub extensions protocol: the handshake, version negotiation, and every extension's messages and payloads, for client implementers."
+---
+
+An extension is something NervesHub can ask a device for that is not firmware — health metrics, a location, logs, a shell. Extensions are negotiated rather than assumed, and this page is that negotiation plus every extension's messages, so a client can be written without reading another client's source.
+
+Two rules shape all of it:
+
+- **Extension traffic never gets in the way of an update.** Extensions are negotiated after the `device` topic is joined, never before.
+- **Both sides have to agree.** An extension nobody asked for is never sent. A device that starts reporting something an operator did not turn on is worse than one that reports nothing.
+
+## The handshake
+
+Four frames, in this order.
+
+```text
+1.  server -> device   extensions:get        {"extensions": {"logging": ["0.1.0", "0.0.1"], ...}}
+2.  device -> server   phx_join "extensions" {"logging": "0.1.0", "health": "0.0.1"}
+3.  server -> device   phx_reply             ["logging", "health"]
+4.  device -> server   logging:attached      {}
+```
+
+**1. The platform asks, and says what it has.** Sent once the device has joined the `device` topic, and only to devices declaring `device_api_version >= 2.2.0`. The payload is every version of every extension this deployment implements and has switched on, newest first per key. An extension turned off for the deployment is absent entirely.
+
+**2. The device answers by joining.** One version per extension, and only extensions it wants to serve. This frame is the device's commitment — there is no second choice in it, which is why frame 1 exists.
+
+<Warning>
+  Do not join the `extensions` topic before frame 1 arrives. Joining early is accepted, but it means declaring versions without knowing what the platform has, which is the thing the advertisement exists to prevent.
+</Warning>
+
+**3. The platform replies with the attach list.** The subset of what the device offered that *this device* may use, which is narrower than what the platform implements — an extension can be switched off per product or per device. Keys only, no versions; the device already knows what it declared.
+
+An extension left out here is not attached. Worth reporting locally, because from the outside it is indistinguishable from a feature quietly not working.
+
+**4. The device confirms each one.** Only after `<key>:attached` does the platform start asking that extension for anything.
+
+Everything after the handshake is scoped `<key>:<event>` in both directions.
+
+## Choosing a version
+
+For each extension it implements, a client walks **its own** versions, most preferred first, and takes the first that also appears in the platform's list for that key. Match by **string equality** — there is no version arithmetic to do here, and requiring it would mean a version parser in Erlang on AtomVM and another in Rust, to answer a question the platform has already answered by listing what it has.
+
+| Situation | What the client does |
+| --- | --- |
+| No overlap for a key, or the key is absent from the advertisement | Omit it from the join. The platform cannot serve anything the device speaks. |
+| No advertisement at all | Declare the **lowest** version of each extension it implements — the one most likely to be understood by a platform old enough not to advertise. |
+
+<Note>
+  **Do not wait indefinitely for frame 1.** A platform predating the advertisement never sends it, and a client that waits forever loses every extension against those platforms. Join anyway **five seconds** after the `device` topic's join reply, using the fallback above.
+</Note>
+
+## Versions
+
+Every extension and the versions the platform implements, newest first. Old and new versions run side by side indefinitely — devices in the field do not upgrade in step with the platform, and some never upgrade at all.
+
+| Extension | Versions | What it carries |
+| --- | --- | --- |
+| `health` | `0.0.1` | Metrics, metadata and alarms, on a pace the platform sets |
+| `metrics` | `0.1.0` | Numbers a device measures about itself, batched |
+| `geo` | `0.0.1` | Device location |
+| `logging` | `0.1.0`, `0.0.1` | Log lines; batched from `0.1.0` |
+| `local_shell` | `0.0.1` | A shell on the device |
+| `network_identity` | `0.0.1` | Identities the device holds on networks NervesHub does not run |
+| `error_reports` | `0.1.0` | Exceptions and explicit error reports, grouped into issues |
+
+`logging` is the only extension with more than one version in service, which makes it the one worth testing a client's negotiation against.
+
+---
+
+## health
+
+Device metrics, metadata and alarms, on a pace the platform sets.
+
+```text
+server -> device   health:check    {}
+device -> server   health:report   {"value": {...}}
+```
+
+A `check` goes out on one timer per connection, so however many people have the device's page open, the device is asked once. The pace has two modes:
+
+| Mode | When | Default interval |
+| --- | --- | --- |
+| Idle | Nobody is looking at the device | 60 minutes |
+| Watched | At least one device page is open | 60 seconds |
+
+The first idle interval is offset randomly so a fleet that connected together does not answer together. Opening a page announces itself and switches to the watched pace immediately; closing one cannot announce itself, so the pace is reconsidered on each check and the last person leaving costs the device one extra report.
+
+## metrics
+
+Numbers a device measures about itself, batched, on a pace the platform sets.
+
+```text
+server -> device   metrics:check    {}
+device -> server   metrics:report   {"reports": [{...}, {...}]}
+```
+
+```json
+{
+  "reports": [
+    {
+      "timestamp": "2026-09-02T11:04:00Z",
+      "metrics": {"cpu_temp": 41.2, "mem_used_percent": 38.0, "load_1min": 0.42}
+    },
+    {
+      "timestamp": "2026-09-02T11:05:00Z",
+      "metrics": {"cpu_temp": 41.9, "mem_used_percent": 38.5, "load_1min": 0.51}
+    }
+  ]
+}
+```
+
+Defaults are **15 minutes** idle and **60 seconds** watched. A device may also report without being asked.
+
+Each reading carries **its own timestamp**, unlike almost everything else in the protocol, which the server stamps because it saw it happen. These it did not see. That is what lets a device sample every ten seconds and report every ten minutes without losing readings, and lets a device that lost its connection keep what it measured while it was gone.
+
+Full contract: [`docs/metrics.md`](https://github.com/nerves-hub/nerves_hub_web/blob/main/docs/metrics.md).
+
+## geo
+
+Device location, from GeoIP or a resolver you configure.
+
+```text
+server -> device   geo:location:request   {}
+device -> server   geo:location:update    {...}
+```
+
+The request on attach is unconditional; only the repeat is configurable, and it is **off by default** (`interval_minutes` of `0`). A device that moves can push an update without being asked.
+
+## logging
+
+Log lines from the device. This is the one extension with two versions in service, and they differ in payload.
+
+<Tabs>
+  <Tab title="0.1.0 — batched">
+    ```text
+    device -> server   logging:send   {"lines": [{"level": "info", "message": "..."}, ...]}
+    ```
+
+    One message carries a second's worth of lines. NervesHub limits how *often* a device may send, not how much it may say, and a batch costs the same single token as one line — so a device in a crash loop can report everything it wrote in the last second instead of losing all but the first few.
+
+    At most **100 lines per message**. Anything beyond is dropped and the count is stored as a log line of its own, on the same bargain a device's own buffer makes: a gap someone can see beats a gap they cannot.
+  </Tab>
+
+  <Tab title="0.0.1 — one line per message">
+    ```text
+    device -> server   logging:send   {"level": "info", "message": "hello", "meta": {...}}
+    ```
+
+    One line per message, and what most devices in the field speak today. Because the rate limit is per message, at one line per message it becomes a limit on lines: a device writing hundreds of lines a second loses all but the first few, and the survivors are an arbitrary sample rather than the interesting part. That is what `0.1.0` exists to fix.
+  </Tab>
+</Tabs>
+
+Log lines are kept for 3 days by default.
+
+## local_shell
+
+A shell on the device, relayed to whoever is watching.
+
+```text
+server -> device   local_shell:request_shell   {}
+device -> server   local_shell:shell_output    {"data": "..."}
+```
+
+Nothing here touches the database. Output is relayed live, and a bounded scrollback is kept on the connection so someone opening the tab can see what they missed.
+
+## network_identity
+
+Identities the device holds on networks NervesHub does not run — an iroh endpoint id, a NetBird or Tailscale peer key.
+
+```text
+server -> device   network_identity:request   {}
+device -> server   network_identity:report    {"identities": [...]}
+```
+
+The server asks once on attach and the device answers with everything it knows about itself. There is no interval, unlike `geo` and `health`: an identity is long-lived by construction, so polling for it would be noise. A device whose details have moved — it switched relay, it was assigned a new overlay IP — can push `report` again at any time.
+
+## error_reports
+
+Exceptions and explicit error reports, grouped into issues.
+
+```text
+device -> server   error_reports:report   {"reports": [{...}, {...}]}
+```
+
+Nothing goes the other way. The platform does not poll for errors and does not acknowledge them; a device with nothing to report sends nothing.
+
+```json
+{
+  "timestamp": "2026-08-31T10:22:31.123456Z",
+  "kind": "error",
+  "reason": "** (RuntimeError) connection refused",
+  "message": "GenServer MyApp.Worker terminating\n** (RuntimeError) ...",
+  "source": "logger",
+  "frames": [
+    {"module": "MyApp.Worker", "function": "handle_info/2",
+     "file": "lib/my_app/worker.ex", "line": 42}
+  ],
+  "context": {"uptime_ms": "987654", "reboot_count": "3", "free_memory_bytes": "12345678"},
+  "firmware_uuid": "d1e2f3a4-..."
+}
+```
+
+`timestamp`, `kind` and `reason` are **required**; a report missing any of them is dropped and its neighbours in the batch are kept.
+
+Device vitals go in `context` rather than being fields of their own, so a device with free heap and signal strength to report sends those under its own names and nothing on the server changes. `uptime_ms`, `free_memory_bytes` and `reboot_count` get friendly labels and units in the UI; everything else renders as it arrived.
+
+`firmware_uuid` is the exception and is a field — it answers "which release broke this", is carried on the issue as well as the occurrence, and the platform fills it in from the device's connection when a report omits it.
+
+Full contract: [`docs/error_reports.md`](https://github.com/nerves-hub/nerves_hub_web/blob/main/docs/error_reports.md).
+
+---
+
+## Failure modes worth knowing
+
+**A device declares a version the platform does not implement.** The key is left out of the attach list and nothing is attached. This is the correct answer rather than a fallback: attaching the device to whichever version was closest would have it sending messages nothing can read.
+
+**A device sends a list of versions instead of a string.** The extensions join fails entirely, taking every other extension with it. The advertisement exists so that no client needs to try.
+
+**An extension raises while handling a message.** It is logged and swallowed, so one misbehaving extension cannot take a device's connection with it. Attach and detach are deliberately not protected this way.

@@ -120,7 +120,8 @@
             "group": "WebSocket",
             "pages": [
               "device-api/websocket-overview",
-              "device-api/websocket-events"
+              "device-api/websocket-events",
+              "device-api/extensions"
             ]
           }
         ]
