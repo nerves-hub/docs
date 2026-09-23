@@ -110,12 +110,17 @@
           {
             "group": "Endpoints",
             "openapi": "https://manage.nervescloud.com/api/openapi"
-          },
+          }
+        ]
+      },
+      {
+        "tab": "Device API",
+        "groups": [
           {
-            "group": "Device WebSocket",
+            "group": "WebSocket",
             "pages": [
-              "api/websocket-overview",
-              "api/websocket-events"
+              "device-api/websocket-overview",
+              "device-api/websocket-events"
             ]
           }
         ]
@@ -161,6 +166,16 @@
     {
       "source": "/api/organizations",
       "destination": "/api/overview",
+      "permanent": true
+    },
+    {
+      "source": "/api/websocket-overview",
+      "destination": "/device-api/websocket-overview",
+      "permanent": true
+    },
+    {
+      "source": "/api/websocket-events",
+      "destination": "/device-api/websocket-events",
       "permanent": true
     }
   ],
