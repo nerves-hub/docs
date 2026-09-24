@@ -98,10 +98,10 @@
         ]
       },
       {
-        "tab": "API Reference",
+        "tab": "HTTP API",
         "groups": [
           {
-            "group": "HTTP API",
+            "group": "Basics",
             "pages": [
               "api/overview",
               "api/authentication"
