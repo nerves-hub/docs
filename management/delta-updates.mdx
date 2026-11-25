@@ -154,26 +154,22 @@ NervesHub sends a device the delta when the deployment group has **Delta updates
 - The deployment group has **Delta updates** off.
 - The firmware the device reports running is not uploaded to the same product, or has been deleted. No delta can be built from it.
 - The delta is built, and the device's reported `fwup` version is lower than the version the delta needs.
+- The target firmware cannot produce a delta.
+- The delta failed to build or timed out.
 
-A delta that is still building, or that failed, does not make NervesHub send the full firmware. The devices that need it wait. See [Releases wait for their deltas](#releases-wait-for-their-deltas).
+While a delta is still building, the devices that need it wait. See [Releases wait for their deltas](#releases-wait-for-their-deltas).
 
 While it builds a delta, NervesHub skips any single resource whose patch is not smaller than the resource.
 
 ## Releases wait for their deltas
 
-A release in a group with delta updates on does not go out until its deltas are settled. Devices headed for that release are not offered the update while any delta they need is still building.
+A release in a group with delta updates on waits while its deltas are building. Devices headed for that release are not offered the update while a delta they need is still building.
 
-The same is true after a delta fails or times out. Those devices stay where they are until you act. The release row reads "Devices on" the source version "get the full" firmware next to a failed delta, but they are not sent it. You have three options:
-
-- **Retry the build.** Click **Retry** next to the failed delta, on the release in the **Releases** tab or on the firmware's page. A retry fails again unless the cause is gone.
-- **Release a new firmware version.** The devices move on to the new release. With **Delta updates** off for the group, the new release goes out in full. With it on, the new release waits for its own deltas.
-- **Send the firmware to a device yourself.** On the device page, pick the version under **Send a specific version, outside the deployment group** and send it, or run `nh device upgrade <identifier> <firmware-uuid>`. This sets the device's update mode to off. Select the update mode in the device page header and choose **Automatic** afterwards.
-
-Turning **Delta updates** off in the group's **Settings** tab does not release a release that already has a failed delta. The setting only changes releases made afterwards.
+When a delta fails or times out, the devices that need it are sent the full firmware. To build the delta again, click **Retry** next to the failed delta, on the release in the **Releases** tab or on the firmware's page. A retry fails again unless the cause is gone.
 
 A build fails when:
 
-- The target firmware declares no delta source. Turn delta updates off for groups that deploy such firmware, before you release it.
+- The target firmware declares no delta source.
 - The target uses a raw delta for a resource, and the source firmware does not write that resource with `raw_write`. The same applies to FAT deltas and `fat_write`.
 - The source firmware encrypts a resource, and the target has no `cipher=` and `secret=` in `delta-source-raw-options` for it.
 - No resource produced a patch smaller than itself, or the finished delta is not smaller than the full firmware.

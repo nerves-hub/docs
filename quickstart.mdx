@@ -194,17 +194,7 @@ mix firmware
 nh firmware upload --key my_app_key --deploy my-group
 ```
 
-From this release on, NervesHub holds both firmware files, so it builds a delta from the firmware your device runs and holds the release back until the build ends. If the build fails, the device waits. NervesHub does not send it the full firmware instead.
-
-- The official Nerves systems, such as `nerves_system_rpi4`, declare the delta sources a build needs. With one of those you have nothing to change.
-- If your system's `fwup.conf` declares no delta sources, the build fails. Turn delta updates off for the group before you upload:
-
-  ```bash
-  nh deployment update my-group --delta-updatable=false
-  ```
-
-- Turning delta updates off does not release a release whose delta has already failed. Turn them off, raise the version, and build and upload again. The new release goes out in full.
-- If a release does not reach your device, open the group's **Releases** tab and look at the release's **Delta updates** status. See [Releases wait for their deltas](/management/delta-updates#releases-wait-for-their-deltas).
+From this release on, NervesHub holds both firmware files, so it builds a delta from the firmware your device runs. The release waits while the delta builds. If no delta can be built, the device downloads the full firmware. See [Delta updates](/management/delta-updates).
 
 See [CI/CD](/outbound/ci-cd) to do this from a pipeline.
 
