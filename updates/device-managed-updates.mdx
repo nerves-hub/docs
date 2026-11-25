@@ -191,8 +191,6 @@ NervesHub does not pace device requests. A device that asks for its update gets 
 
 `nerves_hub_link` still returns `{:error, {:busy, minutes}}` when a server answers with the reason `busy`. Handle it as "not now", and ask again after `minutes`.
 
-A device that has downloaded an [archive](/updates/archives) counts as having an update in progress, and `start_update/1` returns `{:error, :error}` until the device reconnects. Call `NervesHubLink.reconnect()` after your code has handled the archive.
-
 ## Let the device choose its mode
 
 A device may move itself between `:automatic` and `:device_managed`, and only when an operator has allowed it.
