@@ -1,0 +1,165 @@
+---
+title: "Download strategies"
+sidebarTitle: "Download strategies"
+description: "Choose how nerves_hub_link downloads firmware and hands it to fwup, and tune how downloads are retried."
+---
+
+An updater is the module that downloads an update and passes it to `fwup`. `nerves_hub_link` ships three. They differ in what they keep on disk, and so in what an interrupted update costs. Pick one based on how reliable the device's connection and power are, and how much spare storage it has.
+
+## Requirements
+
+| Feature | `nerves_hub_link` | NervesHub |
+| --- | --- | --- |
+| `StreamingUpdater`, `CachingUpdater`, custom updaters | 2.9.0 | No minimum |
+| `PartsUpdater` | 2.13.0 | 2.5.0, which sends the part checksums |
+
+<Note>
+  Use `nerves_hub_link` 2.13.0 or later with `CachingUpdater`. Earlier versions could corrupt a download that was resumed and then interrupted again, ignored the `cache_dir` setting, and did not clear a stale partial file.
+</Note>
+
+## Compare the strategies
+
+| Strategy | Firmware on disk | After a restart | Verifies the download |
+| --- | --- | --- | --- |
+| `NervesHubLink.UpdateManager.StreamingUpdater` (default) | None | Starts again from the beginning | `fwup` signature check only |
+| `NervesHubLink.UpdateManager.CachingUpdater` | The whole file | Resumes from the size of the partial file | `fwup` signature check only |
+| `NervesHubLink.UpdateManager.PartsUpdater` | One file per part | Resumes from the last verified part | Every part, as it arrives |
+
+All three use the same downloader. When a connection drops mid-download, the downloader reconnects and continues with an HTTP `Range` request, within the limits of the [retry settings](#retry-settings). The strategies differ in what happens when the download itself is lost, for example because the device reboots.
+
+## Streaming (default)
+
+`StreamingUpdater` sends each chunk to `fwup` as it arrives. Nothing is written outside the firmware slot, so it needs no spare storage. If the application or the device restarts during an update, the next attempt downloads everything again.
+
+It needs no configuration. To name it explicitly:
+
+```elixir
+config :nerves_hub_link,
+  updater: NervesHubLink.UpdateManager.StreamingUpdater
+```
+
+## Caching
+
+`CachingUpdater` writes the download to a file, then has `fwup` apply that file. If a partial file for the same firmware exists when an update starts, it continues from the size of that file.
+
+```elixir
+config :nerves_hub_link,
+  updater: NervesHubLink.UpdateManager.CachingUpdater
+
+config :nerves_hub_link, NervesHubLink.UpdateManager.CachingUpdater,
+  cache_dir: "/data/nerves_hub_link/firmware"
+```
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `cache_dir` | `/data/nerves_hub_link/firmware` | Where the download is kept. When an update starts, other files in this directory are removed. |
+
+Limits:
+
+- The device needs room for the whole firmware file in `cache_dir`, in addition to the firmware slot.
+- The updater trusts the size of the partial file. A partial file that was cut short mid-write or corrupted is treated as good, and the problem shows up later as an `fwup` error.
+- If the server answers a resumed download with 404 or 416, the cache is cleared so the next attempt starts clean.
+
+## Parts
+
+`PartsUpdater` downloads the firmware in fixed-size parts and checks each part's SHA-256 against the checksums NervesHub sends with the update. Use it for devices on slow or unreliable connections.
+
+- A part that fails its check is thrown away and downloaded again. The parts before it are kept.
+- After a restart, parts that were already verified are not downloaded again.
+- When every part is verified, the parts are streamed into `fwup` in order. The whole firmware never has to exist on disk twice.
+- The parts stay on disk after the update and are removed when a different firmware starts downloading. An update that is applied but does not stick does not have to be downloaded again.
+
+```elixir
+config :nerves_hub_link,
+  updater: NervesHubLink.UpdateManager.PartsUpdater
+
+config :nerves_hub_link, NervesHubLink.UpdateManager.PartsUpdater,
+  cache_dir: "/data/nerves_hub_link/firmware",
+  part_size: 1_048_576,
+  max_part_attempts: 3,
+  max_concurrent_parts: 1
+```
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `cache_dir` | `/data/nerves_hub_link/firmware` | Where parts are kept. Each firmware gets a directory named after its UUID. `nerves_hub_link` removes anything else it finds here, so do not share this directory. |
+| `part_size` | `1_048_576` | Bytes covered by each checksum. It must match the size NervesHub hashes with, which is 1 MiB. Leave it at the default. |
+| `max_part_attempts` | `3` | How many times one part may fail verification before the update fails. |
+| `max_concurrent_parts` | `1` | How many downloads run at once. |
+
+### Download several parts at once
+
+With `max_concurrent_parts` above `1`, the parts still needed are divided into that many contiguous ranges. Each range is downloaded over its own connection. Parts are still verified as they arrive and applied in order.
+
+This helps on links where one connection cannot fill the available bandwidth, such as high-latency satellite or cellular. It costs one connection per range on the device and on whatever serves the firmware, for every device in a rollout.
+
+### Servers that send no part checksums
+
+A NervesHub server older than 2.5.0 sends no part checksums. `PartsUpdater` then logs a warning and downloads the firmware as a single part. It verifies that part against the whole-file checksum if the server sent one.
+
+## Retry settings
+
+The downloader's retry behaviour applies to every strategy and to [archive](/updates/archives) downloads:
+
+```elixir
+config :nerves_hub_link, :retry_config,
+  max_disconnects: 10,
+  idle_timeout: 60_000,
+  max_timeout: 86_400_000,
+  time_between_retries: 15_000,
+  worst_case_download_speed: 30_000
+```
+
+| Option | Default | Description |
+| --- | --- | --- |
+| `max_disconnects` | `10` | How many disconnects a download survives. After this many, the download stops and is not retried. |
+| `idle_timeout` | `60_000` | Milliseconds without receiving data before the download is retried. Each occurrence counts as a disconnect. |
+| `max_timeout` | `86_400_000` | The longest a download may run, in milliseconds. The default is 24 hours. |
+| `time_between_retries` | `15_000` | Milliseconds to wait before a retry. |
+| `worst_case_download_speed` | `30_000` | The slowest speed you expect, in bytes per second. The downloader uses it with the file size to give up sooner than `max_timeout`. The computed limit is never under 5 minutes. |
+
+If the configuration is invalid, `nerves_hub_link` logs a warning and uses the defaults.
+
+When a download gives up, the update fails. See [failed updates](/updates/applying-updates#when-an-update-fails).
+
+## Download connection options
+
+Firmware is downloaded over a separate HTTPS connection from the WebSocket. Its TLS and proxy settings have their own keys, `downloader_ssl` and `downloader_http_opts`. See [transport](/connection/transport).
+
+## Write your own updater
+
+Implement the `NervesHubLink.UpdateManager.Updater` behaviour. `use NervesHubLink.UpdateManager.Updater` gives you a GenServer with default implementations, so you only write the parts that differ:
+
+```elixir
+defmodule MyApp.Updater do
+  use NervesHubLink.UpdateManager.Updater
+
+  @impl NervesHubLink.UpdateManager.Updater
+  def start(state) do
+    # Prepare, start the download, and return {:ok, state}
+  end
+
+  @impl NervesHubLink.UpdateManager.Updater
+  def handle_downloader_message(message, state) do
+    # Handle {:data, data, percent}, :complete and {:error, reason}
+  end
+
+  @impl NervesHubLink.UpdateManager.Updater
+  def log_prefix(), do: "MyApp.Updater"
+end
+```
+
+```elixir
+config :nerves_hub_link, updater: MyApp.Updater
+```
+
+The shipped updaters are the reference for what `start/1` and `handle_downloader_message/2` have to do. See the `NervesHubLink.UpdateManager.Updater` module documentation for the full callback list, including `handle_progress/3`, added in 2.13.0.
+
+To switch updaters at runtime, call `NervesHubLink.UpdateManager.change_updater/1` with the module. It takes effect for the next update.
+
+## Related pages
+
+- [How firmware updates work](/updates/overview)
+- [Applying updates on the device](/updates/applying-updates)
+- [Delta updates](/management/delta-updates)
+- [Connection transport](/connection/transport)

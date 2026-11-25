@@ -1,119 +1,155 @@
 ---
 title: "Configure the nh CLI"
 sidebarTitle: "Configuration"
-description: "Configure the nh CLI with authentication tokens, a default organization and product, environment variables, and named profiles for different environments."
+description: "Sign in, point nh at your server, set a default organization and product, and configure it with environment variables or named profiles."
 ---
 
-Before running any `nh` commands, configure the CLI to point at your NervesHub server and authenticate your identity. Configuration is stored in `~/.nh` by default and can be overridden per-command with global flags or environment variables — making it straightforward to switch between NervesCloud, a staging server, and a self-hosted instance.
+`nh` needs three things before most commands work: which server to talk to, a token for it, and the organization and product you mean. You can save each of these, set them in the environment, or pass them as flags.
 
-## Authentication
+## Where settings come from
 
-Authenticate with NervesHub using your preferred method. After authenticating, `nh` stores a session token in its local config directory.
+`nh` resolves each setting from these sources, highest precedence first:
+
+1. A command-line flag, such as `--org`.
+2. An environment variable. `NERVES_HUB_*` is read first, then `NERVES_CLOUD_*`.
+3. The saved settings file, `~/.nh/settings.json`.
+4. The built-in default.
+
+## Sign in
+
+Sign in through the browser. This is the recommended way. It also works for an account with [two-factor authentication](/access/two-factor), which `nh user auth` does not.
 
 ```bash
-nh user auth        # Log in and store a session token
-nh user login       # Browser-based login
-nh user whoami      # Verify the currently authenticated user
+nh user login
 ```
 
-Use `nh user login` for interactive workstations where a browser is available. In automated pipelines, set the `NERVES_HUB_TOKEN` environment variable instead of calling a login command (see [Environment Variables](#environment-variables) below).
+`nh` prints a URL and an eight-digit code. Open the URL, sign in to NervesHub, and enter the code. `nh` waits for you to confirm, then saves your API token. The code lasts five minutes.
+
+When stdout is a terminal, `nh` opens the URL in your browser for you. Pass `--no-browser` to stop that. It never opens a browser with `--non-interactive`, or when there is no display, such as over SSH.
+
+You can sign in with your email and password instead:
+
+```bash
+nh user auth                          # prompts for email and password
+nh user auth --email jane@example.com # prompts for the password only
+```
+
+Check who you are signed in as, and sign out:
+
+```bash
+nh user whoami
+nh user logout
+```
 
 <Note>
-  The browser flow opens a page on your NervesHub instance (for example `https://manage.nervescloud.com/auth/cli/<token>`) where you confirm the session. The CLI then stores the resulting token locally.
+  In CI, do not sign in. Set `NERVES_HUB_TOKEN` to a user access token or a product API key. See [CI and automation](/outbound/ci-cd).
 </Note>
 
-## Set the Server URI
+## Set the server
 
-`nh` defaults to the NervesCloud managed service at `https://manage.nervescloud.com/`. If you are running a self-hosted NervesHub instance, update the URI:
+`nh` talks to NervesCloud at `https://manage.nervescloud.com` by default. For a self-hosted NervesHub, save your server's URI before you sign in:
 
 ```bash
-nh config set uri "https://manage.nervescloud.com/"
+nh config set uri https://your.nerveshub.host
+nh status
 ```
 
-Replace the value with your own server's base URL. This setting is persisted to the local config file and used for all subsequent commands until you change it or override it with `--uri`.
+`nh status` prints the configured URI and whether the server answered its health check. It needs no token, and exits non-zero when the server is unreachable or reports a problem.
 
-## Set Default Org and Product
+Signing in with `nh user login --uri https://your.nerveshub.host` does the same thing: the server you sign in to becomes the default.
 
-Avoid typing `--org` and `--product` on every command by setting defaults:
+### The saved token and its server
+
+`nh user login` and `nh user auth` save the token together with the server it came from. `nh` only sends the saved token to that server. If a command would talk to a different server (through `--uri`, `NERVES_HUB_URI`, or a later `nh config set uri`), it fails and names the server the token is for.
+
+A token given with `--token` or `NERVES_HUB_TOKEN` is always used as it is, with whatever server is configured.
+
+## Set a default organization and product
+
+Save the organization and product you use most, so you can leave out `--org` and `--product`:
 
 ```bash
 nh config set org my-org
-nh config set product my-product
+nh config set product my_app
 ```
 
-Or export them as environment variables for the duration of a shell session or CI job:
+Show or clear saved defaults:
 
 ```bash
-export NERVES_HUB_ORG=my-org
-export NERVES_HUB_PRODUCT=my-product
+nh config get            # show uri, org and product
+nh config get org        # print one value
+nh config unset product  # clear one
 ```
 
-## Environment Variables
+`nh config` manages `uri`, `org` and `product` only. The token is managed by `nh user login`, `nh user auth` and `nh user logout`, and `nh config get` never prints it.
 
-All configuration values can be supplied as environment variables. This is the recommended approach for CI/CD pipelines and containerized environments. `nh` recognizes both `NERVES_HUB_*` and `NERVES_CLOUD_*` prefixes as aliases for every variable.
+## Environment variables
 
-| Variable                     | Aliases                          | Purpose                                  |
-| ---------------------------- | -------------------------------- | ---------------------------------------- |
-| `NERVES_HUB_TOKEN`           | `NH_TOKEN`, `NERVES_CLOUD_TOKEN` | API authentication token                 |
-| `NERVES_HUB_ORG`             | `NERVES_CLOUD_ORG`               | Default organization name                |
-| `NERVES_HUB_PRODUCT`         | `NERVES_CLOUD_PRODUCT`           | Default product name                     |
-| `NERVES_HUB_FW_PRIVATE_KEY`  | `NERVES_CLOUD_FW_PRIVATE_KEY`    | Firmware signing private key             |
-| `NERVES_HUB_FW_PUBLIC_KEY`   | `NERVES_CLOUD_FW_PUBLIC_KEY`     | Firmware signing public key              |
-| `NERVES_HUB_URI`             | `NERVES_CLOUD_URI`               | Platform base URI                        |
-| `NERVES_HUB_HOME`            | `NERVES_CLOUD_DATA_DIR`          | CLI data directory (default: `~/.nh`)    |
-| `NERVES_HUB_NON_INTERACTIVE` | `NERVES_CLOUD_NON_INTERACTIVE`   | Auto-confirm all prompts (set to `true`) |
+Every variable is read with the `NERVES_HUB_` prefix and, equivalently, the `NERVES_CLOUD_` prefix. When both are set, `NERVES_HUB_` wins.
 
-<Note>
-  When the same value is set both in the config file and as an environment variable, the environment variable takes precedence. Command-line flags override both.
-</Note>
+| Variable | Purpose | Default |
+| --- | --- | --- |
+| `NERVES_HUB_URI` | API base URI | `https://manage.nervescloud.com` |
+| `NERVES_HUB_TOKEN` | User access token or product API key | Saved settings |
+| `NERVES_HUB_ORG` | Organization | Saved settings |
+| `NERVES_HUB_PRODUCT` | Product | Saved settings |
+| `NERVES_HUB_DATA_DIR` | Directory for settings and [signing keys](/concepts/firmware-signing) | `~/.nh` |
+| `NERVES_HUB_NON_INTERACTIVE` | Never prompt. Missing input is an error. | `false` |
+| `NERVES_HUB_PRIVATE_KEY` | Unencrypted base64 Ed25519 signing key, used by `nh firmware upload` for fwup and AtomVM images and by `nh archive upload` when no `--key` or `--key-file` is given | None |
+| `NERVES_HUB_DEPLOYMENT_NAME` | Deployment group that `nh firmware upload` updates when `--deploy` is not given | None |
 
-## Configuration Profiles
+Boolean variables accept `1`, `true`, `yes`, `y` or `on`, in any case.
 
-Use named profiles to maintain separate configurations for different environments — for example, `production`, `staging`, and `local`. Profiles are saved to and loaded from the CLI data directory.
+## Global flags
 
-Save the current configuration to a named profile:
+Every command accepts these flags.
 
-```bash
-nh config save staging
-```
-
-Switch to a saved profile:
-
-```bash
-nh config load staging
-```
-
-List all saved profiles:
-
-```bash
-nh config profiles
-```
-
-Profiles capture the full current configuration, including the server URI, default org and product, and authentication token, making it easy to switch contexts without re-authenticating.
-
-## View Current Config
-
-Print the full current configuration — including the active server URI, org, product, and config file path — with:
-
-```bash
-nh config get
-```
-
-This is a good first step when debugging unexpected behavior or confirming which environment a command will target.
-
-## Global Flags
-
-Every `nh` command accepts the following flags, which override the corresponding config file or environment variable values for that single invocation:
-
-| Flag                | Description                                     |
-| ------------------- | ----------------------------------------------- |
-| `--uri`             | API base URI                                    |
-| `--token`           | Personal access token                           |
-| `--org`             | Organization scope                              |
-| `--product`         | Product scope                                   |
-| `--non-interactive` | Never prompt; fail instead of waiting for input |
-| `-o` / `--output`   | Output format: `table` (default) or `json`      |
+| Flag | Description |
+| --- | --- |
+| `--uri` | API base URI |
+| `--token` | User access token or product API key |
+| `--org` | Organization |
+| `--product` | Product |
+| `--data-dir` | Directory for settings and signing keys |
+| `--non-interactive` | Never prompt. Missing input is an error. |
+| `-o`, `--output` | Output format: `table` (default) or `json` |
 
 <Tip>
-  Use `--output json` (or `-o json`) when scripting against `nh` in CI/CD pipelines. JSON output is stable across releases, easier to parse with `jq`, and includes fields that the default table view may omit for readability.
+  Use `-o json` when you parse `nh` output in a script.
 </Tip>
+
+## Profiles
+
+A profile is a named snapshot of the active URI, organization, product and token. Use profiles to switch between servers or organizations without signing in again.
+
+```bash
+nh config save staging   # save the active configuration as "staging"
+nh config profiles       # list saved profiles
+nh config load staging   # make "staging" the active configuration
+```
+
+Saving under an existing name replaces that profile. Loading a profile replaces the active URI, organization, product and token.
+
+## The data directory
+
+`nh` keeps its state in `~/.nh`. Change the location with `--data-dir` or `NERVES_HUB_DATA_DIR`.
+
+| Path | Contents |
+| --- | --- |
+| `settings.json` | Saved URI, organization, product, API token and profiles |
+| `keys/<org>/<name>.priv` | An Ed25519 signing key made by `nh key create`, encrypted with its password |
+| `keys/<org>/<name>.pub` | The matching public key |
+| `keys/<org>/<name>.rsa.pem` | An unencrypted RSA-3072 private key made by `nh key create --scheme secure_boot_v2_rsa` |
+| `keys/<org>/<name>.rsa.pub.pem` | The matching public key |
+
+<Warning>
+  The data directory holds an API token and signing keys. Do not commit it to version control or share it.
+</Warning>
+
+## Related pages
+
+- [Install the nh CLI](/cli/installation)
+- [nh command reference](/cli/reference)
+- [API authentication](/api/authentication)
+- [Two-factor authentication](/access/two-factor)
+- [CI and automation](/outbound/ci-cd)

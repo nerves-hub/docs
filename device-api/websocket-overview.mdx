@@ -1,150 +1,205 @@
 ---
-title: "Device WebSocket Protocol"
+title: "Device WebSocket protocol"
 sidebarTitle: "Overview"
-description: "Learn how NervesHub uses Phoenix Channels over WebSocket for long-lived device connections, including connection URI, SSL requirements, and message format."
+description: "How a device connects to NervesHub over a Phoenix Channels WebSocket: endpoint, authentication, message format, topics, join parameters and API versions."
 ---
 
-NervesHub maintains a persistent, bidirectional connection between each device and the server using Phoenix Channels over WebSocket. This long-lived connection is the backbone of device communication — it carries firmware update notifications, reboot requests, health reporting, and remote console access. Understanding the protocol helps when building custom device clients or debugging connectivity issues.
+Each device holds one WebSocket connection to NervesHub and speaks the Phoenix Channels protocol over it. The connection carries firmware updates, [archives](/updates/archives), [scripts](/management/support-scripts), the [remote console](/management/remote-console) and [extension](/extensions/overview) traffic.
 
 <Note>
-  If you are running a standard Nerves device, the `nerves_hub_link` library handles all WebSocket protocol details automatically. This reference is intended for custom client implementations, low-level debugging, or non-Nerves platforms connecting to NervesHub.
+  `nerves_hub_link` and the other [client libraries](/integrations/overview) implement this protocol for you. Read this page if you are writing your own client or debugging a connection.
 </Note>
 
-## Connection URI
+## Endpoint
 
-Establish the WebSocket connection to the following endpoint:
+Connect to the instance's device host, which is separate from the web host that serves the dashboard and the HTTP API.
 
 ```
-wss://{host}/socket/websocket
+wss://{device_host}/socket/websocket
 ```
 
-For NervesCloud, the device API host is `devices.nervescloud.com`:
+For NervesCloud:
 
 ```
 wss://devices.nervescloud.com/socket/websocket
 ```
 
-**SSL peer verification is required.** The client must verify the server certificate against a trusted CA bundle. Connections that skip certificate verification are not supported and will be rejected. For mTLS (certificate-based device authentication), the client also presents its device certificate during the TLS handshake.
+The device endpoint serves the same socket at `/device-socket/websocket`.
 
-## Phoenix Channels Message Format
+Your client must verify the server's certificate. For a self-hosted instance, make sure the device trusts the certificate authority that signed the server's certificate. See [Transport](/connection/transport).
 
-NervesHub uses the Phoenix Channels wire protocol. Every message is a five-element JSON array:
+## Authentication
+
+A device authenticates when the socket connects, in one of two ways.
+
+| Method | How the device presents it | Pages |
+| --- | --- | --- |
+| Device certificate | As the TLS client certificate during the handshake | [Device certificates](/auth/device-certificates), [NervesKey](/auth/nerveskey), [TPM](/auth/tpm), [Just-in-time provisioning](/auth/just-in-time-provisioning) |
+| Shared secret | As `x-nh-alg`, `x-nh-key`, `x-nh-time` and `x-nh-signature` headers on the WebSocket upgrade request | [Shared secrets](/auth/shared-secret) |
+
+A connection with neither is refused. When a client certificate is present, it is used and the headers are ignored.
+
+## Message format
+
+Every message is a five-element array.
 
 ```
 [join_ref, ref, topic, event, payload]
 ```
 
-| Field      | Type           | Description                                                         |
-| ---------- | -------------- | ------------------------------------------------------------------- |
-| `join_ref` | string \| null | Unique reference for the join operation; null for non-join messages |
-| `ref`      | string \| null | Per-message unique reference for correlating replies                |
-| `topic`    | string         | Channel topic (e.g., `"device"`)                                    |
-| `event`    | string         | Event name (e.g., `"update"`, `"phx_join"`)                         |
-| `payload`  | object         | Event-specific JSON payload                                         |
+| Field | Type | Description |
+| --- | --- | --- |
+| `join_ref` | string or null | Reference of the join this message belongs to |
+| `ref` | string or null | Reference of this message, repeated in its reply |
+| `topic` | string | `device`, `console`, `extensions` or `phoenix` |
+| `event` | string | Event name, such as `update` or `phx_join` |
+| `payload` | object | Event payload |
 
-**Example — server pushing a firmware update event:**
+The `vsn` query parameter on the WebSocket URL chooses the encoding.
 
-```json
-["join_123", "ref-453", "device", "update", {"firmware_url": "https://firmware.nervescloud.com/..."}]
-```
+| `vsn` | Encoding |
+| --- | --- |
+| `2.0.0` | JSON in text frames |
+| `3.0.0` | The same array encoded as Msgpack in binary frames |
 
-## Supported Topics
+See [Transport](/connection/transport) for when to use Msgpack.
 
-NervesHub exposes two channel topics over the device WebSocket connection:
+## Topics
 
-<CardGroup cols={2}>
-  <Card title="device" icon="microchip">
-    The primary channel for firmware updates, device status, and lifecycle events. All devices must join this topic. Requires `device_api_version` in the join payload.
-  </Card>
+| Topic | Purpose |
+| --- | --- |
+| `device` | Firmware updates, archives, scripts, reboot and status. Every device joins this topic. |
+| `console` | The remote IEx console and file transfer. Optional. |
+| `extensions` | Health, metrics, logging and the other extensions. Optional. See [Extensions protocol](/device-api/extensions). |
+| `phoenix` | Heartbeats only. |
 
-  <Card title="console" icon="terminal">
-    Provides remote IEx shell and console I/O access. Join this topic to enable the remote interactive Elixir console for a device.
-  </Card>
-</CardGroup>
+## Join the device topic
 
-## Joining the Device Channel
-
-After the WebSocket connection is established, send a `phx_join` event on the `device` topic. Include `device_api_version` in the payload to declare the protocol version your client supports:
+Send `phx_join` on the `device` topic. The payload describes the device and the firmware it is running.
 
 ```json
-["join_ref", "ref1", "device", "phx_join", {"device_api_version": "2.0.0"}]
+["1", "1", "device", "phx_join", {
+  "device_api_version": "2.4.0",
+  "nerves_fw_uuid": "d9f8c63a-1234-5678-abcd-ef0123456789",
+  "nerves_fw_product": "my_app",
+  "nerves_fw_version": "1.4.0",
+  "nerves_fw_architecture": "arm",
+  "nerves_fw_platform": "rpi4",
+  "fwup_public_keys": "on_connect",
+  "meta": {"firmware_validated": true}
+}]
 ```
 
-The server replies with a `phx_reply` event. A successful join response has the following shape:
+| Parameter | Description |
+| --- | --- |
+| `device_api_version` | The protocol version your client implements. See [Device API versions](#device-api-versions). A missing or invalid value is treated as `1.0.0`. |
+| `nerves_fw_uuid`, `nerves_fw_product`, `nerves_fw_version`, `nerves_fw_architecture`, `nerves_fw_platform` | The running firmware's metadata. |
+| `nerves_fw_author`, `nerves_fw_description`, `nerves_fw_vcs_identifier`, `nerves_fw_misc`, `fwup_version` | Optional firmware metadata. |
+| `fwup_public_keys` | Set to `"on_connect"` to be sent the organization's [firmware signing](/concepts/firmware-signing) keys after joining. |
+| `archive_public_keys` | Set to `"on_connect"` to be sent the organization's archive signing keys after joining. |
+| `currently_downloading_uuid` | The UUID of a firmware the device is downloading right now. Send it when you rejoin mid-update. Without it, NervesHub ends any update it had in progress for the device. |
+| `meta.firmware_validated` | `true` or `false`: whether the running firmware has been validated. Left out, the status is recorded as unknown. |
+| `meta.firmware_auto_revert_detected` | `true` when the device booted back into its previous firmware after a failed update. |
+
+If the complete metadata is not sent, NervesHub looks up the firmware by `nerves_fw_uuid`. ESP-IDF devices report their own metadata keys. See [ESP-IDF](/updates/esp-idf).
+
+A successful join is answered with a `phx_reply` whose `status` is `ok`.
 
 ```json
-["join_ref", "ref1", "device", "phx_reply", {"status": "ok", "response": {}}]
+["1", "1", "device", "phx_reply", {"status": "ok", "response": {}}]
 ```
 
-If the join is rejected — for example due to invalid credentials or an unsupported protocol version — the response status will be `"error"` and the `response` object will contain a reason string.
+A refused join has `status` `error`, and the response is `{"error": "could not connect"}`. Wait, then join again.
 
-## Extensions
+### What the server sends after a join
 
-After joining, a device and the server negotiate **extensions** — optional capabilities such as health reporting, metrics, geo, logging, the local shell, network identity, and error reports. The device advertises which versions of each extension it supports, and the server replies with the ones enabled on the product that it can speak.
+Depending on the join parameters and `device_api_version`, the server then pushes some of these on the `device` topic. Each is described in [Events](/device-api/websocket-events).
 
-A device is only sent messages for extensions that were successfully negotiated, so an older client that does not know about an extension simply never receives its traffic.
+| Event | Sent when |
+| --- | --- |
+| `fwup_public_keys`, `archive_public_keys` | The join asked for them with `"on_connect"`. |
+| `archive` | The device's [deployment group](/setup/deployments) has an archive for it. Needs `2.0.0`. |
+| `extensions:get` | Always. Needs `2.2.0`. |
+| `scripts/run` | The device, its deployment group or its release has [connecting code](/deployments/connecting-code). Needs `2.1.0`. |
+| `update_mode` | Always. Needs `2.4.0`. |
+| `update` | The deployment group decides to update the device. |
 
-## Joining the Console Channel
+## Join the console topic
 
-To open a remote IEx session, join the `console` topic after the device channel is established:
+Join `console` to offer a remote console. Send the console protocol version your client implements.
 
 ```json
-["join_ref_console", "ref2", "console", "phx_join", {}]
+["2", "2", "console", "phx_join", {"console_version": "2.1.0"}]
 ```
 
-Console I/O is then exchanged as events on this topic. See the [WebSocket Events reference](/device-api/websocket-events) for the full list of events on each topic.
+See [Console events](/device-api/websocket-events#console-topic).
 
-## Reconnection Behaviour
+## Join the extensions topic
 
-Devices must implement reconnection with **exponential backoff**. Network interruptions and server-side restarts are expected in production fleet deployments. A recommended backoff strategy:
+Wait for `extensions:get` on the `device` topic, then join `extensions` with one version for each extension you want to serve. See [Extensions protocol](/device-api/extensions).
 
-* Start with a 1–2 second initial delay
-* Double the delay on each failed attempt
-* Cap the maximum delay at 60–120 seconds
-* Add random jitter (±20%) to avoid thundering-herd reconnection storms across a large fleet
+## Device API versions
 
-<Tip>
-  `nerves_hub_link` implements exponential backoff reconnection automatically. If you are building a custom client, model your reconnection logic on the `nerves_hub_link` source code for a battle-tested reference implementation.
-</Tip>
+`device_api_version` tells the server which messages your client understands. The server uses it to decide what to send unasked: archives, `extensions:get`, scripts and `update_mode` are only sent to a device that declares the version that introduced them.
+
+| Version | Adds |
+| --- | --- |
+| `1.0.0` | Firmware updates, status updates, reboot |
+| `2.0.0` | Identify, archives |
+| `2.1.0` | Scripts run outside the console, firmware and archive public keys |
+| `2.2.0` | Extensions |
+| `2.3.0` | Firmware validation and auto-revert status |
+| `2.4.0` | Checking for, requesting and choosing how the device receives firmware updates |
+
+The `console` topic has its own `console_version`.
+
+| Version | Adds |
+| --- | --- |
+| `1.0.0` | Remote IEx console |
+| `2.0.0` | Sending files to and receiving files from a device |
+| `2.1.0` | Acknowledging each chunk of a file sent to the device |
+
+`nerves_hub_link` 2.14.0 declares `device_api_version` `2.4.0`.
+
+<Warning>
+  A device set to the `device_managed` update mode that joins with a `device_api_version` below `2.4.0` is moved back to `automatic`. See [Device-managed updates](/updates/device-managed-updates).
+</Warning>
 
 ## Heartbeats
 
-Phoenix Channels use a heartbeat mechanism to detect stale connections. The client must send a `heartbeat` event on the `phoenix` topic at regular intervals (default: every 30 seconds):
+Send a `heartbeat` event on the `phoenix` topic at a regular interval. `nerves_hub_link` sends one every 30 seconds by default.
 
 ```json
-[null, "ref_hb", "phoenix", "heartbeat", {}]
+[null, "5", "phoenix", "heartbeat", {}]
 ```
 
-The server replies with:
+The server replies on the same topic.
 
 ```json
-[null, "ref_hb", "phoenix", "phx_reply", {"status": "ok", "response": {}}]
+[null, "5", "phoenix", "phx_reply", {"status": "ok", "response": {}}]
 ```
 
-If the server does not receive a heartbeat within the configured interval, it closes the connection and the client must reconnect.
+The server closes a socket that has sent nothing for 180 seconds.
 
-## Authentication
+## Closed channels and reconnecting
 
-Device identity is established at the TLS layer before the WebSocket handshake. NervesHub supports three authentication modes:
+| Event from the server | Meaning | What to do |
+| --- | --- | --- |
+| `phx_error` | The channel stopped unexpectedly. The socket stays open. | Join the topic again, after a delay. |
+| `phx_close` | The channel was closed. | `nerves_hub_link` does not rejoin after this. |
 
-<CardGroup cols={3}>
-  <Card title="Device Certificates" icon="certificate">
-    X.509 client certificates presented during the mTLS handshake. The recommended approach for production devices.
-  </Card>
+When the socket itself closes, reconnect with a backoff so that a fleet does not reconnect all at once. See [Connection lifecycle](/connection/lifecycle) for how `nerves_hub_link` does it.
 
-  <Card title="Shared Secret" icon="key">
-    A `product_key` and `product_secret` used to derive an HMAC credential. Suitable for development and devices without hardware security modules.
-  </Card>
+A device that connects to the web host's `/device-socket` path can be told to reconnect to the device host instead, if the instance is configured to redirect.
 
-  <Card title="NervesKey" icon="microchip">
-    ATECC508A or ATECC608A hardware security module stores the private key in tamper-resistant hardware. The private key never leaves the chip, making this the most secure option for production fleets.
-  </Card>
-</CardGroup>
+## Identify your client
 
-## Self-Hosted NervesHub
+Send a `User-Agent` header on the WebSocket upgrade request so NervesHub can record which client library and version the device runs. See [Connection lifecycle](/connection/lifecycle).
 
-If you are connecting to a self-hosted NervesHub instance, replace the host in the connection URI with your instance's device API hostname. Ensure your CA bundle includes the certificate authority used to sign your self-hosted server's TLS certificate.
+## Related pages
 
-```
-wss://device.my-nerves-hub.org/socket/websocket
-```
+- [WebSocket channel events](/device-api/websocket-events)
+- [Extensions protocol](/device-api/extensions)
+- [Connection transport](/connection/transport)
+- [Connection lifecycle](/connection/lifecycle)
+- [Choosing a device client](/integrations/overview)

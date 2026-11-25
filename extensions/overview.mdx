@@ -1,0 +1,125 @@
+---
+title: "Extensions overview"
+sidebarTitle: "Overview"
+description: "What NervesHub extensions are, which ones exist, and the three places each one has to be turned on."
+---
+
+An extension is something a device does for NervesHub other than take firmware: report health, a location, logs, errors, or open a shell. Extensions travel on their own channel of the device's existing connection, so a misbehaving extension cannot get in the way of an update.
+
+An extension only runs when three things agree:
+
+1. The firmware includes it (`extension_modules` in the `nerves_hub_link` config).
+2. The product has it turned on in NervesHub.
+3. The device has it turned on in NervesHub.
+
+<Note>
+  A product created in the web UI starts with every extension on. A product created through the API or `nh` starts with every extension off, and sends nothing until you turn one on in its settings. The device setting is on by default, so a device follows its product unless you turn the extension off for that one device.
+</Note>
+
+## The extensions
+
+| Extension | What it does | In `nerves_hub_link` | In the default `extension_modules` | Needs ClickHouse on the instance |
+| --- | --- | --- | --- | --- |
+| [Health](/extensions/health) | Metrics, metadata and alarms, reported together when NervesHub asks | 2.6.0 | Yes | No |
+| [Geo](/extensions/geo) | Device location from GeoIP or your own resolver | 2.6.0 | Yes | No |
+| [Local shell](/extensions/local-shell) | A shell on the device's OS. Optional, and mostly for devices that are not Nerves devices | 2.10.0 | Only when `ExPTY` is a dependency | No |
+| [Network identity](/extensions/network-identity) | Identities the device holds on networks such as iroh, NetBird, Tailscale or WireGuard | 2.13.0 | Yes | No |
+| [Logging](/extensions/logging) | Device log lines, stored and searchable | 2.13.0 | No | Yes |
+| [Error reports](/extensions/error-reports) | Crashes and exceptions, grouped into issues | 2.13.0 | No | Yes |
+| [Metrics](/extensions/metrics-and-alarms) | Metrics on their own, batched and timestamped by the device | Not implemented | — | Yes |
+| [Alarms](/extensions/metrics-and-alarms) | Alarms sent as they are raised and cleared | Not implemented | — | No |
+
+NervesHub 2.3.0 introduced extensions. NervesHub 2.5.0 added Metrics, Alarms, Error reports, Network identity, batched logging and version negotiation.
+
+An instance without ClickHouse does not advertise Logging, Error reports or Metrics to devices, so they never attach. See [Feature prerequisites](/hosting/feature-prerequisites#clickhouse).
+
+## Enable an extension
+
+<Steps>
+  <Step title="Include it in your firmware">
+    Health, Geo and Network identity are in the default list. Local shell joins the default list when your project depends on `ExPTY`. Logging and Error reports are not in the default list, so you name them:
+
+    ```elixir
+    # config/target.exs
+    config :nerves_hub_link,
+      extension_modules: [
+        NervesHubLink.Extensions.Geo,
+        NervesHubLink.Extensions.Health,
+        NervesHubLink.Extensions.NetworkIdentity,
+        NervesHubLink.Extensions.Logging,
+        NervesHubLink.Extensions.ErrorReports
+      ]
+    ```
+
+    <Warning>
+      `extension_modules` replaces the default list. Name every extension you want. The list leaves out the optional [Local shell](/extensions/local-shell) extension.
+    </Warning>
+  </Step>
+
+  <Step title="Turn it on for the product">
+    Open **Product settings** and find the **Device extensions** card on the **General** tab. Switch on the extension. This needs [a role that](/access/roles) can update the product.
+
+    Each row shows how many of the product's devices have the extension on in their own setting.
+  </Step>
+
+  <Step title="Check the device setting">
+    Open a device, go to its **Settings** tab, and find the **Extensions** card. Each extension is on by default. An extension the product has off is shown as **Off for this product** and its switch is disabled.
+
+    If some devices have an extension turned off in their own setting, the product's **Device extensions** card says how many and offers **Turn it back on for them**. That link needs NervesHub 2.5.1 or later.
+  </Step>
+
+  <Step title="Reconnect devices that were already connected">
+    NervesHub works out which extensions a device may use when the device connects. A device that was connected before you turned the extension on picks it up the next time it connects.
+  </Step>
+</Steps>
+
+## Check that it works
+
+On the device, check which extensions NervesHub has attached:
+
+```elixir
+iex> :sys.get_state(NervesHubLink.Extensions).extensions |> Map.new(fn {name, ext} -> {name, ext.attached?} end)
+```
+
+Each extension has the value `true` once NervesHub has attached it. `NervesHubLink.Extensions.list()` lists the extensions in the firmware, but in `nerves_hub_link` 2.14.0 its `attached?` field reads `false` even for an attached extension.
+
+In NervesHub, the device's **Data History** tab records extension messages, and you can filter it to the **Extensions** channel. Data History needs ClickHouse on the instance.
+
+When a device cannot start an extension, it tells NervesHub and NervesHub raises a product notification (NervesHub 2.5.0 and later). See [Notifications](/management/notifications).
+
+## Turn an extension off
+
+Turning an extension off for a product turns it off on every device in the product. NervesHub asks you to confirm, then tells connected devices to detach it.
+
+Turning it off on one device's **Settings** tab detaches it on that device only.
+
+## How negotiation works
+
+The server decides what runs. A device never starts an extension on its own.
+
+1. After the device joins its device channel, NervesHub sends `extensions:get` with every extension the instance offers and the versions it implements.
+2. The device joins the `extensions` channel, offering one version of each extension it has in `extension_modules` that NervesHub also named.
+3. NervesHub replies with the extensions this device may attach, after applying the product and device settings.
+4. The device starts each one and confirms with `<name>:attached`.
+
+`nerves_hub_link` 2.13.0 and NervesHub 2.5.0 negotiate versions this way. Against an older NervesHub that names no versions, `nerves_hub_link` offers every extension it is configured with, as it did before 2.13.0.
+
+The wire format is in the [extensions protocol reference](/device-api/extensions).
+
+## Extensions on other clients
+
+The table above describes `nerves_hub_link`. Other clients implement their own subset:
+
+| Client | Extensions |
+| --- | --- |
+| [Linux agent](/integrations/linux-agent) (`nerves-hub-link-agent`) | `health`, `geo`, `logging`, `local_shell`, `network_identity`. Each is off by default in the agent's config. |
+| [AtomVM on ESP32](/integrations/atomvm-esp32) (`nerves_hub_link_atomvm_esp32`) | `health`, `geo`, `logging`, and `alarms` on its unreleased main branch |
+| `nerves-hub-link-esp32` (Rust, ESP-IDF) | `health`, `geo`, `logging` |
+
+## Related pages
+
+- [Health monitoring](/management/health-monitoring)
+- [Create and manage products](/setup/products)
+- [Choosing a device client](/integrations/overview)
+- [Extensions protocol](/device-api/extensions)
+- [Feature prerequisites](/hosting/feature-prerequisites)

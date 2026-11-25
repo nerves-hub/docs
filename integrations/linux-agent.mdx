@@ -1,97 +1,293 @@
 ---
-title: "Linux Agent"
-sidebarTitle: "Linux Agent"
-description: "Connect a Linux device that is not running Nerves using the Rust NervesHub agent, which shells out to fwup or RAUC to write firmware."
+title: "Linux agent"
+sidebarTitle: "Linux agent"
+description: "Connect a Linux device that does not run Nerves with nerves-hub-link-agent, a Rust binary that applies updates through fwup or RAUC."
 ---
 
-[nerves-hub-link-agent](https://github.com/nerves-hub/nerves-hub-link-agent) is a NervesHub device agent for Linux systems that are not running Nerves. It is a single Rust binary that links nothing but libc, so your application stays its own process in whatever language you already use.
+[nerves-hub-link-agent](https://github.com/nerves-hub/nerves-hub-link-agent) is a NervesHub client for Linux systems that are not running Nerves. It is one Rust binary that runs beside your application. It does not write firmware itself: it runs the update tool your image already has, `fwup` or `rauc`.
 
-It connects over Phoenix Channels and reports the firmware the device is running, receives update assignments and runs the updater, asks your application whether an update may be installed and whether the device may reboot, confirms a good boot so the bootloader releases its rollback, and answers support script, health, geo, logging, remote shell and network identity requests.
+The agent:
+
+- reports which firmware the device is running
+- receives updates and runs the update tool
+- can ask your application whether to install an update and whether to reboot
+- confirms a good boot so the bootloader releases its rollback
+- runs support scripts
+- answers health, geo, logging, [local shell](/extensions/local-shell) and [network identity](/extensions/network-identity) requests
 
 <Warning>
-  **Status.** The agent has been exercised end to end against a real NervesHub, and both update tools install, roll back and validate on a QEMU rig with a real bootloader. It has **not yet run on production hardware**.
+  The agent has been exercised end to end against a NervesHub, and both update tools install, roll back and validate on a QEMU rig with a real bootloader. It has not yet run on production hardware.
 
-  Two things are not implemented: client-certificate identity — the agent refuses a config containing it rather than starting and failing later — and resumable downloads.
+  Client-certificate authentication and resumable downloads are not implemented. The agent refuses to start with a client-certificate config.
 </Warning>
 
 ## Requirements
 
-| | |
+| What | Needed |
 | --- | --- |
-| **A Linux device** | The agent reads `/proc` and `/sys` and shells out to your updater. It builds and runs on macOS for development, but health metrics come back empty there. |
-| **An update tool** | `fwup` or `rauc`, already in the image and already configured for A/B updates. The agent runs it; it does not replace it. |
-| **Rust 1.85+** | To build. |
+| Device | Linux. The agent reads `/proc` and `/sys` and shells out to the update tool. |
+| Update tool | `fwup` or `rauc` in the image, already configured for A/B updates |
+| Authentication | A [shared secret](/auth/shared-secret). The instance must have shared secrets enabled. See [feature prerequisites](/hosting/feature-prerequisites#shared-secret-authentication). |
+| Firmware format | fwup works on any instance. RAUC must be enabled for the instance and the product. See [RAUC bundles](/updates/rauc). |
+| Rust | 1.85 or later, to build |
 
-## Update tools
+## Build
 
-One per device, chosen in the config and compiled in as a feature. The agent does not write firmware itself — it hands the update to a tool that does, and those tools disagree about where the bytes come from, so the update tool owns the transfer.
+```bash
+cargo build --release
+```
 
-| Tool | How it takes the update |
-| --- | --- |
-| **fwup** | The archive streams into `fwup`'s stdin as it downloads, so the device needs no free space beyond the slot it writes into. Deltas stay NervesHub's job — the agent reports its fwup version and lets the server decide. |
-| **rauc** | `rauc install <url>`. The bundle is never downloaded first; RAUC streams it and fetches only the blocks the target slot lacks, so a small change costs a small download without anyone generating a patch. |
-| **sandbox** | Downloads, verifies, writes to a file and stops. For bring-up and CI. In the default feature set deliberately, so a build that has not been told which real updater to use cannot write to a disk. |
+This builds `nerves-hub-link-agent` and `agent-ctl` in `target/release/`.
+
+Update tools are cargo features. The default feature set is `sandbox` and `fwup`. A config file cannot select a tool that was not built in. Build a device binary with only the tool it has:
+
+```bash
+cargo build --release --no-default-features --features fwup
+cargo build --release --no-default-features --features rauc
+```
+
+## Connect a device with the sandbox tool
+
+Start with the `sandbox` update tool. It downloads firmware, verifies its SHA-256, writes it to a file and stops. It touches no block device or bootloader, and a reboot is only a log line.
+
+<Steps>
+  <Step title="Create a shared secret">
+    Create a product shared secret in NervesHub. See [Shared secret authentication](/auth/shared-secret). You get a product key that starts with `nhp_` and a product secret.
+  </Step>
+
+  <Step title="Write a config file">
+    ```toml agent.toml
+    [server]
+    host = "devices.nervescloud.com"
+    # port = 443, tls = true and path = "/device-socket" are the defaults
+
+    [identity]
+    product_key = "nhp_..."
+    product_secret = "..."
+    identifier = { literal = "bench-01" }
+
+    [update_tool]
+    name = "sandbox"
+    work_dir = "/tmp/nerves-hub-agent"
+    initial_firmware = { uuid = "00000000-0000-0000-0000-000000000000", version = "0.1.0", product = "my_app", platform = "sandbox", architecture = "x86_64" }
+
+    [ipc]
+    socket = "/tmp/nerves-hub-agent.sock"
+    ```
+
+    For your own instance, set `host` to its device endpoint.
+
+    `initial_firmware` is what the sandbox reports as the running firmware before anything is installed. Without it the device has no firmware for a [deployment group](/setup/deployments) to compare against.
+  </Step>
+
+  <Step title="Run the agent">
+    ```bash
+    ./target/release/nerves-hub-link-agent --config agent.toml
+    ```
+
+    The device appears in NervesHub under the identifier you configured.
+
+    Set `RUST_LOG=nerves_hub_link_agent=debug` to log the URL it connects to and every frame in both directions.
+  </Step>
+
+  <Step title="Send it an update">
+    Upload fwup firmware to the product and target the device from a deployment group. The sandbox downloads it into `work_dir`, and you can watch progress in NervesHub.
+  </Step>
+</Steps>
+
+<Tip>
+  The sandbox reports itself to NervesHub as `fwup`, and the startup log line reads `update tool fwup (sandboxed)`. It stands in for the fwup path, so test it with fwup firmware.
+</Tip>
 
 ## Configuration
 
-The agent reads one TOML file — `/etc/nerves-hub-link-agent.toml` unless `--config` or `$NERVES_HUB_AGENT_CONFIG` points elsewhere. Nothing is read from the environment field by field, so a device's configuration is one file you can read and diff.
+The agent reads one TOML file. It looks for the path in this order:
+
+1. `--config <path>` (or `-c <path>`)
+2. The `NERVES_HUB_AGENT_CONFIG` environment variable
+3. `/etc/nerves-hub-link-agent.toml`
+
+[`examples/agent.toml`](https://github.com/nerves-hub/nerves-hub-link-agent/blob/main/examples/agent.toml) in the repository lists every option with its default.
+
+### Server
 
 ```toml
 [server]
 host = "devices.nervescloud.com"
-# port = 443, tls = true and path = "/device-socket" are the defaults
+port = 443
+path = "/device-socket"
+tls = true
+# ca_certificate = "/etc/ssl/certs/my-ca.pem"   # default: the system trust store
+heartbeat_interval_secs = 30
+reconnect_backoff_secs = [1, 2, 5, 10, 30, 60]
+```
 
+`host` is a host name only, with no scheme or path. The other values shown are the defaults.
+
+### Identity
+
+```toml
 [identity]
 product_key = "nhp_..."
 product_secret = "..."
-identifier = { literal = "bench-01" }
-
-[update_tool]
-name = "sandbox"
-work_dir = "/tmp/nerves-hub-agent"
-
-[ipc]
-socket = "/tmp/nerves-hub-agent.sock"
+identifier = { file = "/sys/firmware/devicetree/base/serial-number" }
 ```
 
-For a self-hosted NervesHub, change `host` to your deployment's device endpoint.
+The identifier comes from one of three sources:
 
-### Decisions worth making before shipping
+| Form | Reads |
+| --- | --- |
+| `{ literal = "bench-01" }` | The value itself |
+| `{ file = "/path" }` | The first line of a file |
+| `{ command = "/usr/bin/read-serial" }` | The first line of a command's output, run once at startup |
 
-**Identity.** The device identifier can come from a literal, a file, or a command. On real hardware prefer the hardware's own serial — `{ file = "/sys/firmware/devicetree/base/serial-number" }` — or a value on a data partition. A literal in a shipped image makes every device the same device, and an identifier baked into the rootfs is gone after the first update.
+<Warning>
+  A product shared secret registers any identifier NervesHub has not seen before. A wrong identifier creates a second device without an error. A literal identifier in a shipped image makes every device the same device. An identifier stored in the root filesystem is lost at the first update, so read it from the hardware or from a data partition.
+</Warning>
 
-**Update policy.** `apply` installs whatever arrives, matching NervesHubLink out of the box. `ask` puts your application in the path.
+### fwup
 
-**Reboot policy.** Separate from update policy on purpose. An application happy to download at any time may still be unable to reboot right now, and conflating the two forces it to refuse the download in order to protect the reboot.
+```toml
+[update_tool]
+name = "fwup"
+device = "/dev/mmcblk0"
+allow_block_device = true
+task = "upgrade"
+binary = "/usr/bin/fwup"
+public_key = "..."
+confirm_command = "/usr/bin/fwup --apply --task validate --no-unmount -d /dev/mmcblk0 -i /usr/share/fwup/ops.fw --quiet"
+metadata = { file = "/etc/nerves-hub/firmware.env" }
+```
 
-<Note>
-  A shared secret authenticates the *product*, not the device, so the agent sends a device identifier alongside it. NervesHub registers an identifier it has not seen before — which is what makes one factory image work for a whole fleet, and also means a wrong identifier quietly creates a second device rather than failing.
-</Note>
+| Key | Default | Purpose |
+| --- | --- | --- |
+| `device` | required | The device fwup writes to |
+| `allow_block_device` | `false` | Must be `true` for `device` to be a block device. The agent refuses to start otherwise. |
+| `task` | `upgrade` | The fwup task to run |
+| `binary` | `/usr/bin/fwup` | Path to fwup |
+| `public_key` | none | The public key fwup verifies the archive against. Set it, so the device checks the bytes it received. |
+| `extra_args` | `[]` | Extra arguments for fwup |
+| `confirm_command` | none | Run when the firmware is marked valid. Required. The agent refuses to start without it. |
+| `metadata` | `{ file = "/etc/nerves-hub/firmware.env" }` | Where the running firmware's metadata comes from, as `key=value` lines. Use `{ command = "fw_printenv" }` on a device with a U-Boot environment. |
 
-## Bringing a device up
+The archive streams into fwup as it downloads. The agent reports its fwup version and NervesHub decides whether to send a [delta](/management/delta-updates), as it does for Nerves devices. See [`docs/fwup.md`](https://github.com/nerves-hub/nerves-hub-link-agent/blob/main/docs/fwup.md) for what the image must provide.
 
-Start with the `sandbox` update tool. It downloads firmware, verifies its SHA-256, writes it to a file and stops — no block devices, no bootloader, and "reboot" is a log line. That exercises authentication, identity, deployment targeting, progress reporting and reconnects, which is everything except the part that writes to a disk.
+### RAUC
+
+```toml
+[update_tool]
+name = "rauc"
+binary = "/usr/bin/rauc"
+stream_from_url = true
+tls_no_verify = false
+firmware_file = "/etc/nerves-hub/firmware"
+```
+
+| Key | Default | Purpose |
+| --- | --- | --- |
+| `binary` | `/usr/bin/rauc` | Path to rauc |
+| `stream_from_url` | `true` | Hand `rauc install` the firmware URL. Staging the bundle to disk is not implemented. With `false` the agent refuses the install. |
+| `tls_no_verify` | `false` | Pass `--tls-no-verify` to `rauc install` |
+| `firmware_file` | `/etc/nerves-hub/firmware` | A file in the root filesystem that says which firmware the image is |
+
+What the image must provide:
+
+- **RAUC 1.9 or later.** The agent refuses to start with an older version.
+- **The RAUC service.** `rauc install` is a D-Bus client of `rauc service`. The agent checks for the service at startup.
+- **A `system.conf`** that describes the slots, names a real bootloader backend, and points at a keyring. RAUC verifies bundles against that keyring. The agent has no signature settings for RAUC.
+- **Verity bundles.** Streaming requires them, and NervesHub refuses plain bundles.
+
+The agent marks a boot good with `rauc status mark-good booted`.
+
+**Identifying the running firmware.** The agent reads `firmware_file` first. It holds `key=value` lines for `uuid`, `version`, `product`, `platform` and `architecture`, written by your image build. Pair it with a `uuid` in the bundle manifest's `[meta.nerveshub]` section so that both sides name the same firmware. When the file is absent, the agent falls back to the bundle hash RAUC recorded for the booted slot. That hash exists only for slots RAUC installed, so a device flashed another way cannot report its firmware until its first RAUC update. See [RAUC bundles](/updates/rauc#the-firmware-uuid).
+
+See [`docs/rauc.md`](https://github.com/nerves-hub/nerves-hub-link-agent/blob/main/docs/rauc.md) for the slot configuration and a QEMU rig.
+
+### Update and reboot policy
+
+```toml
+[updates]
+policy = "apply"        # or "ask"
+ask_timeout_secs = 30
+on_timeout = "apply"
+on_no_controller = "apply"
+
+[reboot]
+policy = "immediate"    # or "ask" or "never"
+command = "sudo reboot"
+```
+
+`policy = "apply"` installs whatever arrives. `policy = "ask"` asks your application first. Reboot policy is separate, so an application can accept a download and still defer the reboot.
+
+The default reboot command is `sudo reboot`, because the agent is meant to run as an unprivileged user. That needs one sudoers rule:
+
+```
+agent ALL=(root) NOPASSWD: /sbin/reboot
+```
+
+### Talking to your application
+
+```toml
+[ipc]
+socket = "/run/nerves-hub-link-agent.sock"
+mode = 0o660
+require_controller = false
+```
+
+Your application talks to the agent over a Unix socket with newline-delimited JSON. One connection can be the controller, which answers update and reboot questions. Other connections are observers. See [`docs/ipc.md`](https://github.com/nerves-hub/nerves-hub-link-agent/blob/main/docs/ipc.md).
+
+`agent-ctl` is a small client for the same socket:
 
 ```bash
-cargo build --release
-./target/release/nerves-hub-link-agent --config agent.toml
+agent-ctl status        # connection, identity, firmware, whether validation is owed
+agent-ctl mark-valid    # confirm the running firmware, releasing the rollback
+agent-ctl reboot
+agent-ctl watch         # stream events
 ```
 
-Add `RUST_LOG=nerves_hub_link_agent=debug` to log the URL it dials and every frame in both directions.
+## Extensions and support scripts
 
-<Tip>
-  The startup line reads `update tool fwup (sandboxed)`. That is not a mistake — the sandbox reports itself to NervesHub as `fwup` because it stands in for that path rather than being a firmware format of its own. `(sandboxed)` is the part telling you nothing on this device can be written to.
-</Tip>
+The agent implements five extensions. All are off by default in the agent's config. The product and the device must also have the extension enabled in NervesHub.
 
-Once it connects, swap the `[update_tool]` block for `fwup` or `rauc`.
+| Extension | Config table | Reports |
+| --- | --- | --- |
+| Health | `[extensions.health]` | Memory, CPU, load and temperature from `/proc` and `/sys` |
+| Geo | `[extensions.geo]` | A GeoIP position, a fixed position, or the output of a command |
+| Logging | `[extensions.logging]` | `journalctl --follow`, or the output of a command |
+| Local shell | `[extensions.local_shell]` | A shell on a pty, `/bin/sh` by default |
+| Network identity | `[extensions.network_identity]` | Keys from commands you configure |
 
-## Further reading
+Turn one on with `enabled = true` in its table:
 
-The agent's repository carries the detail that only matters on hardware:
+```toml
+[extensions.health]
+enabled = true
+```
 
-- [`docs/connecting.md`](https://github.com/nerves-hub/nerves-hub-link-agent/blob/main/docs/connecting.md) — both endpoints, TLS, and what each authentication failure means
-- [`docs/fwup.md`](https://github.com/nerves-hub/nerves-hub-link-agent/blob/main/docs/fwup.md) and [`docs/rauc.md`](https://github.com/nerves-hub/nerves-hub-link-agent/blob/main/docs/rauc.md) — what the image must provide, plus a QEMU rig that boots, rolls back and validates
-- [`docs/deploying.md`](https://github.com/nerves-hub/nerves-hub-link-agent/blob/main/docs/deploying.md) — cross-compiling, the service user, the systemd unit, and where the identifier has to live to survive a rootfs update
-- [`docs/ipc.md`](https://github.com/nerves-hub/nerves-hub-link-agent/blob/main/docs/ipc.md) — how your application answers the update and reboot questions
+<Warning>
+  The local shell runs commands as the user the agent runs as, for anyone NervesHub allows to open it. Read [`docs/extensions.md`](https://github.com/nerves-hub/nerves-hub-link-agent/blob/main/docs/extensions.md) before you enable it.
+</Warning>
 
-Building the image with Yocto? See [meta-nerveshub](/integrations/yocto).
+Support scripts are on by default. On this agent a script runs as a shell script, with `bash` as the default interpreter and a 10 second timeout. Scripts belong to the product, so a script written in Elixir for Nerves devices does not run here. See [Support scripts](/management/support-scripts).
+
+```toml
+[scripts]
+enabled = true
+interpreter = "bash"
+timeout_secs = 10
+```
+
+## Deploying to hardware
+
+The repository's [`docs/deploying.md`](https://github.com/nerves-hub/nerves-hub-link-agent/blob/main/docs/deploying.md) covers cross-compiling, the service user, the systemd unit, and Buildroot packaging. [`docs/connecting.md`](https://github.com/nerves-hub/nerves-hub-link-agent/blob/main/docs/connecting.md) covers endpoints, TLS, and what each connection failure means.
+
+If you build the image with Yocto, see [meta-nerveshub](/integrations/yocto).
+
+## Related pages
+
+- [RAUC bundles](/updates/rauc)
+- [Yocto layer](/integrations/yocto)
+- [Extensions overview](/extensions/overview)
+- [Support scripts](/management/support-scripts)
+- [Shared secret authentication](/auth/shared-secret)
+- [Choosing a device client](/integrations/overview)

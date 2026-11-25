@@ -1,0 +1,167 @@
+---
+title: "Finding devices"
+sidebarTitle: "Finding devices"
+description: "Search a product's devices with the query language, filter and choose columns, act on many devices at once, import devices in bulk, and export the list."
+---
+
+On a product's **Devices** page you can search with free text or a query expression, narrow with filters, change tags or [deployment groups](/setup/deployments) for every match, and export what you see as CSV.
+
+## Requirements
+
+* NervesHub 2.5.0 or later for the query language, the **Columns** panel, bulk tagging, bulk import, and bulk actions on every matching device.
+* `nh device list --query` needs NervesHub 2.5.0 or later. `nh` checks the server first and refuses to run the query against an older one.
+* Queries on `metric:<key>` read the latest value each device reported. See [Health monitoring](/management/health-monitoring) for how devices report metrics.
+
+## Search
+
+The search bar sits above the list. Press `/` to focus it, type, and press Enter.
+
+Text that is not a query expression is a free-text search. NervesHub looks for it in the identifier, firmware version, platform, and tags, ignoring case. The bar rewrites it to the query it ran, such as `search like "%kitchen%"`.
+
+A typo in a query expression shows the parse error instead of falling back to free text.
+
+## The query language
+
+A query is one or more comparisons joined with `and`, `or`, and `not`. Use parentheses to group. `and` binds tighter than `or`.
+
+```text
+connection = "connected" and tags contains "prod"
+health_status != "healthy" or alarm_status = "with"
+metric:battery_soc < 20 and updates = "enabled"
+not (platform = "rpi4" or platform = "rpi5")
+```
+
+Each comparison is a column, an operator, and a value. Values are double-quoted strings, except `metric:<key>` values, which are bare numbers. Column names, operators, and keywords are not case sensitive. The search bar suggests columns, operators, and values as you type.
+
+### Columns
+
+| Column | Operators | Values |
+| --- | --- | --- |
+| `identifier` | `like`, `not like` | An SQL `LIKE` pattern, such as `"%kit%"` |
+| `search` | `like`, `not like` | A `LIKE` pattern matched against identifier, firmware version, platform, and tags |
+| `platform` | `=`, `!=` | A platform the product's devices report |
+| `architecture` | `=`, `!=` | An architecture the product's devices report |
+| `firmware` | `=`, `!=` | A firmware UUID |
+| `firmware_validation_status` | `=`, `!=` | `"validated"`, `"not_validated"`, `"unknown"` |
+| `connection` | `=`, `!=` | `"connected"`, `"disconnected"`, `"asleep"`, `"not_seen"` |
+| `connection_type` | `=`, `!=` | `"cellular"`, `"ethernet"`, `"wifi"`, `"unknown"` |
+| `last_seen` | `>`, `<` | `"3 days ago"`, `"7 days ago"`, `"14 days ago"`, `"4 weeks ago"` |
+| `health_status` | `=`, `!=` | `"healthy"`, `"warning"`, `"unhealthy"`, `"unknown"` |
+| `alarm_status` | `=`, `!=` | `"with"`, `"without"` |
+| `alarm` | `contains`, `not_contains` | An alarm currently raised in the product |
+| `tags` | `contains`, `not_contains` | A tag, matched exactly, or `":not_set"` |
+| `deployment_group` | `=`, `!=` | A deployment group's name, or `":not_set"` |
+| `updates` | `=`, `!=` | `"enabled"`, `"disabled"`, `"automatic"`, `"device-managed"`, `"penalty-box"`, `"failed-updates"` |
+| `update_status` | `is`, `is not` | `"updating"`, `"not updating"` |
+| `signer_ca` | `=`, `!=` | A CA certificate's serial, or `":not_set"` |
+| `deleted` | `=`, `!=` | `"true"`, `"false"` |
+| `metric:<key>` | `>`, `>=`, `<`, `<=` | A number |
+
+Values other than `LIKE` patterns and metric numbers must be one of the known values for your product. A platform, tag, or deployment group name that no device has is rejected.
+
+Special cases:
+
+* `last_seen` only matches offline devices. `last_seen > "7 days ago"` means last seen less than 7 days ago. `last_seen < "7 days ago"` means longer ago.
+* `":not_set"` matches devices with no value: no tags, no deployment group, or no signer CA.
+* `deployment_group != "name"` also matches devices with no deployment group.
+* `connection = "not_seen"` matches devices that have never connected.
+* `connection = "asleep"` matches devices that said they were going to sleep, including ones now overdue. See [Devices that sleep](/management/sleeping-devices).
+* Deleted devices are left out unless the query uses the `deleted` column.
+
+## Filters and tabs
+
+The tabs across the top (**All**, **Online**, **Needs attention**, **Updating**, **Offline**) slice the list by state. See [Fleet overview](/management/fleet-overview) for what each holds.
+
+**Filters** opens a panel of filters grouped as **Status**, **Firmware**, **Fleet**, **Alarms and metrics**, and **More**. The panel applies as you change it. Each choice shows how many devices it would give alongside the other filters. Choices within one filter widen the result. Different filters narrow each other. A query in the search bar narrows the result further.
+
+Applied filters show as tokens under the search bar. **Reset filters** clears them.
+
+Filters and the query are kept in the page's URL, so you can share a link to a filtered list.
+
+## Columns
+
+**Columns** opens a panel where you choose which columns the table shows: **Health**, **Firmware**, **Platform**, **Deployment group**, **Connection**, and **Tags**. The device column always shows.
+
+The choice is saved to your account, so every product's devices list shows the same columns.
+
+## Bulk actions
+
+Select devices with the checkboxes. A bar appears at the foot of the list with the count and the actions your role allows. **Select all** in the bar extends the selection from the devices on the page to every device that matches the current tab, filters, and query.
+
+| Action | What it does | Permission |
+| --- | --- | --- |
+| **Tags** | **Add** tags, **Remove** tags, or **Replace all** tags | `device:tags` |
+| **Deployment group** | Move the devices into a deployment group, or remove them from theirs | `device:set-deployment-group` |
+| **Send firmware** | Send one firmware to the devices, outside any deployment group | `device:push-update` |
+| **Updates** | **Enable updates**, **Disable updates**, or **Clear penalty box** | `device:toggle-updates`, `device:clear-penalty-box` |
+| **Move to product** | Move the devices to another product | `device:update` |
+
+The built-in **Manage** and **Admin** roles hold all of these. A custom role sees only the actions it holds. See [Roles](/access/roles).
+
+Limits:
+
+* **Send firmware** only works on devices selected on the page, not on every match. Filter the list to one platform first, so the firmware offered fits every selected device.
+* **Move to product** to a product in another organization needs the **Manage** role in that organization too.
+* When an action runs on every matching device, one device failing does not stop the rest.
+
+## Bulk import
+
+Bulk import creates devices, with their certificates, from a manifest. The only format NervesHub reads is the Microchip Trust&Go manifest: the JSON file Microchip supplies with pre-provisioned ATECC608 secure elements. Each entry's `header.uniqueId` becomes the device identifier, and the first `x5c` certificate in its `publicKeySet` is registered to the device.
+
+There is no import form in the web UI. Use the CLI or the API. Both need the `device:create` permission.
+
+<Steps>
+  <Step title="Check the manifest">
+    ```bash
+    nh device import manifest.json --dry-run
+    ```
+
+    `--dry-run` checks every entry the way the server reads it and sends nothing. It needs no login.
+  </Step>
+  <Step title="Import it">
+    ```bash
+    nh device import manifest.json --tag batch-7 --tag eu
+    ```
+
+    `--tag` puts the same tags on every new device. Pass `-` instead of a file to read the manifest from standard input. `nh` sends nothing unless every entry is good.
+  </Step>
+  <Step title="Check the result">
+    NervesHub creates the devices in the background. When it finishes, it posts a notification on the product's **Notifications** page saying how many devices were added and how many failed.
+
+    An entry can fail there for reasons `nh` cannot see, such as an identifier or certificate already in use.
+  </Step>
+</Steps>
+
+The API endpoint is `POST /api/orgs/{org}/products/{product}/devices/import`, with the manifest as the JSON body.
+
+## Export
+
+The download button at the top of the devices list (**Export devices**) downloads a CSV of the devices that match the current tab, filters, and query.
+
+The file is named `<product>-devices.csv`. Its columns are `identifier`, `description`, `tags`, `product`, `org`, and `certificates`.
+
+## Query from the CLI and API
+
+`nh device list` takes the same query language with `-q` or `--query`:
+
+```bash
+# Devices whose latest cpu_temp reading is over 70
+nh device list --query 'metric:cpu_temp > 70'
+
+# Connected production devices
+nh device list --query 'connection = "connected" and tags contains "prod"'
+
+# Free text
+nh device list --query 'kitchen'
+```
+
+`--query` combines with `--filter key:value` flags. Results must match both. Use `--sort`, `--page`, and `--page-size` to order and page the results. Run `nh device list --help` for the filter keys and sort columns.
+
+The device list API takes the query as the `advanced_query` filter. An expression that does not parse is rejected with the parse error.
+
+## Related pages
+
+- [Fleet overview](/management/fleet-overview)
+- [Register and manage devices](/setup/devices)
+- [Roles and permissions](/access/roles)
+- [nh command reference](/cli/reference)

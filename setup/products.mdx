@@ -1,81 +1,128 @@
 ---
-title: "Create and Manage Products"
+title: "Create and manage products"
 sidebarTitle: "Products"
-description: "How to create products, organize devices and firmware into logical groups, and manage product settings including signing keys, extensions, and shared secrets."
+description: "Create a product, find its settings, and understand what deleting it does."
 ---
 
-Products are the top-level organizational unit in NervesHub. Every device, firmware binary, and deployment group belongs to exactly one product. Grouping related devices into a product lets you manage firmware rollouts, signing keys, and shared secret credentials independently for each product line. For example, you might have separate products for a gateway device and a sensor node even when both are managed by the same organization.
+A product groups the devices, firmware, [archives](/updates/archives), deployment groups and [support scripts](/management/support-scripts) for one kind of device. Every device belongs to one product. An organization can have many products, for example one for a gateway and one for a sensor.
 
-## Creating a Product
+Creating a product, changing its settings and deleting it need the **Manage** role or higher. See [Roles](/access/roles).
 
-You can create a product from the NervesCloud web UI or with the `nh` CLI.
+## Create a product
 
-**NervesCloud UI:**
+<Tabs>
+  <Tab title="Web UI">
+    <Steps>
+      <Step title="Open your organization">
+        Open the organization's **Products** page.
+      </Step>
 
-1. Sign in at [manage.nervescloud.com](https://manage.nervescloud.com).
-2. Select your organization from the top navigation.
-3. Click **Products** in the left sidebar, then click **New Product**.
-4. Enter a product name and click **Create**.
+      <Step title="Create the product">
+        Click **New product**. Enter a **Name**, choose the device extensions, and click **Create Product**.
 
-**CLI:**
+        In an organization with no products, the page shows a **Create your first product** form instead. Enter the **Product name** and click **Create product**. Every device extension starts on.
+      </Step>
+    </Steps>
 
-```bash
-nh product create my-product
-```
+    On the **New product** form every device extension starts checked.
+  </Tab>
 
-List all products in your organization or inspect a specific one:
+  <Tab title="CLI">
+    ```bash
+    nh product create my_app
+    ```
+
+    A product created with the CLI or the API starts with every device extension off. Turn on the ones you need in **Product settings**.
+  </Tab>
+</Tabs>
+
+<Warning>
+  A product's name cannot be changed. Devices and the CLI refer to the product by name.
+</Warning>
+
+List products or show one, with its settings:
 
 ```bash
 nh product list
-nh product show my-product
+nh product show my_app
 ```
 
-## Setting the Default Product
+## Set the default organization and product for the CLI
 
-Most `nh` subcommands accept `--product` to specify which product to operate on. Setting the `NERVES_HUB_PRODUCT` environment variable saves you from typing it repeatedly:
+Most `nh` commands need an organization and a product. Save them once:
 
 ```bash
-export NERVES_HUB_PRODUCT=my-product
+nh config set org my-org
+nh config set product my_app
 ```
 
-You can also export `NERVES_HUB_ORG` to avoid passing `--org` on every command:
+You can also set `NERVES_HUB_ORG` and `NERVES_HUB_PRODUCT`, or pass `--org` and `--product` on a command. A flag overrides an environment variable, which overrides the saved setting. See [CLI configuration](/cli/configuration).
 
-```bash
-export NERVES_HUB_ORG=my-org
-```
+## Product settings
 
-Add both exports to your shell profile or CI/CD environment to make all `nh` commands use the correct context automatically.
+Open **Product settings** in the product sidebar. It has three tabs: **General**, **Device health** and **API keys**.
 
-## Product Settings
+The **General** tab holds:
 
-Navigate to **Products → my-product → Settings** in the NervesCloud UI to manage:
+| Card | What it controls |
+| --- | --- |
+| **General** | The product name and its organization. Read-only. |
+| **Firmware** | **Require unique firmware versions**, and which firmware formats other than fwup the product accepts. See [Firmware](/setup/firmware). |
+| **Shared secrets** | The product's shared secret keys. See [Shared secret](/auth/shared-secret). |
+| **Device extensions** | Which extensions devices in this product may use. |
+| **Device-managed updates** | Whether devices may choose their own update mode. See [Device-managed updates](/updates/device-managed-updates). |
 
-* **Firmware Signing Keys** — public keys used to verify firmware signatures before a device applies an update. Add as many keys as needed to support key rotation. Devices reject firmware that is not signed by a trusted key.
-* **Shared Secret Credentials** — the `product_key` and `product_secret` pair used by devices configured with Shared Secret authentication. These values are shown once when generated; copy them into your firmware configuration or CI/CD secrets store.
-* **Extensions** — the optional device capabilities this product may use. Each one is off by default and must be enabled here before devices will send or accept its messages.
-
-### Extensions
-
-| Extension          | What it provides                                                           |
-| ------------------ | ---------------------------------------------------------------------------- |
-| `health`           | Device health reports, including alarms                                     |
-| `metrics`          | Time-series metric values, including your application's custom metrics      |
-| `geo`              | Device location, resolved by the configured location source                 |
-| `logging`          | Log lines shipped from the device and stored for later querying             |
-| `local_shell`      | An interactive system shell on the device, separate from the IEx console    |
-| `network_identity` | Network identity keys used to place a device on the organization's network  |
-| `error_reports`    | Structured crash and error reports raised by the device                     |
+Health profiles are on the **Device health** tab. See [Health monitoring](/management/health-monitoring). [Product API keys](/api/authentication#product-api-keys) are on the **API keys** tab. See [CI/CD](/outbound/ci-cd).
 
 <Note>
-  You can register multiple signing keys per product. This allows you to rotate keys without invalidating firmware already on devices — keep the old key active until all devices have migrated to firmware signed with the new key, then remove the old key.
+  Product API keys are on the main branch and are not in a tagged release as of NervesHub 2.5.4.
 </Note>
 
-## Deleting a Product
+Some settings can also be changed with `nh product update`. Only the flags you pass are sent:
 
 ```bash
-nh product delete my-product
+nh product update my_app --require-unique-firmware-version=false
 ```
 
+### Device extensions
+
+An extension must be on for the product before any of its devices can use it. Each device also has its own setting per extension, which is on by default. Turning an extension off for the product turns it off on every device.
+
+| Extension | Description shown in the UI |
+| --- | --- |
+| **Health** | Metrics, firmware metadata and alarms, reported together. |
+| **Metrics** | The device's metrics on their own, without Health's metadata and alarms. |
+| **Geo** | Location from GeoIP, or a source you set up on the device, for the map. |
+| **Logging** | Stream device logs to the Logs tab. |
+| **Error reports** | Crashes and exceptions, grouped on the Errors page. |
+| **Local shell** | A shell on the device's OS, beside the IEx console. |
+| **Alarms** | Alarms sent as they're raised and cleared, not on Health's schedule. |
+| **Network identity** | Identities the device holds on networks like NetBird or iroh. |
+
+The device firmware must also include the extension. See [Extensions overview](/extensions/overview).
+
+### What is not a product setting
+
+Firmware signing keys and certificate authorities belong to the organization, not the product. Find them on the organization's **Signing keys** and **Certificates** pages. See [Firmware signing](/concepts/firmware-signing) and [Device certificates](/auth/device-certificates).
+
+## Delete a product
+
+In the web UI, open **Product settings** and click **Delete product**. The button is only enabled when the product has no devices. You confirm by typing the product name. The product's firmware, archives, deployment groups, support scripts and settings go with it.
+
+```bash
+nh product delete my_app
+```
+
+The CLI asks you to confirm. Pass `--yes` to skip the prompt.
+
 <Warning>
-  Deleting a product is **permanent and irreversible**. All devices, firmware binaries, deployment groups, and certificates associated with the product are removed immediately. There is no soft-delete or recovery path. Confirm you have decommissioned all associated devices and archived any firmware you need before running this command.
+  Deleting a product cannot be undone from the UI or the CLI. The CLI and API do not check whether the product still has devices. NervesHub refuses every device whose product has been deleted, however it authenticates.
 </Warning>
+
+## Related pages
+
+- [Register and manage devices](/setup/devices)
+- [Build, sign, and upload firmware](/setup/firmware)
+- [Deployment groups](/setup/deployments)
+- [Extensions overview](/extensions/overview)
+- [CI and automation](/outbound/ci-cd)

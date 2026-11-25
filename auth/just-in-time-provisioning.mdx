@@ -1,0 +1,127 @@
+---
+title: "Just-in-time provisioning"
+sidebarTitle: "Just-in-time provisioning"
+description: "Attach a JITP profile to a registered CA certificate so devices it signed are created in a product the first time they connect."
+---
+
+Just-in-time provisioning (JITP) creates a device the first time it connects with a certificate signed by one of your registered certificate authorities. Without it, NervesHub refuses a certificate whose device does not exist yet, so you have to add every device before it ships.
+
+A JITP profile belongs to one CA certificate. It names the product new devices join, and optionally the tags and description they start with.
+
+## Requirements
+
+- A CA certificate registered with your organization, or one you are about to register. See [Register a certificate authority](/auth/device-certificates#register-a-certificate-authority).
+- A product in the same organization for new devices to join.
+- The **Manage** role or higher from NervesHub 2.5.3. Earlier versions need **Admin** in the web UI.
+- Device certificates signed by that CA, with the device identifier as the common name. Self-signed device certificates never go through JITP.
+- Setting a profile from the CLI or the API by product name needs NervesHub 2.5.0 or later. From 2.5.0 the profile's tags and description are optional.
+
+JITP needs nothing special in the firmware. The device presents its certificate with any certificate configurator: [`LocalCertKey`](/auth/device-certificates), [NervesKey](/auth/nerveskey) or [TPM](/auth/tpm).
+
+## Enable it
+
+<Tabs>
+  <Tab title="Web UI, new CA">
+    <Steps>
+      <Step title="Start registering the CA">
+        Open the organization's **Certificates** page and click **Add certificate authority**. Follow the steps in [Register a certificate authority](/auth/device-certificates#register-a-certificate-authority).
+      </Step>
+
+      <Step title="Turn on the profile">
+        Check **Enable Just In Time Provisioning**. Three fields appear:
+
+        - **JITP Description**. The description given to each new device. Optional.
+        - **JITP Tags**. The tags given to each new device, separated by commas. Deployment groups use tags to target devices. Optional.
+        - **JITP Product**. The product new devices are created in. Required.
+      </Step>
+
+      <Step title="Create it">
+        Upload the CA certificate and the verification certificate, and click **Create Certificate**.
+      </Step>
+    </Steps>
+  </Tab>
+
+  <Tab title="Web UI, existing CA">
+    <Steps>
+      <Step title="Open the CA">
+        Open the organization's **Certificates** page and click the certificate authority. Click **Edit**.
+      </Step>
+
+      <Step title="Turn on the profile">
+        Check **Enable Just In Time Provisioning** and fill in **JITP Product**. **JITP Description** and **JITP Tags** are optional.
+      </Step>
+
+      <Step title="Save">
+        Click **Update Certificate**.
+      </Step>
+    </Steps>
+  </Tab>
+
+  <Tab title="CLI">
+    Add the `--jitp-*` flags when you register the CA:
+
+    ```bash
+    # A CA made with `nh ca generate`
+    nh ca upload 2026-06-11-16-41-10 --jitp-product sensor --jitp-tag prod
+
+    # A CA from elsewhere
+    nh ca upload --cert rootCA.crt --key rootCA.key \
+      --jitp-product sensor --jitp-tag prod --jitp-tag eu \
+      --jitp-description "Provisioned at the factory"
+
+    # Generate and register in one step
+    nh ca generate --upload --jitp-product sensor
+    ```
+
+    `--jitp-product` turns the profile on and is required with the other two flags. `--jitp-tag` can be repeated or given a comma-separated list. A tag cannot contain spaces.
+
+    The CLI and the API set a profile only when the CA is registered. To add, change or remove the profile on a CA that is already registered, use the web UI.
+  </Tab>
+</Tabs>
+
+## Check that it works
+
+The **Certificates** page shows **Adds new devices to** followed by the product name beside a CA that has a profile. The CA's own page shows **Just In Time Provisioning** as **Enabled for** the product.
+
+```bash
+nh ca list
+nh ca show <serial>
+```
+
+`nh ca list` has a `JITP PRODUCT` column. `nh ca show` prints the JITP product, tags and description, or `JITP: off`.
+
+Then boot a device whose certificate the CA signed. It appears under **Devices** in the JITP product, with the profile's tags and description. Its **Settings** tab lists the certificate in the **Certificates** card.
+
+## What happens when a device connects
+
+A profile is only consulted for a certificate and public key NervesHub has not seen before. NervesHub then:
+
+1. Reads the certificate's common name. This becomes the device identifier. A certificate without one is refused.
+2. Finds the CA that signed the certificate among the registered certificate authorities. An unregistered signer is refused.
+3. Validates the certificate against the CA. An expired CA is accepted unless **Check expiration** is on for it.
+4. Looks for a device with that identifier in the CA's organization.
+5. If there is none, creates the device in the profile's product with the profile's tags and description.
+6. Records the certificate for the device and lets it connect.
+
+After that, the certificate is on file and the device connects like any other. See [Device certificates](/auth/device-certificates).
+
+## Limits
+
+- **An existing device is not moved or changed.** NervesHub looks for the identifier in the whole organization. If a device with that identifier exists in any of the organization's products, the certificate is recorded for that device, and the profile's product, tags and description are not applied.
+- **A deleted device is not recreated.** If a device with that identifier has been deleted, the connection is refused until you restore the device or delete it permanently.
+- **A device that already has a certificate cannot add a new key this way.** A certificate with a different public key is refused.
+- **A deleted product stops provisioning.** From NervesHub 2.5.2, a profile whose product has been deleted creates no devices.
+- **The product must be in the CA's organization.** NervesHub rejects a profile that names another organization's product.
+- **Tags and description are copied once.** Changing the profile does not change devices it already created.
+- **Product shared secrets are separate.** A device that connects with a product key is created without a profile, with no tags. See [Shared secret](/auth/shared-secret).
+
+## Turn it off
+
+Open the CA, click **Edit**, uncheck **Enable Just In Time Provisioning**, and click **Update Certificate**. Devices already created stay. New devices signed by the CA are refused until you add them yourself.
+
+## Related pages
+
+- [X.509 device certificates](/auth/device-certificates)
+- [Register and manage devices](/setup/devices)
+- [Deployment groups](/setup/deployments)
+- [Security: PKI and the chain of trust](/concepts/pki)

@@ -1,98 +1,109 @@
 ---
-title: "Connecting Devices"
+title: "Connecting devices"
 sidebarTitle: "Connecting"
-description: "How to configure your Nerves device to connect to NervesCloud or a self-hosted NervesHub server using persistent Phoenix WebSocket channels."
+description: "Point nerves_hub_link at NervesCloud or your own NervesHub instance, and set the CA certificates the device trusts."
 ---
 
-NervesHubLink establishes a long-lived Phoenix WebSocket channel on boot and keeps it open for the lifetime of the device process. Through this connection, NervesHub can push firmware update notifications, stream logs, open a remote IEx console, and receive health metrics — all without polling. This page explains how to point that connection at NervesCloud or your own self-hosted NervesHub instance.
+NervesHubLink opens a WebSocket connection to NervesHub when the device boots and keeps it open. NervesHub uses that connection to tell the device about firmware updates, run the [remote console](/management/remote-console), and receive [extension](/extensions/overview) data. For how the device authenticates, see the pages under device authentication, starting with [Shared secret](/auth/shared-secret).
 
-<Note>
-  NervesHubLink enforces SSL peer verification on every connection. The server certificate must be valid and trusted by the device's CA bundle. Connections to hosts with self-signed or untrusted certificates will be rejected unless you configure a custom CA certificate.
-</Note>
+## Set the host
 
-## NervesCloud (Recommended)
-
-NervesCloud is the managed NervesHub service at [manage.nervescloud.com](https://manage.nervescloud.com). It is the fastest way to connect devices because no infrastructure setup is required. Set your host and credentials in `config/target.exs` and NervesHubLink handles everything else:
+Set `host` to the host name devices connect to. This is the device endpoint, which is usually a different host from the web UI.
 
 ```elixir
 # config/target.exs
 config :nerves_hub_link,
-  host: "devices.nervescloud.com",
-  port: 443,
-  auth: %{
-    product_key: System.get_env("NERVES_HUB_PRODUCT_KEY"),
-    product_secret: System.get_env("NERVES_HUB_PRODUCT_SECRET")
-  }
+  host: "devices.nervescloud.com"
 ```
 
-The `devices.nervescloud.com` endpoint is pre-trusted by the default Nerves CA bundle, so no additional certificate configuration is necessary.
-
-## Self-Hosted NervesHub
-
-If you operate your own NervesHub instance, override the `device_api_host`, `device_api_sni`, and `device_api_port` keys to point at your server:
-
-```elixir
-# config/target.exs
-config :nerves_hub_link,
-  device_api_host: "device.my-nerves-hub.org",
-  device_api_sni: 'device.my-nerves-hub.org',
-  device_api_port: 443
-```
-
-Note that `device_api_sni` is a **charlist** (single-quoted), not a binary string. This value is passed directly to the underlying `:ssl` application for Server Name Indication during the TLS handshake.
-
-If your server uses a private CA, provide the CA certificate so the device can verify the server's identity:
+`host` takes a host name, or a full URL when you need a port:
 
 ```elixir
 config :nerves_hub_link,
-  device_api_host: "device.my-nerves-hub.org",
-  device_api_sni: 'device.my-nerves-hub.org',
-  device_api_port: 443,
-  ca_certs: [File.read!("/path/to/my-ca.pem")]
+  host: "wss://your.nerveshub.host:4001"
 ```
 
-## Connection Behavior
+When `host` has no scheme, NervesHubLink uses `wss://`.
 
-NervesHubLink maintains a single persistent WebSocket connection to the NervesHub server. You do not need to manage reconnects in application code — the library handles them automatically:
-
-* **Automatic reconnection** — if the connection drops (network outage, server restart), NervesHubLink retries with exponential backoff.
-* **No keep-alive tuning required** — Phoenix Channels send heartbeat frames; NervesHubLink responds automatically.
-
-## Disabling the Connection in Development
-
-When running `mix test` or developing on a host machine, you do not want NervesHubLink attempting to reach the NervesHub server. Disable the connection entirely with:
+If the TLS server name differs from the host you connect to, set `sni`:
 
 ```elixir
-# config/dev.exs or config/test.exs
+config :nerves_hub_link,
+  host: "10.0.0.5",
+  sni: "your.nerveshub.host"
+```
+
+<Warning>
+  `device_api_host`, `device_api_port` and `device_api_sni` are deprecated. NervesHubLink logs a warning when you set them. Use `host` and `sni`.
+</Warning>
+
+## Trust the server certificate
+
+NervesHubLink verifies the server certificate on every connection. It chooses the CA certificates to trust in this order:
+
+1. `cacerts` in the `ssl` option.
+2. The module set as `ca_store`. It must export `ca_certs/0` and return a list of DER-encoded certificates.
+3. The [CAStore](https://hex.pm/packages/castore) package, if it is in your project.
+4. The CA certificates installed on the device.
+
+If your instance uses a certificate from a private CA, set the certificates yourself:
+
+```elixir
+config :nerves_hub_link, ca_store: MyApp.CAStore
+```
+
+Or pass DER-encoded certificates directly:
+
+```elixir
+config :nerves_hub_link,
+  host: "your.nerveshub.host",
+  ssl: [cacerts: my_der_list]
+```
+
+Any Erlang `:ssl` client option can go in `ssl`. TLS 1.3, session resumption, HTTP proxies and Msgpack are covered in [Transport](/connection/transport).
+
+## Devices configured with the web host
+
+A NervesHub instance can redirect devices that connect to the web host to the device host. `nerves_hub_link` 2.10.0 and later follow the redirect. NervesHub also posts a [product notification](/management/notifications) that names the device and the host it should use. The redirect is an instance setting. See [Feature prerequisites](/hosting/feature-prerequisites#other-defaults).
+
+## Reconnection
+
+NervesHubLink reconnects on its own when the connection drops. The delay starts at one second and doubles up to 60 seconds, with up to 50% added as jitter. To change it, or to control when the connection starts, see [Connection lifecycle](/connection/lifecycle).
+
+## Turn the connection off
+
+```elixir
+# config/test.exs
 config :nerves_hub_link, connect: false
 ```
 
-With this runtime configuration option set, the WebSocket process will not be started at all when the application boots.
+With `connect: false`, the application starts no connection processes.
 
-## Runtime Configuration with a Configurator
+## Build the configuration at runtime
 
-For advanced use cases where credentials are not known at compile time — for example, when device certificates are provisioned during first boot or retrieved from a hardware security module — implement the `NervesHubLink.Configurator` behaviour:
+When credentials are not known at build time, implement the `NervesHubLink.Configurator` behaviour. `build/1` receives the configuration read from the application environment and returns the configuration to use.
 
 ```elixir
-defmodule MyFirmware.NervesHubConfigurator do
+defmodule MyApp.Configurator do
   @behaviour NervesHubLink.Configurator
 
   @impl NervesHubLink.Configurator
-  def build_config(config) do
-    # Fetch credentials at runtime, e.g. from a secure element or local store
-    cert = MyFirmware.CertStore.read_cert()
-    key  = MyFirmware.CertStore.read_key()
-
-    %{config | auth: %{cert: cert, key: key}}
+  def build(config) do
+    ssl = [certfile: "/root/ssl/cert.pem", keyfile: "/root/ssl/key.pem"]
+    %{config | ssl: ssl}
   end
 end
 ```
 
-Register your module in `config/target.exs`:
-
 ```elixir
-config :nerves_hub_link,
-  configurator: MyFirmware.NervesHubConfigurator
+config :nerves_hub_link, configurator: MyApp.Configurator
 ```
 
-NervesHubLink calls `build_config/1` at startup before opening the socket, so any credentials returned are used for the initial handshake and all subsequent reconnections.
+Setting `configurator` replaces the built-in choice between [NervesKey](/auth/nerveskey), [TPM](/auth/tpm) and shared secret. See [Connection lifecycle](/connection/lifecycle).
+
+## Related pages
+
+- [Add NervesHubLink to a project](/setup/add-to-project)
+- [Shared secret authentication](/auth/shared-secret)
+- [Connection transport](/connection/transport)
+- [Connection lifecycle](/connection/lifecycle)

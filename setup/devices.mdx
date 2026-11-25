@@ -1,145 +1,168 @@
 ---
-title: "Register and Manage Devices"
+title: "Register and manage devices"
 sidebarTitle: "Devices"
-description: "How to register devices, assign tags for deployment group targeting, bulk provision via CSV, manage device certificates, and run remote device actions."
+description: "Add devices to a product, set their tags, manage their credentials, and delete or restore them."
 ---
 
-Devices are the core entities in NervesHub. Each device has a unique identifier and belongs to exactly one product. NervesHub tracks the device's current firmware version, online status, health metrics, and update history. Registering a device before it first connects is optional — NervesHub can auto-register devices on first connection when configured to do so — but explicit registration gives you full control over identifiers, tags, and certificates before any hardware is deployed.
+A device is one piece of hardware in a product. NervesHub knows it by its identifier, which is usually its serial number. A device's identifier cannot be changed after the device is created.
 
-<Tip>
-  Most `nh` device commands accept `--org` and `--product` flags to scope the operation. Set the `NERVES_HUB_ORG` and `NERVES_HUB_PRODUCT` environment variables to avoid repeating these flags on every command:
+Adding, editing and deleting devices need the **Manage** role or higher. See [Roles](/access/roles).
 
-  ```bash
-  export NERVES_HUB_ORG=my-org
-  export NERVES_HUB_PRODUCT=my-product
-  ```
-</Tip>
+## How devices get into a product
 
-## Registering a Device
+A device can add itself the first time it connects, or you can add it ahead of time.
 
-Create a new device record with a unique identifier:
+| The device connects with | Does it add itself? |
+| --- | --- |
+| The product's shared secret (`nhp_` key) | Yes. NervesHub creates it in that product. |
+| A shared secret of its own (`nhd_` key) | No. The key belongs to a device that already exists. |
+| A certificate signed by a registered CA with a just-in-time provisioning profile | Yes. NervesHub creates it in the profile's product. See [Just-in-time provisioning](/auth/just-in-time-provisioning). |
+| A certificate signed by a registered CA without a profile | No. Add the device first. NervesHub then records the certificate on first connection. |
+| A self-signed certificate | No. Add the device and upload the certificate. |
 
-```bash
-nh device create my-device-001
-```
+## Add a device
 
-List all devices in a product, or inspect a specific device:
+<Tabs>
+  <Tab title="Web UI">
+    <Steps>
+      <Step title="Open the dialog">
+        Open **Devices** in the product and click **Add device**.
+      </Step>
+
+      <Step title="Describe the device">
+        Enter the **Identifier**. This is what the device sends when it connects. **Description** and **Tags** are optional.
+      </Step>
+
+      <Step title="Choose how it connects">
+        Under **How it connects**, choose one of:
+
+        - **The product's shared secret**. Nothing more to set up. Shown when shared secrets are on for the instance and the product has an active secret.
+        - **A shared secret of its own**. NervesHub creates a key and secret and shows the secret once. Shown when shared secrets are on for the instance.
+        - **Its certificate**. Upload the certificate as a PEM or DER file. You can skip the upload when one of your registered CA certificates signed it.
+      </Step>
+
+      <Step title="Add it">
+        Click **Add device**. If you chose a secret of its own, copy the **Key** and **Secret** before you close the dialog.
+      </Step>
+    </Steps>
+  </Tab>
+
+  <Tab title="CLI">
+    ```bash
+    nh device create my-device-001 --tag production --description "Line 2 gateway"
+    ```
+
+    To create the device and its own shared secret in one step:
+
+    ```bash
+    nh device create my-device-001 --shared-secret
+    ```
+
+    The secret is printed once and cannot be fetched again. The server refuses the request, and creates no device, when shared secrets are off for the instance.
+  </Tab>
+</Tabs>
+
+List devices or show one:
 
 ```bash
 nh device list
 nh device show my-device-001
 ```
 
-The device identifier is permanent. Choose identifiers that match your hardware serial numbers or manufacturing labels to make physical-to-digital traceability straightforward.
+To search and filter the list, see [Finding devices](/management/finding-devices).
 
-## Assigning Tags
+### Add many devices from a Trust&Go manifest
 
-Tags control which deployment groups a device falls into. A group lists one or more tags and a tag operator — `Require all` (the default) or `Allow any` — so assigning the right tags is how you route firmware updates to the correct subset of your fleet:
-
-```bash
-nh device update my-device-001 tags main qa
-```
-
-This command sets the device's tags to `main` and `qa`, replacing any previously assigned tags. A device can hold multiple tags simultaneously.
-
-Common tagging strategies:
-
-* **By environment** — `dev`, `staging`, `production`
-* **By cohort** — `beta`, `canary`, `stable`
-* **By hardware revision** — `hw-rev-a`, `hw-rev-b`
-
-## Bulk Registration
-
-For large manufacturing runs, use the **CSV import** feature in the NervesCloud UI:
-
-1. Navigate to **Products → my-product → Devices**.
-2. Click **Import Devices**.
-3. Upload a CSV file with one device identifier per row (and optional tag columns).
-
-For scripted workflows, use the `nh` CLI in a loop:
+`nh device import` creates a device, with its certificate, for every entry in a Microchip Trust&Go manifest. This is the only import format. It does not take CSV.
 
 ```bash
-for id in $(cat device-ids.txt); do
-  nh device create "$id" --tags production
-done
+# Check the manifest without sending it
+nh device import manifest.json --dry-run
+
+# Import it, tagging every device
+nh device import manifest.json --tag batch-7
 ```
 
-## Device Certificates
+NervesHub creates the devices in the background and posts a [product notification](/management/notifications) with how many it created and how many failed.
 
-For mTLS authentication, each device needs a certificate signed by a CA that you have registered with NervesHub. The `nh` CLI manages the full certificate lifecycle.
+## Set tags
 
-**List certificates for a device:**
+Tags decide which deployment group a device matches. See [Deployment groups](/setup/deployments#how-devices-join-a-group).
+
+```bash
+nh device update my-device-001 --tag main --tag qa
+```
+
+`--tag` sets the device's whole tag list. The flags that set device fields on `nh device create` and `nh device update` need NervesHub 2.5.3 or later.
+
+You cannot put a device in a deployment group directly from the CLI or API. NervesHub assigns a device to a group whose version and tag conditions it matches when the device connects. A tag you set on a connected device is compared the next time it connects. In the web UI you can place a device in a group yourself. See [Put a device in a group by hand](/setup/deployments#put-a-device-in-a-group-by-hand).
+
+In the web UI, edit tags on the device's **Settings** tab.
+
+## Manage credentials
+
+Open the device's **Settings** tab.
+
+### Certificates
+
+The **Certificates** card lists the certificates on file for the device, who signed each, and when it was last used. Click **Upload certificate** to add one as a PEM or DER file.
 
 ```bash
 nh device certificates list my-device-001
-```
-
-**Generate a new certificate (development/testing):**
-
-```bash
-nh device certificates generate my-device-001
-```
-
-This creates a certificate and private key pair locally. For production devices, provision certificates at the factory using your own PKI infrastructure and upload only the certificate (never the private key) to NervesHub.
-
-**Upload an existing certificate:**
-
-```bash
 nh device certificates upload my-device-001 cert.pem
+nh device certificates delete my-device-001 <serial>
 ```
 
-NervesHub stores the public certificate so it can verify the device's identity during the TLS handshake. The private key never leaves the device.
+`nh device certificates generate` creates a key and certificate on your machine. See [Device certificates](/auth/device-certificates).
 
-## Device Actions
+### Shared secrets
 
-Trigger remote actions on a connected device directly from the CLI:
+The **Shared secrets** card is shown when shared secrets are on for the instance. Click **Create secret** to issue a key for this device. The secret is shown once.
 
-**Reboot the device:**
+```bash
+nh device shared-secrets list my-device-001
+nh device shared-secrets create my-device-001
+nh device shared-secrets delete my-device-001 <key>
+```
+
+`delete` deactivates the key. See [Shared secret](/auth/shared-secret).
+
+## Act on a device
 
 ```bash
 nh device reboot my-device-001
-```
-
-**Reconnect the device to NervesHub** (closes and re-opens the WebSocket channel):
-
-```bash
 nh device reconnect my-device-001
-```
-
-**Open a remote IEx console:**
-
-```bash
 nh device console my-device-001
+nh device clear-penalty my-device-001
 ```
 
-The console streams an interactive IEx session over the NervesHub channel. Press `Ctrl+C` twice to exit without affecting the running device.
+`console` opens the device's IEx console and needs `remote_iex: true` in the firmware. See [Remote console](/management/remote-console). `clear-penalty` clears the device's penalty box. See [Rollout controls](/deployments/rollout-controls).
 
-<Note>
-  A device that repeatedly fails to apply an update is placed in the **penalty box** and stops receiving update notifications until its timeout expires. You can clear it from the device page in the console, or with the API, once you have addressed the underlying problem.
-</Note>
-
-## Device Logs
-
-Stream or review logs from a device:
+Show the log lines a device has sent, or follow new ones:
 
 ```bash
+nh device logs my-device-001
 nh device logs my-device-001 --follow
 ```
 
-The `--follow` flag tails the log stream in real time. Omit it to retrieve a snapshot of recent log lines. Logs are useful for diagnosing connection issues, firmware crashes, or unexpected reboots without requiring physical access to the device.
+Logs need the logging [extension](/extensions/overview). See [Logging](/extensions/logging).
 
-<Note>
-  Device logs require the `logging` extension to be enabled on the product, and the device's client library must support it.
-</Note>
+## Delete and restore a device
 
-## Deleting a Device
-
-Remove a device record from NervesHub when a device is decommissioned:
+On the device's **Settings** tab, click **Delete device…**. NervesHub disconnects the device, removes it from its deployment group and deletes its certificates. A deleted device cannot connect: its certificates and its own shared secret keys stop authenticating, and a product key cannot create a new device under its identifier.
 
 ```bash
 nh device delete my-device-001
 ```
 
-<Warning>
-  Deleting a device removes it from NervesHub immediately, including its certificate associations and update history. The physical device will no longer be able to connect and receive updates. Ensure the device is properly decommissioned and offline before deleting it.
-</Warning>
+To bring a deleted device back, click **Restore device** on its **Settings** tab. A restored device is matched to a deployment group again the next time it connects. Its certificates were deleted with it, so upload them again unless a registered CA signed them.
+
+To remove a deleted device for good, click **Delete permanently…**.
+
+## Related pages
+
+- [Create and manage products](/setup/products)
+- [Shared secret authentication](/auth/shared-secret)
+- [X.509 device certificates](/auth/device-certificates)
+- [Finding devices](/management/finding-devices)
+- [Fleet overview](/management/fleet-overview)

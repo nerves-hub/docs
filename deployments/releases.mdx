@@ -1,0 +1,169 @@
+---
+title: "Releases"
+sidebarTitle: "Releases"
+description: "Create releases in a deployment group, describe them with notes, attach an archive, and mark a release required so every device installs it before anything newer."
+---
+
+A release is one firmware sent by a [deployment group](/setup/deployments). Each release has a number within its group, starting at 1 with the release created along with the group. The newest release is the group's **current release**, and the group keeps every earlier release as history.
+
+## Requirements
+
+| Feature                                   | NervesHub version |
+| ----------------------------------------- | ----------------- |
+| Releases                                  | 2.4.0             |
+| Description and notes on a release        | 2.5.0             |
+| Required releases                         | 2.5.0             |
+| [Connecting code](/deployments/connecting-code) on a release | 2.5.0 |
+
+The `nh deployment release` commands need a NervesHub server that has the deployment release API. An older server answers with an error that says so. `nh deployment update --firmware` works against older servers too.
+
+## What a release holds
+
+| Field           | Description                                                                                  | Can change later |
+| --------------- | -------------------------------------------------------------------------------------------- | ---------------- |
+| Firmware        | The firmware devices are updated to. Required. It must belong to the group's product.         | No               |
+| Archive         | An optional [archive](/updates/archives) sent to devices along with the firmware.             | No               |
+| Description     | A short description, up to 100 characters.                                                    | No               |
+| Notes           | Longer notes, up to 1,000 characters.                                                         | No               |
+| Required        | Whether devices must install this release before any newer one. Off by default.               | Yes              |
+| Connecting code | Elixir a device runs when it connects while it runs this release, and where that code runs relative to the group's. See [Connecting code](/deployments/connecting-code). | Yes |
+
+To send different firmware, create a new release. NervesHub refuses a release with the same firmware and archive as the current release.
+
+## Create a release
+
+<Tabs>
+  <Tab title="Web UI">
+    <Steps>
+      <Step title="Open the dialog">
+        Open the deployment group and select **New release**.
+      </Step>
+      <Step title="Choose the firmware">
+        The **Firmware** list offers firmware for the group's platform and architecture, newest first.
+      </Step>
+      <Step title="Describe the release">
+        Fill in **Description** and, if you want, **Notes** and **Archive**.
+      </Step>
+      <Step title="Set the options">
+        Turn on **Required release** if every device must pass through this release. Expand **Connecting code** to give the release its own code.
+      </Step>
+      <Step title="Create it">
+        Select **Create release**. The dialog lists what creating the release sets off before you confirm.
+      </Step>
+    </Steps>
+  </Tab>
+  <Tab title="CLI">
+    ```bash
+    nh deployment release create "production" \
+      --firmware <UUID> \
+      --description "Fixes modem reconnect" \
+      --notes "Tested on rev C and rev D boards."
+    ```
+
+    | Flag                     | Description                                                                 |
+    | ------------------------ | --------------------------------------------------------------------------- |
+    | `--firmware`             | Firmware UUID for the release. Required.                                    |
+    | `--archive`              | Archive UUID for the release.                                               |
+    | `--required`             | Mark the release required.                                                  |
+    | `--description`          | Short description of the release.                                           |
+    | `--notes`                | Notes about the release.                                                    |
+    | `--connecting-code`      | Elixir the device runs when it connects.                                    |
+    | `--connecting-code-file` | Read the connecting code from a file. Use `-` for stdin.                    |
+    | `--connecting-code-mode` | Where the code runs relative to the group's: `first`, `last` or `override`. |
+
+    A release has an archive only if you pass `--archive`, whatever the previous release had.
+
+    `nh deployment update` also creates a release when you pass `--firmware`, `--archive` or `--required`:
+
+    ```bash
+    nh deployment update "production" --firmware <UUID> --required
+    ```
+
+    `--archive` on its own keeps the current firmware. This command cannot set a description, notes or connecting code.
+  </Tab>
+</Tabs>
+
+The group starts sending a release as soon as it is created. If the group is paused, it sends the release once you resume it.
+
+In a group with a [workflow](/concepts/deployment-workflows), each new release starts again at step 1.
+
+<Note>
+  To upload firmware and create a release in one command, use `nh firmware upload --deploy <group>`. See [Create and activate deployment groups](/setup/deployments#upload-and-release-in-one-command).
+</Note>
+
+## View releases
+
+The **Releases** tab on the group page lists every release, newest first, with the columns **Release**, **What's in it**, **Status** and **Released by**. Select a row to see its notes, its connecting code and its delta updates. The current release starts open.
+
+From the CLI:
+
+```bash
+nh deployment release list "production"
+nh deployment release show "production" 4
+```
+
+`list` marks the current release with `*` and shows each release's firmware version, firmware UUID, archive, whether it is required, its delta status and who created it. `show` adds the platform, architecture, description, notes and connecting code.
+
+The delta status of a release is one of:
+
+| Status      | Meaning                                                    |
+| ----------- | ---------------------------------------------------------- |
+| `preparing` | One or more deltas the release's devices need are still being built. |
+| `failed`    | One or more of those deltas could not be built.            |
+| `ready`     | There is nothing left to wait for.                         |
+
+See [Delta updates](/management/delta-updates).
+
+## Required releases
+
+By default every device in a group is sent the current release, however far behind it is. A **required** release is one every device passes through. A device that has not reached a required release is sent the earliest required release it is behind. It moves on only once it is running that release.
+
+Use a required release for firmware that later firmware depends on, such as a migration or a bootloader change.
+
+### Mark a release required
+
+When you create the release, turn on **Required release** in the dialog or pass `--required`.
+
+To change an existing release:
+
+<Tabs>
+  <Tab title="Web UI">
+    On the **Releases** tab, open the release, select **Edit release**, switch **Required release** on or off, and select **Save changes**.
+  </Tab>
+  <Tab title="CLI">
+    ```bash
+    nh deployment release update "production" 3 --required
+    nh deployment release update "production" 3 --required=false
+    ```
+  </Tab>
+</Tabs>
+
+Required releases show a **Required** badge on the **Releases** tab. `nh deployment show` reports whether the current release is required.
+
+### How NervesHub places a device
+
+NervesHub works out how far a device has got from the release it is running. That is the newest release in the group whose firmware the device runs.
+
+A device running firmware that belongs to no release in the group cannot be placed that way. For that device, a required release is skipped only when the device's firmware version is already at or beyond the release's version. If the device's version is not a valid semantic version, the required release still applies.
+
+Marking or unmarking a release as required changes which firmware some devices are sent next. NervesHub queues the deltas those devices need when the group has delta updates on.
+
+## Edit a release
+
+After a release is created, you can change whether it is required, its connecting code, and where that code runs.
+
+```bash
+nh deployment release update "production" 4 --connecting-code-file ./connect.exs --connecting-code-mode first
+nh deployment release update "production" 4 --clear-connecting-code
+```
+
+In the web UI, use **Edit release** on the **Releases** tab.
+
+## Related pages
+
+- [Deployment groups](/setup/deployments)
+- [Rollout controls](/deployments/rollout-controls)
+- [Connecting code](/deployments/connecting-code)
+- [Deployment workflows](/concepts/deployment-workflows)
+- [Delta updates](/management/delta-updates)
+- [CI and automation](/outbound/ci-cd)

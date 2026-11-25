@@ -1,0 +1,83 @@
+---
+title: "Local shell extension"
+sidebarTitle: "Local shell"
+description: "Open an interactive OS shell on a device from NervesHub with the optional Local shell extension, which is mostly for devices that are not Nerves devices."
+---
+
+The Local shell extension gives NervesHub users an interactive shell on the device's operating system. It is separate from the [remote console](/management/remote-console), which is an IEx session.
+
+The extension is optional. It is mostly recommended for devices that are not Nerves devices, such as ones running the [Linux agent](/integrations/linux-agent).
+
+<Warning>
+  A local shell lets a NervesHub user with the right permission run commands on the device as the user your application runs as. Turn it on only for products where you want that.
+</Warning>
+
+## Requirements
+
+- `nerves_hub_link` 2.10.0 or later.
+- NervesHub 2.3.0 or later.
+- The [`expty`](https://hex.pm/packages/expty) library in your firmware.
+
+## Enable it on a Nerves device
+
+For the Linux agent, turn on `[extensions.local_shell]` in the agent's config instead. See [Linux agent](/integrations/linux-agent). The product and device settings below apply to both.
+
+<Steps>
+  <Step title="Add ExPTY to your dependencies">
+    ```elixir
+    # mix.exs
+    {:expty, "~> 0.3.0"}
+    ```
+
+    `nerves_hub_link` lists `expty` as an optional dependency. Without it, the extension cannot start a shell.
+  </Step>
+
+  <Step title="Check your extension list">
+    When `ExPTY` is available, `NervesHubLink.Extensions.LocalShell` is in the default `extension_modules` list and you have nothing to configure.
+
+    If you set `extension_modules` yourself, that list replaces the default, so name the module in it:
+
+    ```elixir
+    config :nerves_hub_link,
+      extension_modules: [
+        NervesHubLink.Extensions.Geo,
+        NervesHubLink.Extensions.Health,
+        NervesHubLink.Extensions.NetworkIdentity,
+        NervesHubLink.Extensions.LocalShell
+      ]
+    ```
+  </Step>
+
+  <Step title="Turn it on for the product">
+    In **Product settings**, on the **General** tab, switch on **Local shell** in the **Device extensions** card. A product created in the web UI starts with every extension on. A product created through the API or `nh` starts with every extension off.
+  </Step>
+
+  <Step title="Check the device setting">
+    On the device's **Settings** tab, **Local Shell** in the **Extensions** card is on by default.
+  </Step>
+</Steps>
+
+## Check that it works
+
+Reconnect the device if it was connected before you turned the extension on. Open the device and select the **System Shell** tab. A terminal opens when the device is online and the extension is attached.
+
+If the tab says the local shell isn't currently enabled, check the product and device settings. If it says the shell isn't currently available, the device has not attached the extension: check that the firmware includes `expty` and the module.
+
+## How it behaves
+
+- The device runs the program in the `SHELL` environment variable with `-i`. If `SHELL` is not set, it runs `sh -i`.
+- `TERM` defaults to `xterm` when it is not set.
+- The session is shared. Everyone with the **System Shell** tab open for a device sees the same shell.
+- NervesHub keeps a bounded scrollback for the connection, so someone opening the tab sees recent output.
+
+## Who can use it
+
+Opening a local shell needs the `device:extensions:local_shell` permission. It is separate from the `device:console` permission for the remote console. See [Roles](/access/roles).
+
+## Related pages
+
+- [Extensions overview](/extensions/overview)
+- [Remote console](/management/remote-console)
+- [Linux agent](/integrations/linux-agent)
+- [Roles and permissions](/access/roles)
+- [Extensions protocol](/device-api/extensions)

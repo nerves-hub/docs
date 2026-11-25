@@ -1,0 +1,80 @@
+---
+title: "Discord"
+sidebarTitle: "Discord"
+description: "Post NervesHub device, error and deployment workflow notifications to a Discord channel through a channel webhook."
+---
+
+Your organization can post its device notifications to Discord channels. Each channel gets them through a webhook that you make in that channel's settings. NervesHub only calls out to Discord, so this also works from an instance that Discord cannot reach.
+
+## Requirements
+
+- NervesHub 2.5.0 or later.
+- `SECRETS_ENCRYPTION_KEY` set on the instance. NervesHub encrypts each channel's webhook URL with it, and saving a channel fails without it. See [Feature prerequisites](/hosting/feature-prerequisites#secrets-encryption-key).
+- The built-in **Manage** or **Admin** role, or a custom role with the Teams and Discord channel permissions. See [Roles](/access/roles).
+- The **Manage Webhooks** permission in the Discord channel.
+
+## Add a channel
+
+<Steps>
+  <Step title="Make a webhook in Discord">
+    In Discord, open the channel's settings and choose **Integrations**, then **Webhooks**. Choose **New Webhook**, then **Copy Webhook URL**.
+  </Step>
+  <Step title="Add the channel in NervesHub">
+    Open your organization and select the **Integrations** tab. Click **Add integration**, then **Discord channel**. While the organization has no integrations, click **Add Discord channel** instead.
+  </Step>
+  <Step title="Fill in the form">
+    Paste the URL. Enter a **Name** for the channel. Choose the products and events, then click **Add channel**.
+  </Step>
+  <Step title="Check that it works">
+    Open the channel's row menu and choose **Send test message**. NervesHub posts a message to the channel straight away, saying what the channel will get.
+  </Step>
+</Steps>
+
+Discord does not tell NervesHub a channel's name, so the name is whatever you type.
+
+The URL is all it takes to post to the channel. NervesHub stores it encrypted and never shows it again. When you edit a channel, leave the URL empty to keep the current one, or paste a new one to replace it.
+
+Only Discord's own webhook URLs are accepted: `https://discord.com/api/webhooks/…`, or the same path on `discordapp.com`, `canary.discord.com` or `ptb.discord.com`.
+
+Every member of the organization sees each channel's name, events, products and state. An organization can have up to 20 Discord channels.
+
+## What is posted
+
+| Event | Posted when |
+| --- | --- |
+| Health status changed | A device's [health status](/management/health-monitoring) moves, such as from healthy to warning. |
+| Update failed | A device's update fails, stops reporting progress, or ends with the device back on its old firmware. |
+| Update succeeded | A device finishes updating. |
+| New error | A device reports an error not seen before in its product. |
+| Error reopened | An error that was marked resolved happens again. |
+| Workflow step started | A [deployment group](/setup/deployments)'s [workflow](/concepts/deployment-workflows) begins a step, or begins it again after somebody retries it. |
+| Workflow waiting for approval | A workflow reaches a step that holds the rollout until somebody approves it. |
+| Workflow step completed | Every device a step covers is on the release's firmware, or somebody approved an approval step. |
+| Workflow step failed | Too many of a step's devices fail to update, and the rollout stops there. |
+| Workflow step skipped | Somebody skips a step. |
+| Product notifications | NervesHub adds something to a product's [Notifications](/management/notifications) page. |
+
+These events have the same prerequisites as the matching [webhook events](/outbound/webhooks#events).
+
+NervesHub holds events for 15 seconds, then posts one message per kind of event. A single event gets an embed of its own, titled with what happened and linked to its page in NervesHub. A burst gets a count and the first ten devices, each linked. Messages are posted under the instance's name (`FRIENDLY_PLATFORM_NAME`).
+
+Anything a device sent is escaped, so Discord shows its markdown instead of following it. Every message is posted with mentions turned off, so nothing in it can ping `@everyone` or anybody else.
+
+## Limits
+
+A channel webhook only posts. There are no buttons that act, as there are in [Slack](/outbound/slack). Approve a waiting workflow on the deployment group's page, which the message links to.
+
+## When posting fails
+
+- If Discord refuses the webhook, because it was deleted or its URL no longer works, NervesHub turns the channel off. Each product it was getting events for gets a product notification saying why. Make a new webhook, edit the channel and paste the new URL.
+- If Discord asks NervesHub to slow down, NervesHub waits as long as Discord says.
+- Any other failure is retried after 10 seconds, 1 minute and 5 minutes.
+- Events held for more than an hour are dropped.
+
+## Related pages
+
+- [Slack](/outbound/slack)
+- [Microsoft Teams](/outbound/teams)
+- [Webhooks](/outbound/webhooks)
+- [Product notifications](/management/notifications)
+- [Secrets encryption key prerequisite](/hosting/feature-prerequisites#secrets-encryption-key)

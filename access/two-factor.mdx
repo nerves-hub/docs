@@ -1,0 +1,102 @@
+---
+title: "Two-factor authentication"
+sidebarTitle: "Two-factor authentication"
+description: "Turn on two-factor authentication for your NervesHub account with an authenticator app, and require it of every member of an organization."
+---
+
+With two-factor authentication on, signing in asks for a code from an authenticator app after your password or Google sign-in. Each user turns it on for their own account. An organization's admins can require it of every member.
+
+Codes are time-based one-time passwords (TOTP): six digits that change every 30 seconds. Any authenticator app that shows six-digit codes works.
+
+## Requirements
+
+- NervesHub 2.5.4 or later.
+- `SECRETS_ENCRYPTION_KEY` set on the instance. The key encrypts each user's authenticator secret. Without it, two-factor authentication is not offered and no organization can require it. See [Feature prerequisites](/hosting/feature-prerequisites#secrets-encryption-key).
+
+<Warning>
+  If you self-host, do not change `SECRETS_ENCRYPTION_KEY` once users have two-factor authentication on. Codes from their apps can no longer be checked. Those users can only sign in with a recovery code, and then have to set their app up again.
+</Warning>
+
+## Turn it on for your account
+
+<Steps>
+  <Step title="Open your account page">
+    Open your account page. Under **Two-factor authentication**, click **Set up**.
+  </Step>
+  <Step title="Start setup">
+    Click **Set up two-factor authentication**. If you have not signed in within the last 10 minutes, NervesHub asks you to confirm your identity first.
+  </Step>
+  <Step title="Add NervesHub to your authenticator app">
+    Scan the QR code with your app. If you cannot scan it, type the key shown beside it into the app by hand.
+  </Step>
+  <Step title="Confirm with a code">
+    Type the six-digit code the app shows and click **Turn on**. You have 10 minutes from starting setup to finish.
+  </Step>
+  <Step title="Save your recovery codes">
+    NervesHub shows ten recovery codes. Use **Copy** or **Download** to keep them somewhere safe, such as a password manager, then click **I've saved them**. They are not shown again.
+  </Step>
+</Steps>
+
+Turning two-factor authentication on signs out your other browser sessions. NervesHub emails you when it is turned on or off, and when new recovery codes are made.
+
+## Sign in with a code
+
+After your password or Google sign-in, NervesHub asks for an **Authentication code**. Type the six-digit code from your app and click **Verify**.
+
+- Each code works once.
+- A code from the 30 seconds before or after the current one is accepted, for clocks that drift.
+- You get five tries every ten minutes.
+
+## Recovery codes
+
+Each of the ten recovery codes signs you in once without your app. At the sign-in step, click **Use a recovery code instead** and type one in.
+
+Your account's **Two-factor authentication** page shows how many codes you have left. To replace them, click **Manage** on your account page, enter a code from the app or a recovery code under **New recovery codes**, and click **Make new codes**. The old codes stop working.
+
+## Turn it off
+
+On your account's **Two-factor authentication** page, enter a code from the app or a recovery code under **Turn off two-factor authentication** and click **Turn off**.
+
+If an organization you belong to requires two-factor authentication, you cannot reach that organization until you turn it back on. Your account and your other organizations work as before.
+
+## Require it for an organization
+
+You need the built-in **Admin** role, and two-factor authentication on for your own account.
+
+<Steps>
+  <Step title="Open the organization's settings">
+    Open your organization and select the **Settings** tab.
+  </Step>
+  <Step title="Turn the requirement on">
+    Under **Two-factor authentication**, tick **Require two-factor authentication for every member**. The page lists the members who do not have it on yet and would be turned away.
+  </Step>
+  <Step title="Save">
+    Click **Save**.
+  </Step>
+</Steps>
+
+When the requirement starts:
+
+- NervesHub emails every other member. Members without two-factor authentication are asked to set it up.
+- A member without it is sent to their **Two-factor authentication** page when they open the organization.
+- Until they turn it on, the organization's API, remote consoles, local shells, device event streams and [Slack](/outbound/slack) actions refuse them.
+- Pages and consoles they have open in the organization close.
+
+The change is recorded in the organization's [audit log](/access/audit-log).
+
+## Effect on the API and CLI
+
+- **Password sign-in to the API is refused.** `POST /api/users/auth` answers `401` for an account with two-factor authentication on. That is the endpoint `nh user auth` uses, so it fails too. Sign in through the browser with `nh user login`, or use an access token. See [API authentication](/api/authentication).
+- **Organization requirement.** API requests for an organization that requires two-factor authentication answer `403` for a member who does not have it on. The message names the organization and says to turn it on.
+
+## Limits
+
+As of NervesHub 2.5.4 there is no admin reset. Keep your recovery codes: they are the only way in without your authenticator app.
+
+## Related pages
+
+- [Roles and permissions](/access/roles)
+- [Audit log](/access/audit-log)
+- [API authentication](/api/authentication)
+- [nh command reference](/cli/reference)
+- [Secrets encryption key prerequisite](/hosting/feature-prerequisites#secrets-encryption-key)

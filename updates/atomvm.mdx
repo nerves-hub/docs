@@ -1,0 +1,181 @@
+---
+title: "AtomVM packbeam archives"
+sidebarTitle: "AtomVM"
+description: "Enable AtomVM packbeam support, set the application version NervesHub reads, and sign archives with your fwup key."
+---
+
+NervesHub can store and deploy [AtomVM](https://www.atomvm.net/) packbeam archives (`.avm`) alongside fwup archives. Use it for devices that run Erlang or Elixir applications on AtomVM.
+
+A packbeam is the application only. It does not contain the AtomVM virtual machine or the bootloader, and NervesHub does not update those.
+
+<Warning>
+  AtomVM support is experimental and off by default. It must be turned on for the instance and then for each product.
+</Warning>
+
+## Requirements
+
+| What | Needed |
+| --- | --- |
+| NervesHub | 2.5.0 or later |
+| Instance | `ATOMVM_FIRMWARE_ENABLED=true`. See [feature prerequisites](/hosting/feature-prerequisites#firmware-formats). |
+| Archive | A packbeam with an `<app>/priv/application.bin` entry and a SemVer `vsn` |
+| Signature | An Ed25519 signature made with an fwup key, unless the product allows unsigned archives |
+| Device client | The [AtomVM agent](/integrations/atomvm-esp32) |
+
+## Enable AtomVM
+
+<Steps>
+  <Step title="Enable it on the instance">
+    Whoever hosts the instance sets `ATOMVM_FIRMWARE_ENABLED=true`. Until then no `.avm` file is recognised and the product setting below is not shown. See [feature prerequisites](/hosting/feature-prerequisites#firmware-formats).
+  </Step>
+
+  <Step title="Enable it on the product">
+    Open **Product settings**. On the **General** tab, in the **Firmware** card, turn on **AtomVM packbeam archives**.
+
+    With the CLI:
+
+    ```bash
+    nh product update my_app --allow-tool atomvm
+    ```
+
+    With the API, set `allowed_update_tools` on the product:
+
+    ```bash
+    curl -X PATCH \
+      -H "Authorization: token $NERVES_HUB_TOKEN" \
+      -H "Content-Type: application/json" \
+      -d '{"allowed_update_tools": ["fwup", "atomvm"]}' \
+      https://<host>/api/orgs/<org>/products/<product>
+    ```
+
+    Listing a format the instance has not enabled returns a 422.
+  </Step>
+
+  <Step title="Decide on signing">
+    Sign archives with an fwup key registered to your organization, or allow unsigned archives on the product. See [Signing](#signing).
+  </Step>
+</Steps>
+
+A product accepts only the formats in `allowed_update_tools`. The default is `["fwup"]`, and fwup cannot be removed. Uploading an `.avm` to a product that has not opted in is rejected with a message naming the product.
+
+## Metadata
+
+NervesHub reads the OTP application metadata stored in the packbeam as the entry `<app>/priv/application.bin`:
+
+| NervesHub field | Source |
+| --- | --- |
+| Product | The application name |
+| Version | The application's `vsn`, normalised as below |
+| Description | The application's `description` |
+| UUID | First 16 bytes of the SHA-256 of the whole archive |
+| Platform | Always `atomvm` |
+| Architecture | Always `beam` |
+
+Rules to follow:
+
+- The application name must match the name of the NervesHub product you upload to.
+- Platform and architecture are the same for every packbeam, because a packbeam carries no chip or board identifier. Model different hardware as different products.
+- The UUID comes from the archive's bytes. Uploading identical bytes gives the same firmware, and any change gives a new one. Signing an archive changes its bytes, so the signed and unsigned archives have different UUIDs.
+
+### Where `application.bin` comes from
+
+`rebar3 atomvm packbeam` writes `application.bin` into every archive it builds.
+
+ExAtomVM (`mix atomvm.packbeam`) does not. An Elixir project must write `priv/application.bin` itself before packing, or NervesHub cannot read the upload and the device cannot report what it is running. The agent's Elixir example has a Mix task that generates the file from `mix.exs`. See [`examples/smart_kiosk_ex`](https://github.com/nerves-hub/nerves_hub_link_atomvm_esp32/tree/main/examples/smart_kiosk_ex).
+
+### Archives with dependencies
+
+A packbeam built from a project with dependencies has one `application.bin` per application. NervesHub uses the first one in the archive. The rebar3 plugin writes the project's own application first and dependency archives last. An archive assembled by hand in another order is filed under a dependency's name.
+
+### Set a SemVer version
+
+An OTP `vsn` is free form. NervesHub requires a semantic version and accepts these shapes:
+
+| `vsn` | Stored as |
+| --- | --- |
+| `1.2.3` | `1.2.3` |
+| `v1.2.3` | `1.2.3` |
+| `1.2` | `1.2.0` |
+| `1.2.3-rc.1` | `1.2.3-rc.1` |
+| `git`, `1`, `1.2.3.4` | Rejected |
+
+## Signing
+
+The packbeam format has no signature of its own. NervesHub defines one: a data entry named `nerves_hub/signature`, appended as the last entry of the archive. It holds an Ed25519 signature over every byte before that entry. AtomVM skips data entries when it looks for code, so a signed archive still runs on a VM that knows nothing about the signature.
+
+The key is your organization's fwup signing key. If the organization has no fwup key yet, see [Firmware signing](/concepts/firmware-signing).
+
+Sign an archive in one of two ways:
+
+<Tabs>
+  <Tab title="nh">
+    `nh firmware upload` signs a packbeam itself before uploading it, with the same key options as fwup firmware:
+
+    ```bash
+    nh firmware upload app.avm --key my_app_key
+    ```
+
+    An existing signature is replaced.
+  </Tab>
+
+  <Tab title="nh-avm">
+    `nh-avm` is an escript in the [agent's repository](https://github.com/nerves-hub/nerves_hub_link_atomvm_esp32). Build it there with `rebar3 escriptize`, which writes `_build/default/bin/nh-avm`.
+
+    ```bash
+    nh-avm sign   --key fwup-key.priv --in app.avm --out app-signed.avm
+    nh-avm verify --key fwup-key.pub  --in app-signed.avm
+    ```
+
+    `nh-avm keygen --priv my.priv --pub my.pub` writes a key pair in the fwup format.
+  </Tab>
+</Tabs>
+
+How verification works:
+
+- An archive that carries a signature must verify against one of the organization's fwup (Ed25519) keys. A signature that does not verify is always refused.
+- An archive with no signature is refused unless the product allows unsigned archives.
+
+NervesHub's check does not replace the device's. The agent verifies the signature itself when you configure it with `firmware_keys`. See [AtomVM on ESP32](/integrations/atomvm-esp32).
+
+### Allow unsigned archives
+
+In **Product settings**, turn on **AtomVM packbeam archives**, then tick **Allow unsigned AtomVM archives**. With the CLI:
+
+```bash
+nh product update my_app --allow-unsigned-atomvm
+```
+
+The setting is `allow_unsigned_atomvm_firmware` on the product in the API. It defaults to `false`, so a product that turns the format on accepts signed archives only.
+
+## Upload an archive
+
+Upload an `.avm` the same way as any other firmware. NervesHub identifies the format from the file's contents, not from its extension.
+
+<Tabs>
+  <Tab title="Web">
+    Open the product's **Firmware** page and select **Upload firmware**.
+  </Tab>
+
+  <Tab title="CLI">
+    ```bash
+    nh firmware upload app.avm --key my_app_key
+    ```
+
+    Pass `--skip-signing` to upload an archive as it is.
+  </Tab>
+</Tabs>
+
+Then create or update a [deployment group](/setup/deployments) as you would for fwup firmware.
+
+## Limits
+
+- **No delta updates.** NervesHub never generates [deltas](/management/delta-updates) for packbeams. A deployment group with **Delta updates** turned on still sends AtomVM devices the whole archive.
+- **Two partitions on the device.** The agent writes an update into the packbeam partition the device is not running from. A device built with the stock AtomVM partition table has only one and cannot be updated. See [AtomVM on ESP32](/integrations/atomvm-esp32).
+- **Archives are separate.** [Archives](/updates/archives) are fwup files regardless of the firmware format.
+
+## Related pages
+
+- [AtomVM on ESP32](/integrations/atomvm-esp32)
+- [Firmware signing](/concepts/firmware-signing)
+- [How firmware updates work](/updates/overview)
+- [Firmware format prerequisites](/hosting/feature-prerequisites#firmware-formats)

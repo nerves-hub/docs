@@ -1,0 +1,131 @@
+---
+title: "Connecting code"
+sidebarTitle: "Connecting code"
+description: "Run Elixir on a device each time it connects, set on a device, a deployment group, or a single release."
+---
+
+Connecting code is Elixir that NervesHub sends to a device each time the device connects. You can set it in three places: on one device, on a [deployment group](/setup/deployments), and on a [release](/deployments/releases). Use it to apply a setting or run a check on every device in a group without shipping new firmware.
+
+## Requirements
+
+- Nothing is needed in firmware config. A device needs a client that can run scripts sent by NervesHub.
+- A device that reports device API version 2.1.0 or later receives the code as a script and reports how it went. For an older device, NervesHub types the code into the device's [remote console](/management/remote-console) instead.
+- Connecting code on a release needs NervesHub 2.5.0 or later.
+- Notifications for failed connecting code need NervesHub 2.5.1 or later.
+- Setting a device's connecting code through the API or `nh` needs NervesHub 2.5.3 or later.
+
+## Set connecting code
+
+### On a deployment group
+
+<Steps>
+  <Step title="Open the group's settings">
+    Open the deployment group and select the **Settings** tab.
+  </Step>
+  <Step title="Enter the code">
+    Type your Elixir into the **Connecting code** card.
+  </Step>
+  <Step title="Save">
+    Select **Save** in the bar at the foot of the card.
+  </Step>
+</Steps>
+
+### On a release
+
+A release can carry its own code, which a device runs while it is running that release.
+
+<Tabs>
+  <Tab title="Web UI">
+    In the **New release** dialog, expand **Connecting code**, enter the code, and choose where it runs under **Runs**. To change it later, open the release on the **Releases** tab and select **Edit release**.
+  </Tab>
+  <Tab title="CLI">
+    When you create the release:
+
+    ```bash
+    nh deployment release create "production" \
+      --firmware <UUID> \
+      --connecting-code-file ./connect.exs \
+      --connecting-code-mode first
+    ```
+
+    On an existing release:
+
+    ```bash
+    nh deployment release update "production" 4 --connecting-code 'MyApp.Settings.migrate()'
+    nh deployment release update "production" 4 --connecting-code-mode override
+    nh deployment release update "production" 4 --clear-connecting-code
+    ```
+
+    Pass `--connecting-code-file -` to read the code from stdin. Use either `--connecting-code` or `--connecting-code-file`, not both.
+  </Tab>
+</Tabs>
+
+The mode sets where the release's code runs relative to the group's code:
+
+| Web UI option                   | CLI value  | Result                                              |
+| ------------------------------- | ---------- | --------------------------------------------------- |
+| **After the group's code**      | `last`     | The group's code runs, then the release's. The default. |
+| **Before the group's code**     | `first`    | The release's code runs, then the group's.          |
+| **Instead of the group's code** | `override` | Only the release's code runs. |
+
+A release with no code of its own leaves the group's code alone, whatever its mode.
+
+<Note>
+  The release that counts is the one the device is running: the newest release in its group whose firmware the device has. A device that has not yet installed a release does not run that release's code.
+</Note>
+
+### On a device
+
+Open the device, select the **Settings** tab, and enter the code in **First connect code**.
+
+From the CLI:
+
+```bash
+nh device update <identifier> --connecting-code 'MyApp.Diagnostics.report()'
+nh device update <identifier> --connecting-code ""
+```
+
+The second command clears the code. The API never returns a device's connecting code, so `nh` cannot confirm what was saved.
+
+## What a device runs
+
+When a device connects, NervesHub joins the code that applies to it into one script, in this order:
+
+1. The release's code, if its mode is `first`.
+2. The group's code, unless the release's mode is `override`.
+3. The release's code, if its mode is `last`.
+4. The device's own code.
+
+Blank code is left out. If nothing is left, nothing is sent.
+
+`nerves_hub_link` evaluates the script with `Code.eval_string/1` and stops it if it runs longer than 10 seconds.
+
+<Warning>
+  The code runs on every connect, including each reconnect after a network drop. Write code that is safe to run repeatedly.
+</Warning>
+
+## Check that it works
+
+Connect a device, or reconnect one that is already online:
+
+```bash
+nh device reconnect <identifier>
+```
+
+If the code fails, NervesHub raises a [product notification](/management/notifications). Connecting code fails when:
+
+- the client reports an error, as `nerves_hub_link` does when the code times out or its task crashes, or
+- the output shows that the code raised an exception.
+
+A `nil` return value alone is not a failure.
+
+Devices that fail on the same code share one notification. It names the first device that failed and what it printed. The notification reaches [Slack](/outbound/slack), Microsoft Teams, Discord and [webhooks](/outbound/webhooks) like any other product notification.
+
+A device on a `nerves_hub_link` release that does not report a result is only caught when the code raises. Code that hangs on such a device is never reported.
+
+## Related pages
+
+- [Releases](/deployments/releases)
+- [Deployment groups](/setup/deployments)
+- [Support scripts](/management/support-scripts)
+- [Product notifications](/management/notifications)

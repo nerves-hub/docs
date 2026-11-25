@@ -1,94 +1,129 @@
 ---
 title: "Terminology"
 sidebarTitle: "Terminology"
-description: "A glossary of the key entities in NervesHub — organizations, products, devices, firmware, deployment groups, and authentication concepts explained."
+description: "Short definitions of the terms NervesHub uses for organizations, products, devices, firmware, deployments, extensions and authentication."
 ---
 
-NervesHub organizes its data model as a hierarchy: an **Organization** contains one or more **Products**, each of which owns **Devices**, **Firmware**, and **Deployment Groups**. Understanding how these entities relate to one another will help you navigate both the CLI and the web console, and reason about access control, firmware delivery, and device authentication.
+NervesHub arranges its data as a hierarchy. An **organization** contains **products**. Each product owns **devices**, **firmware**, **archives** and **deployment groups**. A deployment group delivers firmware to devices through **releases**.
+
+## Organization and access
 
 <Accordion title="Organization">
-  An Organization is the top-level tenant in NervesHub. Every resource — products, devices, firmware, signing keys — belongs to an organization. Users are granted membership to an organization with one of three roles, listed from most to least privileged:
+  The top-level tenant. Products, signing keys, CA certificates, members and integrations belong to an organization. See [Roles and permissions](/access/roles) for members and [Audit log](/access/audit-log) for the record of what they change.
+</Accordion>
 
-  | Role     | Description                                                                                                                                          |
-  | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-  | `admin`  | Everything `manage` can do, plus organization settings, inviting and removing members, and managing certificate authorities                           |
-  | `manage` | Create, modify, and delete products, devices, firmware, deployment groups, signing keys, and support scripts; reboot, reconnect, and console a device |
-  | `view`   | Read-only access to the organization's resources, plus permission to run existing support scripts                                                    |
+<Accordion title="Role">
+  What a member of an organization may do. The built-in roles are **Admin**, **Manage** and **View**, from most to least privileged. From NervesHub 2.5.4 an organization can also define custom roles. See [Roles](/access/roles).
+</Accordion>
 
-  On NervesCloud, each account belongs to at least one organization. In self-hosted deployments you can create as many organizations as you need.
+<Accordion title="Product API key">
+  A credential for automation that works on one product and holds a role of its own. It is on the NervesHub main branch but in no tagged release as of NervesHub 2.5.4. See [Product API keys](/api/authentication#product-api-keys) and [CI and automation](/outbound/ci-cd).
+</Accordion>
+
+<Accordion title="Webhook">
+  An HTTP endpoint you run that NervesHub sends your organization's events to, as signed JSON. See [Webhooks](/outbound/webhooks).
 </Accordion>
 
 <Accordion title="Product">
-  A Product groups related devices, firmware binaries, deployment groups, and signing keys under a single namespace. Every device and every firmware binary belongs to exactly one product. Products help you separate device fleets that run different firmware — for example, you might have a `thermostat` product and a `gateway` product within the same organization.
-
-  Products also define the signing keys that are accepted for firmware updates, so you can enforce key policy per fleet, and the extensions (health, metrics, geo, logging, local shell, network identity, error reports) that devices in the fleet may use.
+  A group of devices that run the same kind of firmware, together with that firmware, its archives and its deployment groups. Every device and every firmware belongs to exactly one product. Product settings control which extensions and firmware formats the product uses, its shared secrets and its health profiles. See [Products](/setup/products).
 </Accordion>
+
+## Devices and authentication
 
 <Accordion title="Device">
-  A Device represents a single physical piece of hardware running Nerves. Each device is identified by a unique hardware serial number (the identifier embedded in the firmware or the hardware security module). NervesHub uses this identifier to track firmware versions, connection history, and health metrics for that specific unit.
-
-  Devices receive firmware updates through Deployment Groups and report metadata (firmware version, platform, architecture, tags) back to NervesHub over their WebSocket connection.
+  One physical unit, known to NervesHub by its identifier, which is usually a hardware serial number. NervesHub tracks the firmware each device reports, its connection, its tags and its health. See [Devices](/setup/devices).
 </Accordion>
 
-<Accordion title="Device Certificate">
-  A Device Certificate is an X.509 certificate that identifies a specific device to NervesHub. It is used for mutual TLS (mTLS) authentication when the device opens its WebSocket connection — the server authenticates the client and the client authenticates the server simultaneously.
-
-  Device Certificates must be signed by a Device CA Certificate that you have registered with NervesHub. The private key for a Device Certificate is stored securely on the device itself (ideally in a hardware security module such as NervesKey) and is never transmitted.
+<Accordion title="Tag">
+  A label on a device. Deployment groups use tags to decide which devices they target. See [Devices](/setup/devices).
 </Accordion>
 
-<Accordion title="Device CA Certificate">
-  A Device CA Certificate is a Certificate Authority certificate that you own as the device manufacturer or operator. You register only the CA certificate (the public portion) with NervesHub — the corresponding private key is never shared with NervesHub or uploaded to any server.
-
-  When a device connects for the first time, it presents both its own Device Certificate and the Device CA Certificate. NervesHub verifies that the Device Certificate is signed by a registered CA and then associates the device with your product. This design means you remain in full control of device provisioning: NervesHub cannot issue new device certificates on your behalf.
+<Accordion title="Shared secret">
+  A key and secret a device uses to authenticate instead of a certificate. A product key is shared by every device in the product, and a device that connects with one is created on its first connection. A device key belongs to one device. Shared secrets have to be [turned on for the instance](/hosting/feature-prerequisites#shared-secret-authentication). See [Shared secrets](/auth/shared-secret).
 </Accordion>
 
-<Accordion title="Firmware">
-  Firmware in NervesHub refers to a `.fw` file in the **fwup** format — a ZIP archive that contains your compiled Nerves system image along with metadata (product name, version, platform, architecture, description) and a cryptographic signature. NervesHub stores firmware and makes it available for download by devices during an OTA update.
-
-  Firmware is always associated with a single product and must be signed by a Firmware Signing Key that is registered for that product before it can be shipped to devices.
+<Accordion title="Device certificate">
+  An X.509 certificate that identifies one device. The device presents it during the TLS handshake (mutual TLS). Its private key stays on the device. See [Device certificates](/auth/device-certificates).
 </Accordion>
 
-<Accordion title="Firmware UUID">
-  Every firmware binary uploaded to NervesHub is assigned a globally unique identifier derived from its contents — the Firmware UUID. Because the UUID is content-addressed, the same binary always produces the same UUID, and any modification to the file (including re-signing) produces a different UUID. Releases reference firmware by UUID, giving you an unambiguous audit trail of exactly which binary was sent to which devices.
-</Accordion>
-
-<Accordion title="Firmware Signing Key">
-  A Firmware Signing Key is a public/private keypair used to prove that a firmware binary was produced by a trusted party. The private key signs the firmware at build time (via `fwup`). The corresponding public key is:
-
-  * **Uploaded to NervesHub** so the server can confirm the firmware is signed by a key registered for the product.
-  * **Embedded in device firmware** via `fwup_public_keys` configuration so the device can independently verify the signature before applying an update — even without trusting NervesHub.
-
-  You can register multiple signing keys per product (for example, a production key and a development key), and a device will accept firmware signed by any of the embedded keys.
-</Accordion>
-
-<Accordion title="Deployment Group">
-  A Deployment Group links a targeted set of devices to the firmware they should run. It defines **which devices** are in scope (using tags, a tag operator, and a version condition) and controls **how** a rollout proceeds (concurrency limits, failure thresholds, queue order, and whether the group is active).
-
-  When a group is active, NervesHub notifies matching connected devices via their WebSocket channel. Devices can apply the update immediately or defer it depending on how `NervesHubLink.Client` is configured.
-
-  A group does not finish — it stays active, continuing to catch matching devices as they connect. The REST API and the `nh` CLI still refer to these as `deployments`.
-</Accordion>
-
-<Accordion title="Release">
-  A Release is one firmware shipment within a deployment group. Releases are numbered in the order they are created, each references the firmware (and optionally an archive) being shipped, and the group tracks which release is current.
-
-  A release can also carry a workflow definition — an ordered list of steps that stages the rollout, for example a small canary batch, an approval gate, then everything else.
+<Accordion title="CA certificate">
+  The certificate that signed your device certificates, also called a signer certificate. You register it with your organization and keep its private key yourself. NervesHub uses it to check a device certificate it has not seen before. See [PKI](/concepts/pki) and [Just-in-time provisioning](/auth/just-in-time-provisioning).
 </Accordion>
 
 <Accordion title="NervesKey">
-  NervesKey is a hardware security module (HSM) based on the Microchip ATECC508A or ATECC608A chip. It stores a device's private key in tamper-resistant hardware, making it impossible to extract the key even with physical access to the device. NervesHub supports NervesKey natively: when provisioned, the device uses the HSM to perform TLS handshakes without the private key ever leaving the chip.
-
-  NervesKey also supports an **Auxiliary Device Certificate** slot for development or multi-service use cases. See the [NervesKey authentication guide](/auth/nerveskey) for provisioning details.
+  A secure element that holds a device's private key and certificates in hardware. NervesHubLink uses it automatically when the `nerves_key` library is a dependency. It holds a `:primary` certificate pair, which can be written once, and an `:aux` pair, which can be updated. See [NervesKey](/auth/nerveskey).
 </Accordion>
 
-<Accordion title="Shared Secret">
-  Shared Secret authentication is an HMAC-based mechanism that uses a `product_key` and `product_secret` pair instead of X.509 certificates. It is simpler to set up than full PKI and is well-suited for development, prototyping, or situations where hardware provisioning is not yet in place.
-
-  Shared Secrets are scoped to a product. You configure the key and secret in `NervesHubLink` on the device, and NervesHub verifies them when the device connects. For production deployments with large fleets, Device Certificates or NervesKey provide stronger security guarantees.
+<Accordion title="TPM">
+  A Trusted Platform Module that holds a device's private key and certificate. NervesHubLink uses it automatically when the `tpm` library is a dependency. See [TPM](/auth/tpm).
 </Accordion>
 
-<Accordion title="Auxiliary Device Certificate">
-  The Auxiliary Device Certificate is a secondary X.509 certificate stored in the NervesKey hardware alongside the primary Device Certificate. It allows the same hardware to authenticate to a second service (such as AWS IoT) without requiring separate provisioning hardware or a second chip.
+## Firmware
 
-  The auxiliary slot uses the same ATECC508A/608A hardware protection as the primary slot — the private key is generated on-chip and never exposed. This is useful in multi-cloud or hybrid architectures where a device must maintain authenticated connections to more than one backend service.
+<Accordion title="Firmware">
+  A firmware file uploaded to a product, with the metadata NervesHub read from it: product, version, platform, architecture and UUID. For Nerves this is a `.fw` file built by `fwup`. See [Firmware](/setup/firmware).
+</Accordion>
+
+<Accordion title="Firmware UUID">
+  The identifier a firmware file carries in its own metadata. It is unique within a product. A device reports the UUID of the firmware it runs when it connects, and releases refer to firmware by UUID. See [Firmware](/setup/firmware).
+</Accordion>
+
+<Accordion title="Update tool">
+  The program that applies an update on the device, and so the firmware format a product accepts. `fwup` is the default. `esp-idf`, `atomvm` and `rauc` are experimental and have to be enabled on the instance and on the product. See [Updates overview](/updates/overview).
+</Accordion>
+
+<Accordion title="Signing key">
+  A key pair that proves firmware comes from you. You sign with the private key and register the public key with your organization. Devices verify firmware against the public keys they trust, set with `fwup_public_keys`. See [Firmware signing](/concepts/firmware-signing).
+</Accordion>
+
+<Accordion title="Archive">
+  A signed file that a release can deliver to devices alongside firmware, for data that is not part of the firmware image. Your firmware decides whether to download it and what to do with it. See [Archives](/updates/archives).
+</Accordion>
+
+<Accordion title="Delta update">
+  An update that sends the difference between the firmware a device runs and the target firmware, instead of the full file. See [Delta updates](/management/delta-updates).
+</Accordion>
+
+## Deployments
+
+<Accordion title="Deployment group">
+  The link between a set of devices and the firmware they should run. Its conditions (tags, a tag operator and a version requirement) decide which devices belong to it, and its settings control how a rollout proceeds. A group has to be turned on before it delivers updates. NervesHub places a device in a matching group when the device connects. The HTTP API and the `nh` CLI call a deployment group a `deployment`. See [Deployment groups](/setup/deployments) and [Rollout controls](/deployments/rollout-controls).
+</Accordion>
+
+<Accordion title="Release">
+  One firmware version delivered by a deployment group. Pointing a group at new firmware creates a release. Releases are numbered, and the newest is the group's current release. A release can also carry an archive, notes and connecting code, and can be marked required. See [Releases](/deployments/releases).
+</Accordion>
+
+<Accordion title="Workflow">
+  A definition on a deployment group that stages each release in ordered steps, for example a small first batch, an approval, then every other device. See [Deployment workflows](/concepts/deployment-workflows).
+</Accordion>
+
+<Accordion title="Update mode">
+  How a device receives firmware. `automatic` means its deployment group sends updates. `device_managed` means the device asks for updates when it chooses. `off` means it receives none. See [Device-managed updates](/updates/device-managed-updates).
+</Accordion>
+
+<Accordion title="Connecting code">
+  Elixir code that NervesHub sends to a device to run when it connects. It can be set on a device, a deployment group or a release. See [Connecting code](/deployments/connecting-code).
+</Accordion>
+
+## Device features
+
+<Accordion title="Extension">
+  An optional feature that a device and NervesHub agree on after the device connects, such as health, geo, logging, error reports, [local shell](/extensions/local-shell) or [network identity](/extensions/network-identity). An extension runs only when the firmware includes it and it is enabled for both the product and the device. See [Extensions overview](/extensions/overview).
+</Accordion>
+
+<Accordion title="Health profile">
+  The thresholds a product uses to judge a device's reported metrics. The result is a health status of healthy, warning or unhealthy. A product has a default profile and can have one per platform. See [Health monitoring](/management/health-monitoring).
+</Accordion>
+
+<Accordion title="Support script">
+  A script stored on a product that you can run on a connected device. See [Support scripts](/management/support-scripts).
+</Accordion>
+
+<Accordion title="Remote console">
+  An IEx session on a connected device, opened from the web UI or the CLI. The firmware has to enable it with `remote_iex: true`. See [Remote console](/management/remote-console).
+</Accordion>
+
+<Accordion title="Product notification">
+  A message NervesHub raises on a product about a problem nothing else would show, such as an extension a device could not start. See [Product notifications](/management/notifications).
 </Accordion>

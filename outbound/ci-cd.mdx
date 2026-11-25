@@ -1,0 +1,316 @@
+---
+title: "CI and automation"
+sidebarTitle: "CI/CD"
+description: "Authenticate, sign, upload and deploy firmware from a CI pipeline with the nh CLI, the GitHub Action, or the HTTP API."
+---
+
+A CI pipeline signs the firmware it built, uploads it to a product, and optionally creates a release on a [deployment group](/setup/deployments) so devices start updating. To do the same steps by hand first, see the [Quickstart](/quickstart).
+
+| Approach | Use it when |
+| --- | --- |
+| [`nh` CLI](#upload-and-deploy-with-nh) | You can install a binary on the runner. Works in any CI system. |
+| [GitHub Action](#github-action) | You build on GitHub Actions. It installs and runs `nh` for you. |
+| [HTTP API](#equivalent-api-calls) | You cannot run `nh`, or you sign firmware in a separate step. |
+
+## Authenticate from CI
+
+Give the pipeline one credential, stored as a CI secret. `nh` reads it from `NERVES_HUB_TOKEN`. API calls send it as `Authorization: Bearer <credential>`.
+
+| | Product API key | User access token |
+| --- | --- | --- |
+| Prefix | `nhpk_` | `nhu_` |
+| Reaches | One product | Everything the user can reach, in every organization they belong to |
+| Permissions | The role you give the key | The user's role |
+| Tied to a person | No. It keeps working when its creator leaves. | Yes. It stops working when the user's account is deleted. |
+| Availability | NervesHub main branch only | All versions |
+
+Use a product API key where you can. A leaked key exposes one product with the permissions you chose.
+
+<Note>
+  Product API keys are on the NervesHub main branch but in no tagged release as of NervesHub 2.5.4. On 2.5.4 and earlier, use a user access token.
+</Note>
+
+<Tabs>
+  <Tab title="Product API key">
+    1. In the product, open **Product settings** and select the **API keys** tab.
+    2. Click **Create key**. Enter a **Name**, such as `CI deploys`.
+    3. Choose the **Role**. Uploading firmware and creating releases need **Manage**, or a [custom role](/access/roles) with the **Upload firmware** and **Create, edit and approve releases** permissions.
+    4. Click **Create key**, copy the key, and store it as a secret in your CI system. It is shown only once.
+  </Tab>
+
+  <Tab title="User access token">
+    1. Open the user menu and select **Access tokens**.
+    2. Click **New token**. Enter a **Note**, such as `CI`, and click **Create access token**.
+    3. Copy the token and store it as a secret in your CI system. It is shown only once.
+
+    The token's user needs the **Manage** or **Admin** role in the organization, or a custom role with the two permissions above.
+  </Tab>
+</Tabs>
+
+See [API authentication](/api/authentication) for everything each credential can and cannot reach.
+
+## Configure nh in CI
+
+Set these environment variables in the job. `nh` reads them without any saved settings.
+
+| Variable | Value |
+| --- | --- |
+| `NERVES_HUB_TOKEN` | The product API key or user access token |
+| `NERVES_HUB_ORG` | Organization name |
+| `NERVES_HUB_PRODUCT` | Product name |
+| `NERVES_HUB_URI` | Your server's URI. Leave it out for NervesCloud. |
+| `NERVES_HUB_NON_INTERACTIVE` | `true`, so `nh` fails with an error where it would otherwise prompt |
+| `NERVES_HUB_PRIVATE_KEY` | The firmware signing key. See [Sign in CI](#sign-in-ci). |
+| `NERVES_HUB_DEPLOYMENT_NAME` | Optional. A deployment group to update when `--deploy` is not given. |
+
+Every variable can also be written with the `NERVES_CLOUD_` prefix. See [CLI configuration](/cli/configuration#environment-variables).
+
+To install `nh` on the runner, download the archive for the runner's platform from the [releases page](https://github.com/nerves-hub/nh/releases). See [Installation](/cli/installation).
+
+## Sign in CI
+
+NervesHub refuses fwup firmware that is not signed with a key registered to the organization. The other formats have their own signing rules.
+
+### fwup and AtomVM firmware
+
+`nh firmware upload` signs fwup (`.fw`) and AtomVM (`.avm`) images with an Ed25519 key before it uploads them. In CI, pass the key in `NERVES_HUB_PRIVATE_KEY`.
+
+The value is the base64 encoding of the 64-byte Ed25519 private key, unencrypted. This is the format of the private key file `fwup -g` writes.
+
+<Steps>
+  <Step title="Generate a key pair">
+    On your own machine, generate a key pair with fwup. It writes `fwup-key.pub` and `fwup-key.priv` to the current directory.
+
+    ```bash
+    fwup -g
+    ```
+  </Step>
+
+  <Step title="Register the public key">
+    Register the public key with your organization. This needs a user access token, because signing keys belong to the organization.
+
+    ```bash
+    nh key add ci --public-key fwup-key.pub
+    ```
+  </Step>
+
+  <Step title="Store the private key as a secret">
+    Store the contents of `fwup-key.priv` as a secret in your CI system, and expose it to the job as `NERVES_HUB_PRIVATE_KEY`. Keep the file itself somewhere safe and out of version control.
+  </Step>
+</Steps>
+
+Signing an fwup image calls `fwup`, so `fwup` must be on the runner's `PATH`. AtomVM images need nothing else.
+
+Other ways to supply the key:
+
+| Option | Use |
+| --- | --- |
+| `--key-file <path>` | A key file on the runner: an fwup private key, or a key as `nh key create` stores it. Add `--password` if it is encrypted. |
+| `--key <name>` | A key in the runner's `nh` data directory, made with `nh key create`. |
+| `--skip-signing` | The firmware was already signed earlier in the pipeline, for example with `fwup --sign`. |
+
+If no key is given and `--skip-signing` is not passed, the upload fails.
+
+### ESP-IDF and RAUC firmware
+
+- **ESP-IDF** (`.bin`): `nh` signs with `espsecure.py`, which must be on the runner's `PATH`, using an RSA-3072 key passed with `--key-file <pem>`. An image that is already signed is uploaded as it is.
+- **RAUC** (`.raucb`): bundles are signed when they are built. `nh` uploads them as they are.
+
+See [Firmware signing](/concepts/firmware-signing), [ESP-IDF](/updates/esp-idf) and [RAUC](/updates/rauc).
+
+## Upload and deploy with nh
+
+```bash
+nh firmware upload <path> [--deploy <group>]...
+```
+
+The command:
+
+1. Detects the format from the file's contents.
+2. Reads the image's metadata and refuses an image built for a different product.
+3. Signs the image.
+4. Uploads it to the product.
+5. For each `--deploy`, creates a release with the new firmware on that deployment group. The release becomes the group's current release, with no archive.
+
+Always pass the firmware path in CI. Without a path, `nh` looks for a single image in `_build/<MIX_TARGET>_<MIX_ENV>/nerves/images/` and asks for confirmation, which fails without a terminal unless you also pass `--yes`.
+
+```bash
+export NERVES_HUB_NON_INTERACTIVE=true
+
+nh firmware upload _build/rpi4_prod/nerves/images/my_app.fw --deploy qa
+```
+
+### The deploy option
+
+- `--deploy` names an existing deployment group. Repeat it to update several groups.
+- When `--deploy` is not given, `NERVES_HUB_DEPLOYMENT_NAME` is used if it is set.
+- If a deployment fails, the firmware stays uploaded. The error names the firmware UUID and the group. Retry that step with `nh deployment update <group> --firmware <uuid>`.
+
+To set a description, notes, an archive or [connecting code](/deployments/connecting-code) on the release, or to mark it required, upload without `--deploy` and create the release yourself:
+
+```bash
+uuid=$(nh firmware upload my_app.fw -o json | jq -r .uuid)
+
+nh deployment release create qa --firmware "$uuid" \
+  --description "Fixes the Wi-Fi reconnect loop" --required
+```
+
+See [Releases](/deployments/releases).
+
+### Output and exit status
+
+With `-o json`, `nh firmware upload` prints one JSON document on stdout: the uploaded firmware, with a `deployed` list naming the groups it updated. Progress messages go to stderr.
+
+```json
+{
+  "uuid": "d9f8c63a-1234-5678-abcd-ef0123456789",
+  "version": "1.5.0",
+  "deployed": ["qa"]
+}
+```
+
+The document has the firmware's other fields too, such as `product`, `platform`, `architecture` and `tool`.
+
+`nh` exits `0` on success and non-zero on any failure, including a failed deployment after a successful upload. In JSON mode the document is still printed in that case, so a script can read the UUID.
+
+## GitHub Action
+
+The [`nervescloud/upload-nerves-firmware`](https://github.com/nervescloud/upload-nerves-firmware) action downloads `nh`, signs and uploads a firmware file, and optionally updates a deployment group.
+
+`fwup` must already be on the runner's `PATH`. The action does not install it.
+
+```yaml
+- name: Upload firmware to NervesHub
+  id: upload
+  uses: nervescloud/upload-nerves-firmware@main
+  with:
+    token: ${{ secrets.NERVES_HUB_TOKEN }}
+    private-key: ${{ secrets.NERVES_HUB_PRIVATE_KEY }}
+    org: my-org
+    product: my_app
+    firmware: _build/rpi4_prod/nerves/images/my_app.fw
+    deployment: qa
+```
+
+### Inputs
+
+| Input | Required | Default | Description |
+| --- | --- | --- | --- |
+| `token` | Yes | | Product API key or user access token |
+| `private-key` | Yes | | Unencrypted base64 private key for signing the firmware. See [Sign in CI](#sign-in-ci). |
+| `org` | Yes | | Organization the firmware is uploaded to |
+| `product` | Yes | | Product the firmware is uploaded to |
+| `uri` | No | `https://manage.nervescloud.com` | URI of the instance to upload to |
+| `deployment` | No | | Deployment group to update with the uploaded firmware |
+| `firmware` | No | | Path of the firmware file, relative to the working directory. Left out, the action uses the single `.fw` file under `_build/*/nerves/images`, and fails if there is none or more than one. |
+| `working-directory` | No | Repository root | Directory to run `nh` in |
+| `version` | No | `latest` | Version of `nh` to install |
+| `public-key` | No | | Deprecated and ignored. Remove it from your workflow. |
+
+### Outputs
+
+| Output | Description |
+| --- | --- |
+| `cli-version` | Version of `nh` that was installed |
+| `firmware-uuid` | UUID of the uploaded firmware |
+| `firmware-version` | Version of the uploaded firmware |
+
+```yaml
+- run: echo "Uploaded ${{ steps.upload.outputs.firmware-version }} as ${{ steps.upload.outputs.firmware-uuid }}"
+```
+
+### What the action does
+
+1. Installs `nh` for the runner's platform (Linux, macOS or Windows on amd64 or arm64) and caches it.
+2. Exports `NERVES_HUB_ORG`, `NERVES_HUB_PRODUCT`, `NERVES_HUB_TOKEN` and, when `uri` is set, `NERVES_HUB_URI` to the job. Later steps can run `nh` without further setup.
+3. Runs `nh firmware upload <firmware> --output json`. The signing key is passed to that command only, and is not exported to the job.
+4. When `deployment` is set, runs `nh deployment update <deployment> --firmware <uuid>`.
+
+With `version: latest`, the action asks the GitHub API for the newest `nh` release. It uses `GITHUB_TOKEN` for that request when the variable is set in the step's environment. Pin `version` to avoid the lookup.
+
+## Equivalent API calls
+
+The API does not sign firmware, so sign the file first.
+
+Sign an fwup image with fwup:
+
+```bash
+fwup --sign -i my_app.fw -o my_app-signed.fw -s fwup-key.priv
+```
+
+### Upload firmware
+
+Send the file as the `firmware` field of a `multipart/form-data` body.
+
+```bash
+curl -X POST \
+  -H "Authorization: Bearer $NERVES_HUB_TOKEN" \
+  -F "firmware=@my_app-signed.fw" \
+  https://manage.nervescloud.com/api/orgs/my-org/products/my_app/firmwares
+```
+
+A successful upload returns `201 Created`, a `Location` header for the new firmware, and the firmware in the body.
+
+```json
+{
+  "data": {
+    "uuid": "d9f8c63a-1234-5678-abcd-ef0123456789",
+    "version": "1.5.0",
+    "product": "my_app",
+    "platform": "rpi4",
+    "architecture": "arm",
+    "tool": "fwup"
+  }
+}
+```
+
+A refused file returns `422` with the reason in `errors.detail`, for example a signature that matches none of the organization's keys, or firmware built for a different product.
+
+This call needs the **Upload firmware** permission.
+
+### Create a release
+
+Point a deployment group at the firmware by creating a release.
+
+```bash
+curl -X POST \
+  -H "Authorization: Bearer $NERVES_HUB_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"firmware": "d9f8c63a-1234-5678-abcd-ef0123456789"}' \
+  https://manage.nervescloud.com/api/orgs/my-org/products/my_app/deployments/qa/releases
+```
+
+| Field | Required | Description |
+| --- | --- | --- |
+| `firmware` | Yes | Firmware UUID |
+| `archive` | No | Archive UUID. Left out, the release has no archive. |
+| `required` | No | Whether devices must pass through this release before any newer one. Default `false`. |
+| `description` | No | Up to 100 characters |
+| `notes` | No | Up to 1000 characters |
+| `connecting_code` | No | Elixir run on a device when it connects, while this is the release it is sent |
+| `connecting_code_mode` | No | `first`, `last` or `override`. Default `last`. |
+
+A successful call returns `201 Created`. The request is refused with `422` if the group's current release already has the same firmware and archive.
+
+This call needs the **Create, edit and approve releases** permission.
+
+If the releases route returns `404` although the deployment group exists, the server does not have the release API. Update the group instead, which creates a release the same way:
+
+```bash
+curl -X PUT \
+  -H "Authorization: Bearer $NERVES_HUB_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"deployment": {"firmware": "d9f8c63a-1234-5678-abcd-ef0123456789"}}' \
+  https://manage.nervescloud.com/api/orgs/my-org/products/my_app/deployments/qa
+```
+
+`nh firmware upload --deploy` and `nh deployment update --firmware` make this same choice for you.
+
+## Related pages
+
+- [API authentication](/api/authentication)
+- [nh command reference](/cli/reference)
+- [Build, sign, and upload firmware](/setup/firmware)
+- [Firmware signing](/concepts/firmware-signing)
+- [Releases](/deployments/releases)
+- [Webhooks](/outbound/webhooks)

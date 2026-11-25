@@ -1,20 +1,25 @@
 ---
-title: "Deployment Group Workflows"
-sidebarTitle: "Deployment Workflows"
-description: "Stage a firmware rollout with a workflow definition: per-step targeting, concurrency, failure tolerance, and approval gates, defined in JSON and uploaded to a deployment group."
+title: "Deployment workflows"
+sidebarTitle: "Deployment workflows"
+description: "Roll a release out in ordered steps, each with its own devices, concurrency, failure tolerance and optional approval gate, defined in a JSON file."
 ---
 
-By default a [deployment group](/setup/deployments) updates every matching device at one pace. A **workflow** breaks that into ordered steps — for example, a small canary batch, a sign-off, then everyone else — with each step choosing its own set of devices, its own concurrency, and how many updates can fail before stopping.
+Without a workflow, a [deployment group](/setup/deployments) sends each release to every device in the group at once, limited only by the group's concurrency. A **workflow** splits a release into ordered steps, for example a small canary batch, a sign-off, then everyone else. Each step chooses its own devices, its own concurrency, and how many devices may fail before the rollout stops.
 
-Workflows are defined in JSON and uploaded to a deployment group, similar to how GitHub Actions and CircleCI pipelines are defined in YAML.
+You write a workflow as a JSON file and upload it to a deployment group.
 
 <Warning>
-  Workflows are an early release feature. Please post feedback using the [NervesHub issue tracker](https://github.com/nerves-hub/nerves_hub_web/issues).
+  Workflows are an early release feature. Post feedback on the [NervesHub issue tracker](https://github.com/nerves-hub/nerves_hub_web/issues).
 </Warning>
+
+## Requirements
+
+- NervesHub 2.5.0 or later.
+- `network_interfaces` conditions rely on the interface a device reports when it connects. `nerves_hub_link` reports it from 2.11.0.
 
 ## An example workflow
 
-Four steps: canaries on fast connections first, then cellular canaries, then one city (using tags), then a human decides whether the rest of the fleet follows.
+This workflow has four steps: canaries on Wi-Fi and Ethernet, then cellular canaries, then devices tagged for one city, then an approval. NervesHub appends a fifth step, a catch-all named **Remaining devices**, so the devices no earlier step covers are updated after the approval. See [Step types](#step-types).
 
 ```json
 {
@@ -22,7 +27,7 @@ Four steps: canaries on fast connections first, then cellular canaries, then one
   "steps": [
     {
       "name": "Canary",
-      "description": "wifi and ethernet canary devices",
+      "description": "Wi-Fi and Ethernet canary devices",
       "matching_conditions": {
         "tags": ["canary"],
         "network_interfaces": ["wifi", "ethernet"],
@@ -32,27 +37,29 @@ Four steps: canaries on fast connections first, then cellular canaries, then one
     },
     {
       "name": "Canary - LTE",
-      "description": "Cellular connected canaries",
+      "description": "Cellular canary devices",
       "matching_conditions": {
         "tags": ["canary"],
         "network_interfaces": ["cellular"],
         "match_limit": 10
       },
-      "concurrent_updates": 10
+      "concurrent_updates": 10,
+      "failure_tolerance": { "devices": 2 }
     },
     {
-      "name": "Phoenix based",
-      "description": "Locally servicable devices",
+      "name": "Phoenix",
+      "description": "Devices that can be serviced locally",
       "matching_conditions": {
         "tags": ["city:phoenix"],
         "match_limit": 100
       },
-      "concurrent_updates": 25
+      "concurrent_updates": 25,
+      "failure_tolerance": { "percent": 5 }
     },
     {
       "type": "approval_required",
       "name": "Product sign-off",
-      "description": "Someone confirms the canaries are healthy"
+      "description": "Someone confirms the earlier steps are healthy"
     }
   ]
 }
@@ -60,21 +67,23 @@ Four steps: canaries on fast connections first, then cellular canaries, then one
 
 ## The file
 
-| Field | |
-| --- | --- |
-| `version` | Schema version. Required. `1` is the only support version |
-| `steps` | Ordered list, **1 to 6** steps. Required. |
+| Field     | Description                                                   |
+| --------- | ------------------------------------------------------------- |
+| `version` | Schema version, a positive integer. Required. Use `1`.        |
+| `steps`   | Ordered list of 1 to 6 steps. Required.                       |
 
-Steps run in the order they are listed. Each takes:
+No other top-level fields are allowed.
 
-| Field | |
-| --- | --- |
-| `name` | Required on **every** step, including approval and catch-all steps. Max 50 characters. |
-| `type` | `update_devices` (the default), `approval_required`, or `catch_all` |
-| `description` | Optional, max 100 characters |
-| `matching_conditions` | Which devices this step covers |
-| `concurrent_updates` | How many of this step's devices update at once |
-| `failure_tolerance` | How many may fail before the step fails |
+Steps run in the order they are listed. Each step takes these fields and no others:
+
+| Field                 | Description                                                                            |
+| --------------------- | -------------------------------------------------------------------------------------- |
+| `name`                | Required on every step, including approval and catch-all steps. Up to 50 characters.   |
+| `type`                | `update_devices` (the default), `approval_required` or `catch_all`.                    |
+| `description`         | Optional. Up to 100 characters.                                                        |
+| `matching_conditions` | Which devices the step covers.                                                         |
+| `concurrent_updates`  | How many of the step's devices update at once. A positive integer. Defaults to 10.     |
+| `failure_tolerance`   | How many of the step's devices may fail before the step fails.                         |
 
 The smallest valid workflow is one named step:
 
@@ -84,54 +93,132 @@ The smallest valid workflow is one named step:
 
 ## Step types
 
-| Type | What it does |
-| --- | --- |
-| `update_devices` | Updates the devices it matches, then moves on. The default when `type` is omitted. |
-| `approval_required` | Halts the rollout until someone approves it |
-| `catch_all` | Sweeps up every device not yet covered by an earlier step |
+| Type                | What it does                                                                                   |
+| ------------------- | ---------------------------------------------------------------------------------------------- |
+| `update_devices`    | Claims the devices it matches, updates them, and completes when all of them run the release's firmware. |
+| `approval_required` | Covers no devices. Holds the rollout until someone approves it.                                |
+| `catch_all`         | Covers every device in the group that no other step of the release has claimed.                |
 
-## Choosing devices for a step
+Every release ends in a `catch_all` step. If the last step in your file is not a `catch_all`, NervesHub adds one named **Remaining devices**. The catch-all never completes. It stays in progress for the life of the release and updates devices that join the group later.
 
-`matching_conditions` narrows a step. Omitting a condition means it does not narrow anything.
+If you write your own `catch_all` step, put it last. Because it never completes, steps listed after it do not start.
 
-| Condition | |
-| --- | --- |
-| `tags` | A device must carry **every** tag listed |
-| `network_interfaces` | The interface the device most recently connected over: `wifi`, `ethernet`, `cellular`, or `unknown` |
-| `match_limit` | A hard cap on how many devices this step covers |
+## Choose devices for a step
 
-`network_interfaces` is what makes it practical to hold metered devices back until a release has proven itself on cheap connections.
+`matching_conditions` narrows the devices an `update_devices` step covers. A device belongs to at most one step of a release.
+
+| Condition            | Description                                                                                  |
+| -------------------- | -------------------------------------------------------------------------------------------- |
+| `tags`               | A device must have every [tag](/setup/devices) listed.                                                         |
+| `network_interfaces` | The interface the device most recently connected over: `wifi`, `ethernet`, `cellular` or `unknown`. |
+| `match_limit`        | The most devices the step covers. A positive integer.                                        |
+
+Leaving out `tags` or `network_interfaces` means that condition does not narrow the step.
+
+<Warning>
+  If you give `matching_conditions` without `match_limit`, the step covers at most 10 devices. A step with no `matching_conditions` at all has no limit.
+</Warning>
+
+A step waits for every device it claimed, including devices that are offline. A claimed device that never comes back holds the workflow at that step. See [When a step is held by a device that does not come back](#when-a-step-is-held-by-a-device-that-does-not-come-back).
+
+A step that matches no devices completes straight away.
 
 ## Pacing and failure
 
-`concurrent_updates` sets how many of a step's devices update at once — the step's own pace, independent of the others.
+`failure_tolerance` is an object with exactly one of two keys:
 
-`failure_tolerance` is how many of a step's devices may fail before the step itself fails and the rollout stops there rather than continuing into the next step. Give either a count or a percentage, not both. It defaults to one device, and a `catch_all` step never fails.
+```json
+"failure_tolerance": { "devices": 2 }
+```
 
-Each step reports its own status as the rollout progresses: `waiting`, `in_progress`, `completed`, `skipped`, or `error`.
+```json
+"failure_tolerance": { "percent": 5 }
+```
 
-## Uploading
+| Key       | Description                                                                             |
+| --------- | --------------------------------------------------------------------------------------- |
+| `devices` | A positive integer count of devices.                                                    |
+| `percent` | An integer from 1 to 100, taken as a share of the devices the step claimed. It never rounds down to zero. |
 
-Open the deployment group, go to **Settings**, and use **Upload Workflow Definition** under Deployment Workflows. The file is validated on upload; if it is rejected nothing is stored and the error names the path that failed, so `steps/0` with `name` means the first step is missing its name.
+A device counts as failed once it is in the [penalty box](/deployments/rollout-controls#penalty-box). When the number of failed devices reaches the tolerance, the step fails and the rollout stops there.
 
-The two mistakes worth knowing about:
+If you leave `failure_tolerance` out, an `update_devices` step fails on the first device that fails. `approval_required` and `catch_all` steps never fail.
 
-- **Every step needs a `name`**, including `approval_required` and `catch_all` steps. It is easy to assume a step with no devices to match needs no name.
-- **`version` and `steps` are both required**, and `steps` cannot be empty.
+## Upload a workflow
 
-Once stored, the group's Settings page reports how many steps the definition has. **Delete Workflow Definition** removes it and returns the group to updating every matching device at one pace.
+<Steps>
+  <Step title="Open the group's settings">
+    Open the deployment group and select the **Settings** tab.
+  </Step>
+  <Step title="Upload the file">
+    On the **Workflow** card, select **Upload** and pick your `.json` file. The upload starts as soon as you pick the file.
+  </Step>
+  <Step title="Check the steps">
+    The **Workflow** card lists the steps a release will walk through, including the trailing **Remaining devices** step.
+  </Step>
+</Steps>
 
-## Approving a step
+A workflow applies from the next release. The current release keeps the steps it was created with.
 
-When a rollout reaches an `approval_required` step it stops and the deployment group shows a banner — *Waiting on you*, the step's name, and its description — with an **Approve and continue** button. Approving records who approved it and when, clears the banner, and the rollout proceeds to the next step.
+The file is validated on upload. If it is not valid, nothing is stored and the error lists every problem with the path that failed, for example `steps/1/concurrent_updates: Type mismatch. Expected Integer but got String.`
 
-## What a workflow supersedes
+On a group that already has a workflow, the card has three actions:
 
-A workflow takes over two of the group's own [safety controls](/setup/deployments#rollout-safety-controls) while it is attached:
+- **Replace** uploads a new file.
+- **JSON** downloads the stored definition.
+- **Remove workflow** deletes it. Releases made from then on go to every device in the group at once. A release already walking through its steps carries on with them.
 
-| Group setting | While a workflow is attached |
-| --- | --- |
-| `concurrent_updates` | Not applied. Each step paces itself with its own `concurrent_updates`. |
-| Priority queue | Not used. The step order decides which devices update first. |
+## Follow a rollout
 
-The failure and penalty box settings still apply — a workflow changes the order and pacing of a rollout, not what happens to a device that cannot take the update.
+Each new release starts again at step 1. The group's status badge shows **Awaiting approval** or **Stopped** when the release needs someone to act. The **Deployment groups** page lists those groups under **Needs you**.
+
+### Approve a step
+
+When a release reaches an `approval_required` step, the group's **Overview** tab shows that the step is waiting for approval. Select **Approve and continue**. NervesHub records who approved the step and when, and the release moves to the next step.
+
+### Retry or skip a failed step
+
+When a step fails, the **Overview** tab shows that the step stopped on failures. Nothing further is sent until you choose one of these:
+
+- **Retry step** lets the failed devices out of the penalty box, clears their attempts, and runs the step again.
+- **Skip step** releases the step's devices so a later step, usually the catch-all, updates them.
+
+Both buttons appear only while a step has failed. The trailing catch-all step cannot be skipped.
+
+### Where you can act on a step
+
+| Action | Web UI | Slack | API and `nh` |
+| --- | --- | --- | --- |
+| Approve a step that is waiting for approval | **Approve and continue** on the group's **Overview** tab and on the **Deployment groups** page | **Approve** on a **Workflow waiting for approval** message | Not available |
+| Retry a failed step | **Retry step** in the same two places | **Retry** on a **Workflow step failed** message | Not available |
+| Skip a failed step | **Skip step** in the same two places | **Skip** on a **Workflow step failed** message | Not available |
+| Skip a step that is running or has not started | Not offered | Not offered | Not available |
+
+All three actions need the `deployment_group:release:manage` permission. See [Roles](/access/roles). Slack needs the [Slack app](/outbound/slack) connected. Workflow step events are also sent to [webhooks](/outbound/webhooks).
+
+### When a step is held by a device that does not come back
+
+A step that is running has not failed, so it has no **Skip step** button, in the web UI or in Slack. To move the rollout on:
+
+- Remove the device from the deployment group, or delete the device. A device that has left the group no longer counts toward the step. In the web UI, open the device and click **Remove…** in the **Deployment group** row of the **Firmware updates** card.
+- Or create a new release. Each new release starts again at step 1.
+
+## What a workflow changes on the group
+
+While a group has a workflow, the **Sending updates** card on its **Settings** tab disables two settings:
+
+| Group setting                | While the group has a workflow                                  |
+| ---------------------------- | --------------------------------------------------------------- |
+| **Devices updating at once** | Not used. Each step uses its own `concurrent_updates`.          |
+| **Priority queue**           | Not used. The step order decides which devices update first.    |
+
+**Queue order** and the **Penalty box** settings still apply. See [Rollout controls](/deployments/rollout-controls).
+
+## Related pages
+
+- [Deployment groups](/setup/deployments)
+- [Releases](/deployments/releases)
+- [Rollout controls](/deployments/rollout-controls)
+- [Slack](/outbound/slack)
+- [Webhooks](/outbound/webhooks)
+- [Roles and permissions](/access/roles)

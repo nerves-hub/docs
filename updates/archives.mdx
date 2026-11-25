@@ -1,0 +1,202 @@
+---
+title: "Archives"
+sidebarTitle: "Archives"
+description: "Send devices a signed file that is not firmware, such as calibration data or a model, alongside a deployment group's release."
+---
+
+An archive is a signed fwup file that NervesHub delivers to devices without it being installed as firmware. Use one for data that changes on a different schedule from your firmware: calibration data, a modem image, machine learning models. An archive travels with a [deployment group](/setup/deployments)'s release, so it reaches the devices that run that release's firmware.
+
+`nerves_hub_link` downloads the archive, verifies its signature, and hands your application the path. What happens to the file after that is up to your code.
+
+## Requirements
+
+| What | Requirement |
+| --- | --- |
+| `nerves_hub_link` | 2.2.0 or later. 2.4.0 or later to fall back to `fwup_public_keys` for verification. |
+| NervesHub | Uploading archives through the API, and so with `nh archive upload`, needs 2.5.0. |
+| Signing key | An Ed25519 [signing key](/concepts/firmware-signing) registered for your organization. |
+| Tools | `fwup` on the machine that builds and uploads the archive. |
+
+## How delivery works
+
+1. NervesHub offers a device the archive when the device connects, when its deployment group gets a release with a different archive, and when the device or its group membership changes.
+2. A device is only offered the archive of its group's current release, and only while it runs that release's firmware. A device still on older firmware gets the archive on the connection after it has updated.
+3. A device with updates turned off, or in the [penalty box](/deployments/rollout-controls), is not offered archives. A device in [device-managed mode](/updates/device-managed-updates) is.
+4. On the device, `nerves_hub_link` checks it holds a public key, then calls `archive_available/1`.
+5. If your code returns `:download`, the file is downloaded and verified with `fwup`. On success `archive_ready/2` is called with the path.
+
+<Warning>
+  NervesHub does not track which devices have an archive. It offers the archive again every time the device connects. Your `archive_available/1` must return `:ignore` for an archive it has already handled, or the device downloads it on every connection.
+</Warning>
+
+## Set it up
+
+<Steps>
+  <Step title="Handle archives in your Client">
+    The default Client ignores archives. Override both callbacks in your [Client module](/updates/applying-updates):
+
+    ```elixir
+    defmodule MyApp.NervesHubLinkClient do
+      use NervesHubLink.Client
+
+      @impl NervesHubLink.Client
+      def archive_available(archive_info) do
+        if MyApp.Archives.applied?(archive_info.uuid) do
+          :ignore
+        else
+          :download
+        end
+      end
+
+      @impl NervesHubLink.Client
+      def archive_ready(archive_info, file_path) do
+        :ok = MyApp.Archives.apply(archive_info, file_path)
+        File.rm(file_path)
+        :ok
+      end
+    end
+    ```
+
+    ```elixir
+    # config/target.exs
+    config :nerves_hub_link, client: MyApp.NervesHubLinkClient
+    ```
+
+    `MyApp.Archives` stands for your own code. It has to unpack the file, use its contents, and remember the UUID so the archive is not downloaded again. `nerves_hub_link` does not delete the file for you.
+  </Step>
+
+  <Step title="Make sure the device has verification keys">
+    If your firmware already sets `fwup_public_keys`, archives are verified with those keys and there is nothing to do. See [Signing keys](#signing-keys) for the other options.
+  </Step>
+
+  <Step title="Build the archive">
+    An archive is a `.fw` file made with `fwup`. NervesHub requires the `meta-product`, `meta-platform`, `meta-architecture` and `meta-version` metadata, and `meta-version` must be a valid SemVer version. `fwup` adds `meta-uuid` itself.
+
+    A minimal `archive.conf` that packages one file:
+
+    ```
+    meta-product = "my_app"
+    meta-description = "Calibration data"
+    meta-version = "1.0.0"
+    meta-platform = "rpi4"
+    meta-architecture = "arm"
+    meta-author = "Example"
+
+    file-resource calibration.json {
+        host-path = "calibration.json"
+    }
+    ```
+
+    ```bash
+    fwup -c -f archive.conf -o archive.fw
+    ```
+
+    The result is a ZIP file with `meta.conf` and your file under `data/`.
+  </Step>
+
+  <Step title="Sign and upload it">
+    ```bash
+    nh archive upload archive.fw --key my_app_key
+    ```
+
+    `nh` checks the metadata, signs the archive with `fwup`, and uploads it to the current product. The key options are the same as for [firmware](/setup/firmware#upload-firmware): `--key`, `--key-file`, `--password`, the `NERVES_HUB_PRIVATE_KEY` environment variable, and `--skip-signing` for a file that is already signed.
+
+    You can also upload in the web UI. Open the product's **Archives** page and click **Upload archive**, or drop the file on the page. The file must already be signed.
+
+    NervesHub refuses an archive that is not signed by one of your organization's keys.
+  </Step>
+
+  <Step title="Attach it to a release">
+    In the web UI, open the deployment group and click **New release**. Pick the archive in the **Archive** field, then click **Create release**. The field starts on the current release's archive.
+
+    With `nh`:
+
+    ```bash
+    nh deployment release create production \
+      --firmware <firmware-uuid> \
+      --archive <archive-uuid>
+    ```
+
+    A release made with `nh deployment release create` has no archive unless you pass `--archive`, whatever the previous release had. To add an archive while keeping the current firmware, run `nh deployment update <group> --archive <archive-uuid>`, which creates a new release.
+
+    A release's archive cannot be changed after the release is made.
+  </Step>
+</Steps>
+
+## Check that it works
+
+- On the product's **Archives** page, the **Delivered by** column shows which deployment groups have the archive in their current release.
+- Open the archive to see **Deployment groups delivering it** and **Releases with this archive**.
+- On the device, the log shows `[NervesHubLink] Archive Download complete` once the download finishes, followed by your `archive_ready/2` running.
+- NervesHub writes an [audit log](/access/audit-log) entry for the device when it sends an archive after a change, though not for the offer made on every connect.
+
+If the device logs `Archive could not be validated, your public signing keys maybe be incorrectly configured`, the signature did not match any key the device holds. `archive_ready/2` is not called.
+
+## Callbacks
+
+### `archive_available/1`
+
+Called with a `NervesHubLink.Message.ArchiveInfo` struct:
+
+| Field | Description |
+| --- | --- |
+| `uuid` | The archive's UUID. Use it to tell archives apart. |
+| `version` | The archive's version. |
+| `platform`, `architecture` | From the archive's metadata. |
+| `description` | From the archive's metadata. |
+| `size` | Size in bytes. |
+| `uploaded_at` | When the archive was uploaded, as an ISO 8601 string. |
+| `url` | The download URL. |
+
+Return one of:
+
+| Return value | Effect |
+| --- | --- |
+| `:download` | Download the archive now. |
+| `:ignore` | Do nothing. |
+| `{:reschedule, milliseconds}` | Call `archive_available/1` again after the delay. The timer runs on the device. |
+
+### `archive_ready/2`
+
+Called with the same struct and the path of the verified file. The file is stored at `<data_path>/archives/<file name>`, where `data_path` defaults to `/data/nerves-hub`. Return `:ok`.
+
+## Signing keys
+
+Archives are verified with their own key list, `archive_public_keys`. `nerves_hub_link` picks the keys in this order:
+
+1. If `request_archive_public_keys` is `true`, it asks NervesHub for keys when it connects.
+2. Otherwise, if `archive_public_keys` has entries, it uses those.
+3. Otherwise, if `fwup_public_keys` has entries, it uses those.
+4. Otherwise, it asks NervesHub for keys when it connects.
+
+```elixir
+# config/target.exs
+config :nerves_hub_link,
+  archive_public_keys: ["base64_public_key"]
+```
+
+To always request them from NervesHub:
+
+```elixir
+config :nerves_hub_link,
+  request_archive_public_keys: true
+```
+
+NervesHub replies with all of the organization's Ed25519 public keys. Requested keys come from the same server that supplies the archive. See the trade-off in [Firmware signing](/concepts/firmware-signing#ask-nerveshub-for-the-keys).
+
+Since `nerves_hub_link` 2.13.0, a device with no usable archive key refuses the archive without calling `archive_available/1`. It logs `Refusing archive : no public keys are available to verify the archive signature`.
+
+## Limits
+
+- One archive per release.
+- An archive is downloaded with the same downloader and [retry settings](/updates/download-strategies#retry-settings) as firmware. It is written straight to a file. The updater strategies do not apply.
+- There is no progress report to NervesHub for archive downloads.
+- After a device downloads an archive, NervesHub refuses an update the device asks for in [device-managed mode](/updates/device-managed-updates) until the device reconnects.
+- `nh` has no command to delete an archive. Delete archives from the archive's page in the web UI.
+
+## Related pages
+
+- [Releases](/deployments/releases)
+- [Applying updates on the device](/updates/applying-updates)
+- [Firmware signing](/concepts/firmware-signing)
+- [nh command reference](/cli/reference)

@@ -1,0 +1,121 @@
+---
+title: "TPM"
+sidebarTitle: "TPM"
+description: "Authenticate a device with a certificate and private key held by a Trusted Platform Module, using the TPM configurator in nerves_hub_link."
+---
+
+If your hardware has a Trusted Platform Module, NervesHubLink can read the device certificate from it and use its private key for the TLS handshake. NervesHub sees an ordinary device certificate. Everything in [Device certificates](/auth/device-certificates) about registering the CA and adding devices applies.
+
+## Requirements
+
+- `nerves_hub_link` 2.9.0 or later. Restoring the key file from the TPM needs 2.10.1 or later.
+- The [`tpm`](https://hex.pm/packages/tpm) library, `~> 0.2.0`, in your firmware.
+- A TPM that already holds the device's private key and certificate. NervesHubLink reads them. It does not provision the TPM.
+- A Nerves system with the kernel module for your TPM. The configurator loads it with `modprobe`.
+- The CA that signed the device certificates, registered with your organization.
+
+## Enable it
+
+<Steps>
+  <Step title="Add the dependency">
+    ```elixir
+    # mix.exs
+    def deps do
+      [
+        {:nerves_hub_link, "~> 2.14"},
+        {:tpm, "~> 0.2.0"}
+      ]
+    end
+    ```
+  </Step>
+
+  <Step title="Configure the host">
+    ```elixir
+    # config/target.exs
+    config :nerves_hub_link,
+      host: "devices.nervescloud.com"
+    ```
+
+    When `tpm` is in the project, `nerves_key` is not, and you have not set `configurator`, NervesHubLink uses `NervesHubLink.Configurator.TPM`. If your project has both libraries, select it explicitly:
+
+    ```elixir
+    config :nerves_hub_link,
+      configurator: NervesHubLink.Configurator.TPM
+    ```
+  </Step>
+
+  <Step title="Set the TPM options, if the defaults do not fit">
+    ```elixir
+    config :nerves_hub_link, :tpm,
+      probe_name: "tpm_tis_spi",
+      key_path: "/data/.ssh",
+      key_name: "nerves_hub_link_key",
+      key_address: "0x1000000",
+      certificate_address: "0x1000001"
+    ```
+
+    These are the defaults. See [Options](#options).
+  </Step>
+
+  <Step title="Register the CA and make the devices known">
+    Register the CA that signed the device certificates. See [Register a certificate authority](/auth/device-certificates#register-a-certificate-authority).
+
+    Then add each device before it connects, or give the CA a [just-in-time provisioning](/auth/just-in-time-provisioning) profile. The device identifier is the common name in the certificate.
+  </Step>
+</Steps>
+
+## What the configurator does
+
+At startup the configurator:
+
+1. Runs `modprobe` with `probe_name`. It raises if `modprobe` fails.
+2. Checks that the TPM responds. It tries up to six times, 300 ms apart, then raises `TPM Unavailable`.
+3. Sets the `ssl` `key` option to the TPM private key for the file at `key_path` joined with `key_name`.
+4. If that file does not exist, reads the NV index at `key_address` and writes its contents to the file.
+5. Sets the `ssl` `cert` option to the certificate read from the NV index at `certificate_address`. The certificate must be stored there as PEM.
+6. Sets `cacerts` to the CA certificates NervesHubLink trusts, unless you set `cacerts` or `cacertfile` yourself. See [Connecting devices](/setup/connecting).
+
+A `key` or `cert` you set in `ssl` yourself is kept, and the matching step is skipped.
+
+A failure in any of these steps raises when NervesHubLink starts.
+
+## Options
+
+Set these under the `:tpm` key.
+
+<ParamField path="probe_name" type="string" default="tpm_tis_spi">
+  The kernel module to load, for example `tpm_tis_i2c`.
+</ParamField>
+
+<ParamField path="key_path" type="string" default="/data/.ssh">
+  The directory that holds the key file.
+</ParamField>
+
+<ParamField path="key_name" type="string" default="nerves_hub_link_key">
+  The key file's name inside `key_path`.
+</ParamField>
+
+<ParamField path="key_address" type="string" default="0x1000000">
+  The NV index the key file is restored from when it is missing.
+</ParamField>
+
+<ParamField path="certificate_address" type="string" default="0x1000001">
+  The NV index that holds the device certificate.
+</ParamField>
+
+## Check that it works
+
+Boot the device and open its **Settings** tab in NervesHub. The **Certificates** card lists the certificate read from the TPM and the CA that signed it.
+
+If the key file was missing, the device logs:
+
+```text
+[NervesHubLink:TPM] `/data/.ssh/nerves_hub_link_key` not found in file system. Restoring from TPM.
+```
+
+## Related pages
+
+- [X.509 device certificates](/auth/device-certificates)
+- [Just-in-time provisioning](/auth/just-in-time-provisioning)
+- [NervesKey](/auth/nerveskey)
+- [Security: PKI and the chain of trust](/concepts/pki)

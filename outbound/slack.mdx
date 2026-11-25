@@ -1,0 +1,186 @@
+---
+title: "Slack"
+sidebarTitle: "Slack"
+description: "Connect a Slack workspace to your organization to get device notifications in channels, act on devices, approve deployment workflows and preview NervesHub links."
+---
+
+Connect a Slack workspace to your organization to post device and deployment events to channels. From Slack, your team can also identify and reboot devices, run support scripts, approve or retry deployment workflow steps, and see previews of NervesHub links.
+
+Connecting a workspace installs your NervesHub instance's Slack app there, through Slack's own install screen.
+
+## Requirements
+
+- NervesHub 2.5.0 or later.
+- A Slack app configured on the instance. Without one, Slack does not appear on the **Integrations** page. A self-hosted instance needs its own app. See [Slack app for your instance](/hosting/slack-app) and [Feature prerequisites](/hosting/feature-prerequisites#slack).
+- The built-in **Admin** role to connect or disconnect a workspace. A custom role cannot be given this.
+- The built-in **Manage** or **Admin** role, or a custom role with the Slack channel permissions, to choose which channels get which events. See [Roles](/access/roles).
+
+## Connect a workspace
+
+<Steps>
+  <Step title="Open the Integrations page">
+    Open your organization and select the **Integrations** tab.
+  </Step>
+  <Step title="Start the install">
+    Click **Add to Slack**. Once the organization has any integration, click **Add integration**, then **Connect a Slack workspace**.
+  </Step>
+  <Step title="Approve the install in Slack">
+    Slack asks you to choose a workspace and to approve the app for it. Approve the request.
+
+    Slack then sends you back to the **Integrations** page. The workspace is listed below the chat channels, with who connected it.
+  </Step>
+</Steps>
+
+- You can connect a workspace to more than one organization. Each connection is separate.
+- Installing again in a connected workspace refreshes its token and scopes. It does not connect the workspace twice.
+- Organization-wide installs on Slack Enterprise Grid are refused. Install the app in a single workspace.
+
+**Disconnect** removes the connection, and the workspace's channels stop hearing from the organization. When the organization was the last one connected to that workspace, NervesHub also revokes the app's token, which removes the app from the workspace. If someone removes the app from inside Slack, NervesHub disconnects every organization connected to that workspace.
+
+Connecting, disconnecting and removal are recorded in the organization's [audit log](/access/audit-log).
+
+## Channel notifications
+
+<Steps>
+  <Step title="Add a channel">
+    On the **Integrations** page, click **Add integration**, then **Slack channel** under the workspace's name.
+  </Step>
+  <Step title="Choose the channel, products and events">
+    Pick a **Channel**. Under **Products**, choose **Every product**, which includes products added later, or **Only some** and tick the products. Tick the events, then click **Add channel**.
+  </Step>
+  <Step title="Check that it works">
+    Open the channel's row menu and choose **Send test message**. NervesHub posts a message to the channel straight away, saying what the channel will get.
+  </Step>
+</Steps>
+
+The channel list is the one Slack gives the app: every public channel, and the private channels the app has been invited to. To post to a private channel, invite the app to it first.
+
+An organization can have up to 20 Slack channels.
+
+| Event | Posted when |
+| --- | --- |
+| Health status changed | A device's [health status](/management/health-monitoring) moves, such as from healthy to warning. |
+| Update failed | A device's update fails, stops reporting progress, or ends with the device back on its old firmware. |
+| Update succeeded | A device finishes updating. |
+| New error | A device reports an error not seen before in its product. |
+| Error reopened | An error that was marked resolved happens again. A muted error does not reopen. |
+| Workflow step started | A [deployment group](/setup/deployments)'s workflow begins a step, or begins it again after somebody retries it. |
+| Workflow waiting for approval | A workflow reaches a step that holds the rollout until somebody approves it. |
+| Workflow step completed | Every device a step covers is on the release's firmware, or somebody approved an approval step. |
+| Workflow step failed | Too many of a step's devices fail to update, and the rollout stops there. |
+| Workflow step skipped | Somebody skips a step. |
+| Product notifications | NervesHub adds something to a product's [Notifications](/management/notifications) page, such as a halted deployment workflow or a webhook it turned off. |
+
+These events have the same prerequisites as the matching [webhook events](/outbound/webhooks#events). For example, **New error** needs the [Error Reports extension](/extensions/error-reports).
+
+NervesHub holds events for 15 seconds, then posts one message per kind of event. A single event gets a message of its own. A burst, such as a fleet's health changing at once, gets one message with a count and the first ten devices. Device names link to the device in NervesHub.
+
+Anything a device sent, such as a failure reason, is escaped. It cannot mention `@channel` or become a link.
+
+### When posting fails
+
+- If the channel is archived or deleted, or the app is not in it, NervesHub turns the channel off. Each product it was getting events for gets a product notification saying why. Fix the cause, then choose **Turn on** from the channel's row menu.
+- If Slack asks NervesHub to slow down, NervesHub waits as long as Slack says.
+- Any other failure is retried after 10 seconds, 1 minute and 5 minutes.
+- Events held for more than an hour are dropped.
+
+## Link your Slack account
+
+Buttons and commands act as a NervesHub user, so each person links their Slack account to their NervesHub account once.
+
+The first time you click a button or run a command, Slack shows you, and only you, a link to a NervesHub page. Sign in to NervesHub there if you need to, then sign in with Slack. You can also start with `/nerveshub link`.
+
+The Slack account linked is the one Slack says you signed in as. Nothing is matched by email.
+
+Your linked Slack accounts are listed under **Linked accounts** on your NervesHub account page, with when each was last used. You can unlink one there.
+
+## Act on devices from Slack
+
+A message about a single device has three buttons: **Open in NervesHub**, **Identify** and **Reboot**. **Reboot** asks for confirmation first. Messages that summarize many devices have no buttons.
+
+When you click, NervesHub checks at that moment that:
+
+- the device's organization is connected to the workspace the click came from,
+- your linked NervesHub user is a member of that organization, and your role there can identify or reboot devices,
+- you meet the organization's [two-factor requirement](/access/two-factor), if it has one,
+- the device is online.
+
+If a check fails, only you are told why. If they all pass, NervesHub asks the device to identify itself or reboot, records your user in the audit log with "from Slack", and replies in the message's thread saying who did what.
+
+A device rebooted from Slack is not rebooted again from Slack for a minute. A double click, or two people clicking at once, reboots it once.
+
+## Act on deployment workflows from Slack
+
+A **Workflow waiting for approval** message has an **Approve** button. A **Workflow step failed** message has **Retry** and **Skip**. Each asks for confirmation, then does what the same button on the deployment group's page does, as your linked NervesHub user. Both messages also have **Open in NervesHub**, which opens the deployment group.
+
+Your role needs the **Create, edit and approve releases** permission. The built-in **Manage** and **Admin** roles have it.
+
+NervesHub also checks that the step still belongs to the deployment group's [current release](/deployments/releases) and is still waiting for approval, or still failed. If someone has dealt with it since, you are told who.
+
+A step is acted on from Slack at most once every 30 seconds. What was done is recorded in the deployment group's audit log with "from Slack".
+
+Once a step is approved, retried or skipped, from Slack or the web UI, NervesHub edits every Slack message that has buttons for it. The buttons give way to who did what, such as "Approved by Alice". When a deployment group gets a new release, messages for the previous release's steps say that release was replaced. NervesHub keeps a message up to date for 30 days.
+
+See [Deployment workflows](/concepts/deployment-workflows).
+
+## Slash commands
+
+`/nerveshub` works in any channel of a connected workspace. It acts as your linked NervesHub user, with the same checks as the buttons.
+
+| Command | Does |
+| --- | --- |
+| `/nerveshub device <identifier>` | Shows the device's connection, firmware version, health and product, with its buttons and **Share in channel**. |
+| `/nerveshub identify <identifier>` | Asks the device to identify itself. |
+| `/nerveshub reboot <identifier>` | Reboots the device. |
+| `/nerveshub script <identifier>` | Lists the support scripts for the device's product. |
+| `/nerveshub script <identifier> <name>` | Runs a support script on the device and shows its output. |
+| `/nerveshub link` | Links your Slack account to your NervesHub account. |
+| `/nerveshub help` | Lists these commands. |
+
+Only you see what a command shows. That includes a script's output, which is cut at 2,900 characters. The output comes with a **Share in channel** button. You can post it to the channel once, within 30 minutes.
+
+A reboot or identify is posted to the channel, saying who did it. Reboots, identifies and script runs from Slack are recorded in the device's audit log.
+
+Every role in the device's organization can view a device. Running a script needs the **Run support scripts on devices** permission, which the built-in **View** role has. Identify and reboot need their own permissions, which **Manage** and **Admin** have.
+
+See [Support scripts](/management/support-scripts).
+
+## Link previews
+
+When you post a link to a device's page or a deployment group's page in a connected workspace, NervesHub previews it under the message.
+
+- A device gets the card `/nerveshub device` shows, without its buttons.
+- A deployment group gets whether it is active, its current release and firmware, where its workflow is, and how many devices it has.
+- Any tab of the page counts. At most five links in a message are previewed.
+
+Everyone in the conversation sees a preview, so NervesHub checks it against whoever posted the link. Your linked NervesHub account must be a member of the organization the link points into. That organization must be connected to the workspace. Your role must let you see the page. A link you may not see gets no preview. If you have not linked your account, you are asked to, in a message only you see.
+
+A workspace connected before link previews existed has to install the app again to get them. The **Integrations** page says so under the workspace. An admin chooses **Add integration**, then **Connect another Slack workspace**, and picks the same workspace.
+
+## What NervesHub keeps
+
+- For each workspace: its id and name, the app's bot user, the scopes granted, and the bot token Slack issued. The bot token is encrypted with `SECRETS_ENCRYPTION_KEY` before it is stored.
+- For each linked Slack user: their Slack user id and name, the workspace's id and name, and the NervesHub user they linked to. NervesHub does not keep the sign-in token.
+- Script output run from Slack, for 30 minutes, so you can share it.
+- For each message with workflow buttons: its channel and timestamp, the events it was built from, and what was done to each step. This is deleted once every step on it is dealt with, Slack says the message is gone, or 30 days have passed.
+
+The app asks for these bot scopes when it is installed:
+
+| Scope | Why |
+| --- | --- |
+| `chat:write` | Post device notifications to channels. |
+| `chat:write.public` | Post to public channels without being invited first. |
+| `channels:read` | List public channels to choose from. |
+| `groups:read` | List private channels the app has been invited to. |
+| `commands` | Slash commands and message actions. |
+| `links:read` | Hear about links to this instance posted in Slack. |
+| `links:write` | Preview them. |
+
+## Related pages
+
+- [Create a Slack app for your instance](/hosting/slack-app)
+- [Deployment workflows](/concepts/deployment-workflows)
+- [Webhooks](/outbound/webhooks)
+- [Microsoft Teams](/outbound/teams)
+- [Discord](/outbound/discord)
+- [Roles and permissions](/access/roles)

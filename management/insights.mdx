@@ -1,0 +1,144 @@
+---
+title: "Insights and history"
+sidebarTitle: "Insights and history"
+description: "Read a product's Insights page, and a device's connection history, firmware update history, and Data History tab."
+---
+
+NervesHub shows the current state of every device, and the history of how that changed: when devices connected, how updates ended, and what messages crossed each connection.
+
+## Requirements
+
+* NervesHub 2.5.0 or later.
+* ClickHouse on the NervesHub instance for everything historical. Without it, the parts marked below are hidden or empty. See [Feature prerequisites](/hosting/feature-prerequisites#clickhouse).
+* The **Insights** page is closed to members whose custom role is limited to devices with certain tags. See [Roles](/access/roles).
+
+| Where | What | Needs ClickHouse |
+| --- | --- | --- |
+| **Insights** | What the fleet is made of, **Failing updates**, **Notifications** | No |
+| **Insights** | Trend charts, **Flapping** | Yes |
+| Device **Health** tab | Connection lane | Yes |
+| Device **Firmware History** tab | **Installed firmware** | No |
+| Device **Firmware History** tab | **Update attempts** | Yes |
+| Device **Data History** tab | Messages sent and received | Yes |
+| Deployment group **Stats** tab | Update outcomes and durations | Yes |
+| Deployment group **Stats** tab | Download totals | No |
+| Firmware page | Count of failed installs over the last 7 days | Yes |
+
+Nothing has to be turned on per product or in firmware. Health figures on **Insights** depend on devices reporting health. See [Health monitoring](/management/health-monitoring).
+
+## Product Insights
+
+In your product, select **Insights**. The page refreshes every minute while **Auto refresh** is on.
+
+### What the fleet is made of
+
+Three bars count every device in the product once each:
+
+| Bar | Groups |
+| --- | --- |
+| **Connection** | **Online**, **Offline under 7 d**, **Not seen 7–14 d**, **Not seen 14 d+**, **Never connected** |
+| **Health** | Healthy, warning, unhealthy, and unknown. A device that has never reported its health counts as unknown. |
+| **Firmware** | The firmware version each device last reported |
+
+Switch between **Count** and **Percent**. Every count links to the devices list filtered to the devices it counts.
+
+### Health and connection by firmware version
+
+The table under the bars crosses health and connection with firmware version. It names the four versions with the most devices and folds the rest into one row.
+
+The **Stands out** card beside it names a version whose devices are notably less healthy than the rest of the fleet. Health is judged on active devices only: those online or seen in the last 7 days. A version stands out when all of these hold:
+
+* It has at least 10 active devices.
+* At least 3 of them are not healthy.
+* Its share of not-healthy devices is at least twice the fleet's.
+
+### Trends
+
+The trends row shows how the fleet moved over a period. Pick **24 h**, **14 d**, **4 w**, or **90 d**. Days are in your time zone.
+
+| Chart | What it shows |
+| --- | --- |
+| **Firmware adoption** | How many devices ran each firmware version over the period. Switch between **Stacked** and **Lines**. |
+| **Updates** | Update attempts that finished, split into succeeded and failed. An update the device rescheduled is neither. |
+| **Online** | The share of the fleet connected |
+| **Healthy** | The share of the fleet healthy |
+
+With **Releases** on, each chart marks when the newest version was released, if that falls in the period.
+
+Shares are of today's fleet. A device added during the period is counted from the start, and a removed device is not counted.
+
+### Lists
+
+| List | What it holds |
+| --- | --- |
+| **Failing updates** | Devices that keep failing to update, with how many attempts failed in a row and for how long |
+| **Flapping** | Devices that connected more than 10 times in the last hour, or whose health moved into warning or unhealthy more than 5 times in the last hour |
+| **Notifications** | The latest [product notifications](/management/notifications) |
+
+Connections that ended as planned do not count toward flapping: a device going to sleep, a reboot, a reconnect someone asked for, a revoked key, or a server restart.
+
+## Connection history
+
+NervesHub records each connection a device makes: when it was established, when it closed, and why.
+
+Open a device and select the **Health** tab. The connection lane at the top of the **History** card covers the same time frame as the metric charts. It shows:
+
+* When the device was online.
+* When it was offline for a minute or more, and the reason the connection before it ended.
+* The network interface and address the device came back on.
+* Reconnects, where the device opened a new connection less than a minute after the last one.
+
+The metric charts mark the same offline periods. Change the time frame, or drag across a chart to zoom.
+
+## Firmware update history
+
+Open a device and select the **Firmware History** tab. It has two views.
+
+**Installed firmware** lists each firmware the device reported, newest first, with its validation status.
+
+**Update attempts** lists how each update sent to the device ended, with when, the outcome, detail, and what sent it: a [deployment group](/setup/deployments) or a manual request. An attempt ends one of six ways:
+
+| Outcome | Meaning | Counts as a failure |
+| --- | --- | --- |
+| Succeeded | The device came back running the firmware it was sent | No |
+| Rescheduled | The device asked for the update to come back later | No |
+| Failed | The device reported an error while updating | Yes |
+| Ignored | The device declined the update | Yes |
+| Expired | The update stopped making progress and timed out | Yes |
+| Abandoned | The device came back still running its old firmware, without saying why | Yes |
+
+A failure adds to the device's count of consecutive failed updates. That count is kept outside ClickHouse, so the **Failing updates** list on **Insights** works on every instance.
+
+An attempt that has just ended can take a moment to appear in **Update attempts**.
+
+The same update history feeds two other places that need ClickHouse. A deployment group's **Stats** tab counts how each release's attempts ended and how long they took. See [Deployment groups](/setup/deployments#stats-tab). A firmware's page counts its failed installs over the last 7 days.
+
+## Data History
+
+The **Data History** tab on a device shows every message that crossed the device's connection, in both directions, newest first. Use it to answer whether a device was ever sent a message, and what it sent back.
+
+Each row has the time, direction, channel, event name, and data. Selecting a row lays out its payload.
+
+Filter by direction (**Both ways**, **From device**, **To device**) and by channel (**All channels**, **Device**, **Console**, **Extensions**). Filters are kept in the URL, so you can link someone to a view.
+
+New messages stream in while the tab is open. Pause streaming to read. Resuming fetches what arrived while paused. The tab holds up to 1,000 messages.
+
+What is kept of each message depends on its channel:
+
+| Channel | Kept |
+| --- | --- |
+| Device and extensions | The payload, redacted and capped in size |
+| Console | The size only, never the contents |
+| [Local shell extension](/extensions/local-shell) | The size only, never the contents |
+
+Console and shell traffic is what someone typed and what came back, which can include credentials.
+
+If the tab shows "Analytics aren't enabled for your platform.", the instance runs without ClickHouse.
+
+## Related pages
+
+- [Fleet overview](/management/fleet-overview)
+- [Finding devices](/management/finding-devices)
+- [Health monitoring](/management/health-monitoring)
+- [Product notifications](/management/notifications)
+- [ClickHouse for a self-hosted instance](/hosting/clickhouse)

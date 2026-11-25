@@ -1,0 +1,126 @@
+---
+title: "Network identity extension"
+sidebarTitle: "Network identity"
+description: "Report a device's iroh, NetBird, Tailscale or WireGuard identity to NervesHub with the Network identity extension."
+---
+
+An iroh, NetBird, Tailscale or WireGuard network names a device by a long-lived public key. The Network identity extension reports those keys so they appear on the device page, where an operator can copy one.
+
+## Requirements
+
+- `nerves_hub_link` 2.13.0 or later.
+- NervesHub 2.5.0 or later.
+- A provider module for each network. There is no default provider.
+
+## Enable it
+
+<Steps>
+  <Step title="Write a provider">
+    Implement `NervesHubLink.Extensions.NetworkIdentity.Provider`. It has one callback, `identity/0`. This example reports a NetBird identity by parsing the agent's status:
+
+    ```elixir
+    defmodule MyApp.NetBirdIdentity do
+      @behaviour NervesHubLink.Extensions.NetworkIdentity.Provider
+
+      @impl true
+      def identity() do
+        case System.cmd("netbird", ["status", "--json"]) do
+          {output, 0} ->
+            status = Jason.decode!(output)
+
+            {:ok,
+             %{
+               service: "netbird",
+               identifier: status["publicKey"],
+               details: %{"ip" => status["netbirdIp"], "fqdn" => status["fqdn"]}
+             }}
+
+          {_output, _code} ->
+            :unavailable
+        end
+      end
+    end
+    ```
+  </Step>
+
+  <Step title="Configure the provider">
+    ```elixir
+    config :nerves_hub_link,
+      network_identity: [
+        providers: [MyApp.NetBirdIdentity],
+        interval_minutes: 5
+      ]
+    ```
+
+    One provider reports one service. A device on two networks configures two providers.
+
+    `NervesHubLink.Extensions.NetworkIdentity` is in the default `extension_modules` list. If you set `extension_modules` yourself, that list replaces the default, so name the module in it.
+  </Step>
+
+  <Step title="Turn it on for the product">
+    In **Product settings**, on the **General** tab, switch on **Network identity** in the **Device extensions** card. A product created in the web UI starts with every extension on. A product created through the API or `nh` starts with every extension off.
+  </Step>
+
+  <Step title="Check the device setting">
+    On the device's **Settings** tab, **Network Identity** in the **Extensions** card is on by default.
+  </Step>
+</Steps>
+
+## Check that it works
+
+On the device, see what your providers return without sending anything:
+
+```elixir
+iex> NervesHubLink.Extensions.NetworkIdentity.identities()
+```
+
+In NervesHub, open the device's **Details** tab and look at the **Network identities** card. Each identity shows its service, its identifier with a copy button, any details, and when it was last reported.
+
+## What a provider returns
+
+| Return | Meaning | Logged at |
+| --- | --- | --- |
+| `{:ok, identity}` | The identity to report | — |
+| `:unavailable` | Nothing to report: the endpoint has not started, or this unit is not on that network | debug |
+| `{:error, reason}` | Something is wrong | warning |
+
+A provider that raises is caught, logged and skipped.
+
+An identity is a map:
+
+| Key | Required | Notes |
+| --- | --- | --- |
+| `service` | Yes | `iroh`, `netbird`, `tailscale` or `wireguard`. NervesHub discards anything else. |
+| `identifier` | Yes | The key the device holds on that network. |
+| `instance` | No | Names the endpoint when a device has more than one of the same service, such as `wg0` and `wg1`. Use a stable name, not one derived from the key. |
+| `details` | No | Anything that sits beside the key and can change, such as an address or an iroh ticket. |
+
+<Warning>
+  Never put a secret in `details`. Anyone who can view the device can read it. NervesHub rejects a `details` payload over 4KB once encoded.
+</Warning>
+
+## When identities are sent
+
+- NervesHub asks for all identities once, when the extension attaches.
+- After that, the device asks its own providers every `interval_minutes` (default `5`) and sends only what changed.
+- Set `interval_minutes: 0` to turn the poll off and send only on connect.
+
+A provider that knows the moment its identity changed can send it straight away:
+
+```elixir
+NervesHubLink.Extensions.NetworkIdentity.send_identity(MyApp.NetBirdIdentity)
+```
+
+`send_identities/0` sends every provider's identity, changed or not.
+
+## Limits
+
+- NervesHub records at most 10 identities from one report.
+- When an operator has recorded a different identifier by hand in NervesHub, a device report does not replace it.
+
+## Related pages
+
+- [Extensions overview](/extensions/overview)
+- [Console over iroh](/management/remote-console#console-over-iroh)
+- [Local shell extension](/extensions/local-shell)
+- [Iroh endpoint prerequisite](/hosting/feature-prerequisites#iroh-endpoints)

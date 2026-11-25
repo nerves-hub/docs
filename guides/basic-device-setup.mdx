@@ -1,0 +1,532 @@
+---
+title: "Basic Nerves device setup"
+sidebarTitle: "Basic device setup"
+description: "Take a Nerves project from no NervesHub connection to a device that connects, installs signed over-the-air updates, and reports health, logs and errors."
+---
+
+This guide takes one Nerves device from nothing to a working NervesHub setup. At the end you have a device that:
+
+- connects to NervesHub and shows as online,
+- trusts your signing key and installs updates sent over the air,
+- has a remote IEx console,
+- reports health, logs and errors, and
+- optionally takes delta updates.
+
+## Before you start
+
+You need:
+
+- Hardware to run it on. A Raspberry Pi 4 is a good option, and any of the Nerves [supported targets](https://hexdocs.pm/nerves/supported-targets.html) works well.
+- A Nerves project, `my_app`, that builds and boots on your target. The examples use `rpi4`. On other hardware, put your target's name wherever `rpi4` appears. `nerves_hub_link` 2.13.0 and later need Elixir 1.15 or later.
+- An account on a NervesHub instance, in an organization. The examples use `acme`.
+- The `nh` CLI, signed in. See [CLI installation](/cli/installation) for other install methods. For a self-hosted instance, point `nh` at it before you sign in, as described in [CLI configuration](/cli/configuration).
+
+```bash
+brew install nerves-hub/tap/nh-cli
+nh user login
+```
+
+The commands assume you run them from the `my_app` project directory with `MIX_TARGET=rpi4` exported and `MIX_ENV` left at its default, so every build lands at `_build/rpi4_dev/nerves/images/my_app.fw`.
+
+The guide builds five firmware versions:
+
+| Version | Part | How it reaches the device |
+| --- | --- | --- |
+| `1.0.0` | 2 | Burned to the SD card |
+| `1.1.0` | 2 | First over-the-air update |
+| `1.2.0` | 3 | Over the air |
+| `1.3.0` and `1.4.0` | 4 (optional) | Over the air, the second as a delta |
+
+## The parts
+
+1. [Connect the device](#part-1-connect-the-device)
+2. [Take a signed update](#part-2-take-a-signed-update)
+3. [Report health, logs and errors](#part-3-report-health-logs-and-errors)
+4. [Send smaller updates with deltas](#part-4-send-smaller-updates-with-deltas-optional) (optional)
+5. [Where you are now](#where-you-are-now): the complete configuration and what to do next
+
+## Part 1: Connect the device
+
+### Create the product
+
+In the web UI, open the organization's **Products** page. If the organization has no products yet, the page shows a **Create your first product** form: enter the name `my_app` and click **Create product**. Every device extension starts on. Otherwise click **New product**, enter the name `my_app`, leave the device extensions checked, and click **Create Product**. The name must match the firmware's product name and cannot be changed later. See [Products](/setup/products).
+
+Then save your defaults so you can leave out `--org` and `--product`:
+
+```bash
+nh config set org acme
+nh config set product my_app
+```
+
+### Add the dependency
+
+Add `nerves_hub_link` to the dependencies in `mix.exs`, next to `nerves_pack`, then fetch it:
+
+```elixir
+{:nerves_hub_link, "~> 2.14", targets: @all_targets}
+```
+
+```bash
+mix deps.get
+```
+
+It starts with your firmware. You do not add it to a supervision tree. See [Add NervesHubLink to a project](/setup/add-to-project).
+
+### Choose how the device authenticates
+
+Pick one tab. A shared secret is the quickest. A local certificate is more work, but each device gets its own key, and it is what the [complete device guide](/guides/complete-device-setup) builds on.
+
+Either way, you create the one `config :nerves_hub_link` block in `config/target.exs` that the rest of this guide adds to. `host` is the host name devices connect to, which is usually not the web UI's host. See [Connecting devices](/setup/connecting).
+
+<Tabs>
+  <Tab title="Shared secret">
+    The instance must have shared secret authentication turned on. See [Feature prerequisites](/hosting/feature-prerequisites#shared-secret-authentication).
+
+    <Steps>
+      <Step title="Create the secret">
+        Open **Product settings** for `my_app`. In the **Shared secrets** card, click **Create secret**. Copy the key, which starts with `nhp_`. The secret is not displayed. Click the copy button next to the key, labelled **Copy secret**, to copy it. See [Shared secret](/auth/shared-secret).
+      </Step>
+
+      <Step title="Configure the firmware">
+        ```elixir
+        # config/target.exs
+        config :nerves_hub_link,
+          host: "your.nerveshub.host",
+          shared_secret: [
+            product_key: System.fetch_env!("NERVES_HUB_PRODUCT_KEY"),
+            product_secret: System.fetch_env!("NERVES_HUB_PRODUCT_SECRET")
+          ]
+        ```
+
+        The values are read when the firmware is built, which keeps them out of version control. Export both variables in every shell you build from.
+      </Step>
+
+      <Step title="Build, burn and boot">
+        ```bash
+        export MIX_TARGET=rpi4
+        export NERVES_HUB_PRODUCT_KEY=nhp_...
+        export NERVES_HUB_PRODUCT_SECRET=...
+        mix firmware
+        mix burn
+        ```
+
+        Insert the card and power on the device. It connects with its serial number as its identifier, and NervesHub creates the device in `my_app`.
+      </Step>
+    </Steps>
+  </Tab>
+
+  <Tab title="Local certificate">
+    The shortest path is a self-signed certificate that `nh` generates and uploads. See [Device certificates](/auth/device-certificates).
+
+    <Steps>
+      <Step title="Configure the firmware">
+        ```elixir
+        # config/target.exs
+        config :nerves_hub_link,
+          host: "your.nerveshub.host",
+          configurator: NervesHubLink.Configurator.LocalCertKey
+        ```
+
+        With no other options, the configurator reads `/data/nerves-hub/cert.pem` and `/data/nerves-hub/key.pem`.
+      </Step>
+
+      <Step title="Build, burn and boot">
+        ```bash
+        export MIX_TARGET=rpi4
+        mix firmware
+        mix burn
+        ```
+
+        Insert the card and power on the device. It cannot connect yet. Open its IEx prompt and note the serial number:
+
+        ```elixir
+        Nerves.Runtime.serial_number()
+        ```
+      </Step>
+
+      <Step title="Create the device and its certificate">
+        A device with a self-signed certificate does not add itself, so create it first, using the serial number as the identifier. See [Devices](/setup/devices).
+
+        ```bash
+        nh device create <serial>
+        nh device certificates generate <serial> --self-signed --upload
+        ```
+
+        The second command creates a key and certificate on your machine, prints both paths (under `~/.nh/certificates/acme/`), and registers the certificate with the device.
+      </Step>
+
+      <Step title="Copy the certificate and key to the device">
+        This step is for a device on your bench. It assumes the SSH access a default Nerves project has, which lets you use `sftp`. Use the paths `nh` printed:
+
+        ```bash
+        sftp nerves.local
+        sftp> mkdir /data/nerves-hub
+        sftp> put <path to ...-cert.pem> /data/nerves-hub/cert.pem
+        sftp> put <path to ...-key.pem> /data/nerves-hub/key.pem
+        ```
+
+        The device connects with them the next time it retries, usually within a minute. Restart it if you do not want to wait. For a device you cannot reach over SSH but that is already connected to NervesHub, the [complete device guide](/guides/complete-device-setup#part-1-move-to-certificate-authentication) writes the files through the remote console instead.
+      </Step>
+    </Steps>
+
+    <Note>
+      Doing this by hand suits one device. For a fleet, register your own CA so devices need no per-certificate upload. That is the first part of the [complete device guide](/guides/complete-device-setup).
+    </Note>
+  </Tab>
+</Tabs>
+
+### Check it works
+
+Open **Devices** in `my_app`. The device is listed and shows as **Online**. From the CLI:
+
+```bash
+nh device list
+```
+
+If it is not there, check that the device has a network connection and can reach `host`. With a shared secret, check that the key is active and the device clock is right. With a certificate, check that the device exists and that the files are at the two paths above. The troubleshooting lists are on [Add NervesHubLink to a project](/setup/add-to-project) and each authentication page.
+
+**Go deeper:** [Add NervesHubLink to a project](/setup/add-to-project), [Connecting devices](/setup/connecting), [Products](/setup/products), [Devices](/setup/devices), [Shared secret](/auth/shared-secret), [Device certificates](/auth/device-certificates), [Quickstart](/quickstart).
+
+## Part 2: Take a signed update
+
+### Create the signing key
+
+Every firmware file is signed with a private key you hold. [Firmware signing](/concepts/firmware-signing) explains the whole scheme.
+
+```bash
+nh key create my_app_key
+nh key list
+```
+
+`nh key create` registers the public key with the `acme` organization and saves both halves under `~/.nh/keys/acme/`. It offers an optional passphrase for the private key. Copy the value in the `KEY` column for `my_app_key`.
+
+<Warning>
+  Back up `my_app_key.priv`. If you lose it, you cannot sign updates for devices that trust only this key.
+</Warning>
+
+### Add the key and the console to the firmware
+
+Add two keys to the `config :nerves_hub_link` block in `config/target.exs`:
+
+```elixir
+# config/target.exs
+config :nerves_hub_link,
+  # ...host and authentication settings from part 1...
+  fwup_public_keys: ["<KEY value from nh key list>"],
+  remote_iex: true
+```
+
+Configure the key rather than letting the device request it from NervesHub, because requested keys come from the same server that supplies the firmware. Since `nerves_hub_link` 2.13.0, a device that holds no public key [refuses updates](/concepts/firmware-signing#unverifiable-firmware-is-refused).
+
+`remote_iex: true` lets you open an IEx session on the device from NervesHub. It is off by default. See [Remote console](/management/remote-console).
+
+<Tip>
+  `fwup_public_keys` is a list, and a device accepts firmware signed by any key in it. If you plan to sign in CI, CI needs a second key, `my_app_ci_key`, because a key made with `nh key create` is stored encrypted and CI needs an unencrypted one. Create that key now, as the first part of [Basic fleet operations](/guides/basic-fleet-operations) shows, and put its public half in the list beside `my_app_key`. Devices then trust CI builds from `1.0.0` on, and you avoid a bridging release later. See [Use more than one key](/concepts/firmware-signing#use-more-than-one-key).
+</Tip>
+
+### Burn 1.0.0
+
+Set the version in `mix.exs` to `1.0.0`. Then build and write the SD card:
+
+```bash
+mix firmware
+mix burn
+```
+
+Boot the device from the card.
+
+<Warning>
+  **Local certificate only.** Burning the card invalidates the application data partition, and the device formats it on first boot. The `cert.pem` and `key.pem` you copied in part 1 are gone, and the device cannot connect. Copy the same two files to `/data/nerves-hub` again with the `sftp` commands from part 1, then restart the device. Do not generate a new certificate: the files are still under `~/.nh/certificates/acme/`. Updates sent over the air leave `/data` alone, so this is the last time you copy them.
+</Warning>
+
+Wait until the device shows as **Online** under **Devices**, and note its identifier:
+
+```bash
+nh device list
+```
+
+### Upload 1.1.0
+
+Set the version in `mix.exs` to `1.1.0`. Build, then sign and upload:
+
+```bash
+mix firmware
+nh firmware upload _build/rpi4_dev/nerves/images/my_app.fw --key my_app_key
+```
+
+`nh` shows the firmware's metadata, signs a copy and uploads it. Add `--password <passphrase>` if you set one. Copy the UUID it prints. [Firmware](/setup/firmware#upload-firmware) covers the other ways to supply the key.
+
+### Create the bench group
+
+A [deployment group](/setup/deployments) connects firmware to the devices that should run it. Create one group, `bench`, that you use for the rest of this guide. It has no tag or version conditions, so it matches your device whatever its tags, and it is created turned on with delta updates off:
+
+```bash
+nh deployment create bench \
+  --firmware <UUID> \
+  --delta-updatable=false \
+  --state on
+```
+
+A new group otherwise has delta updates on, and a release in such a group waits for its deltas to build. Part 4 turns it on.
+
+A device only [joins a group when it connects](/setup/deployments#how-devices-join-a-group). Yours connected before the group existed, so make it reconnect:
+
+```bash
+nh device reconnect <identifier>
+```
+
+The device is offered the update, downloads it, verifies the signature against `fwup_public_keys`, installs it and reboots. With no client module, it applies every update it is offered. [How firmware updates work](/updates/overview) describes each step, and [Applying updates](/updates/applying-updates) shows how to control them.
+
+### Check it works
+
+<Steps>
+  <Step title="The version changed">
+    Wait for the device to reboot and come back online, then run:
+
+    ```bash
+    nh device show <identifier>
+    ```
+
+    It reports firmware version `1.1.0`. The device page in the web UI shows the same.
+  </Step>
+  <Step title="The console opens">
+    Open the device in the web UI and select the **Console** tab. An IEx prompt appears.
+  </Step>
+</Steps>
+
+**Go deeper:** [Firmware signing](/concepts/firmware-signing), [Firmware](/setup/firmware), [Deployment groups](/setup/deployments), [Remote console](/management/remote-console), [How firmware updates work](/updates/overview), [Applying updates](/updates/applying-updates).
+
+## Part 3: Report health, logs and errors
+
+[Extensions](/extensions/overview) are what a device sends to NervesHub besides taking firmware. This part sets up three of them: [Health](/extensions/health) for metrics and alarms, [Logging](/extensions/logging) for the device's `Logger` output, and [Error reports](/extensions/error-reports) for crashes.
+
+An extension runs only when the firmware includes it, the product has it on, and the device has it on.
+
+<Note>
+  Logging and Error reports need ClickHouse on the NervesHub instance. Health reports without it, but metric history charts and health profiles need it. See [Feature prerequisites](/hosting/feature-prerequisites#clickhouse).
+</Note>
+
+### Add the extensions to the firmware
+
+Health is in the default extension list. Logging and Error reports are not, so you name them. Add two keys to the `config :nerves_hub_link` block in `config/target.exs`:
+
+```elixir
+# config/target.exs
+config :nerves_hub_link,
+  # ...settings from parts 1 and 2...
+  extension_modules: [
+    NervesHubLink.Extensions.Health,
+    NervesHubLink.Extensions.Geo,
+    NervesHubLink.Extensions.NetworkIdentity,
+    NervesHubLink.Extensions.Logging,
+    NervesHubLink.Extensions.ErrorReports
+  ],
+  logging: [level: :info]
+```
+
+<Warning>
+  `extension_modules` replaces the default list. The list above keeps the three defaults (Health, Geo, Network identity) and adds the two new ones. It leaves out `NervesHubLink.Extensions.LocalShell`, the optional [system shell](/extensions/local-shell). It is mostly for devices that are not Nerves devices.
+</Warning>
+
+`level: :info` sends `:info` and above, which is also the default. Change it to `:warning` if the device is on a metered connection. See [Choose what is sent](/extensions/logging#choose-what-is-sent).
+
+Set the version in `mix.exs` to `1.2.0`, build, and release it to `bench`. `--deploy` creates a [release](/deployments/releases) on the group as soon as the upload succeeds:
+
+```bash
+mix firmware
+nh firmware upload _build/rpi4_dev/nerves/images/my_app.fw --key my_app_key --deploy bench
+```
+
+### Turn the extensions on for the product
+
+<Steps>
+  <Step title="Check the product switches">
+    Open **Product settings** for `my_app` and find the **Device extensions** card on the **General** tab. Make sure **Health**, **Logging** and **Error reports** are switched on.
+
+    A product created in the web UI, as in part 1, starts with every extension on. A product created with `nh` or the API starts with every extension off, and the device sends nothing until you switch them on. See [Device extensions](/setup/products#device-extensions).
+  </Step>
+
+  <Step title="Leave the device switches on">
+    On the device's **Settings** tab, the **Extensions** card has a switch for each extension. They are on by default, so there is nothing to change.
+  </Step>
+
+  <Step title="Reconnect the device">
+    NervesHub decides which extensions a device may use when the device connects. If you switched an extension on while the device was connected, reconnect it:
+
+    ```bash
+    nh device reconnect <identifier>
+    ```
+
+    A device that updated to `1.2.0` after you set the switches has already reconnected.
+  </Step>
+</Steps>
+
+### Check it works
+
+Confirm the device runs `1.2.0`. Then open the remote console and check which extensions NervesHub has attached:
+
+```elixir
+iex> :sys.get_state(NervesHubLink.Extensions).extensions |> Map.new(fn {name, ext} -> {name, ext.attached?} end)
+```
+
+Each one you turned on has the value `true`. Do not use `NervesHubLink.Extensions.list()` for this check. In `nerves_hub_link` 2.14.0 it lists the extensions in the firmware, and its `attached?` field reads `false` even for an attached extension.
+
+Send a test error from the same console:
+
+```elixir
+iex> NervesHubLink.report_error(%RuntimeError{message: "test report"}, [], group: "test")
+```
+
+Allow about a minute, because logs and error reports are sent in batches. Then look at the device page:
+
+| Data | Where it shows up | Without ClickHouse |
+| --- | --- | --- |
+| Health | The **Health** card on the **Details** tab, and the **Health** tab. See [Health monitoring](/management/health-monitoring). | Current values and health status are shown. Metric history charts are not. |
+| Logs | The **Logs** tab. | The extension does not attach, and the tab says analytics are not enabled. |
+| Errors | The **Errors** tab, and **Errors** in the product sidebar. The test error is an unresolved issue. | The extension does not attach, and the tab says the same. |
+
+Without ClickHouse, health status is also judged against fixed thresholds, not your [health profile](/management/health-monitoring#health-profiles). [ClickHouse for a self-hosted instance](/hosting/clickhouse) lists everything that is missing.
+
+**Go deeper:** [Extensions overview](/extensions/overview), [Health extension](/extensions/health), [Logging extension](/extensions/logging), [Error reports extension](/extensions/error-reports), [Health monitoring](/management/health-monitoring), [Feature prerequisites](/hosting/feature-prerequisites), [ClickHouse](/hosting/clickhouse).
+
+## Part 4: Send smaller updates with deltas (optional)
+
+A [delta update](/management/delta-updates) sends a device the difference between the firmware it runs and the new firmware, instead of the whole `.fw` file. It is worth setting up when download size costs you something, such as on cellular or metered links. On a fast, unmetered network, skip it.
+
+<Warning>
+  **If you skip this part, leave delta updates off.** Groups you create later have it on unless you say otherwise, and firmware that cannot produce a delta stalls there. For such firmware, switch **Delta updates** off on the group's **Settings** tab and click **Save** before you release it, or create the group with `--delta-updatable=false`. Switching it off afterwards does not release a release whose delta has already failed. Release a new firmware version instead.
+</Warning>
+
+The instance needs `xdelta3` on the server. See [Feature prerequisites](/hosting/feature-prerequisites#firmware-formats).
+
+### Check your system's `fwup.conf`
+
+NervesHub can build a delta only if the `upgrade` tasks in your Nerves system's `fwup.conf` say where the old copy of a resource is. Official Nerves systems, `nerves_system_rpi4` included, already declare delta sources. With `rpi4` you have nothing to change here.
+
+To check another system, copy its `fwup.conf` out and look. The copy option needs `nerves` 1.15.0 or later:
+
+```bash
+mix nerves.artifact.details <your_nerves_system> --copy-fwup-conf config/
+grep -n "delta-source" config/fwup.conf
+```
+
+If `grep` prints lines, delete the copy and move on. If it prints nothing, add a delta source for `rootfs.img` to the `upgrade.a` and `upgrade.b` tasks of the copy, as shown in [Enable delta updates](/management/delta-updates#enable-delta-updates). Then point the build at the copy, in `config/config.exs`:
+
+```elixir
+# config/config.exs
+config :nerves, :firmware,
+  fwup_conf: "config/fwup.conf"
+```
+
+If you maintain a custom system, make the change in the system instead.
+
+### Build for smaller deltas
+
+This step is optional. A compressed root filesystem changes throughout when a few files change, so deltas of it save little. Turn squashfs compression off and fix the build date in `config/config.exs`:
+
+```elixir
+# config/config.exs
+config :nerves, :firmware,
+  rootfs_overlay: "rootfs_overlay",
+  mksquashfs_flags: ["-noI", "-noId", "-noD", "-noF", "-noX"]
+
+config :nerves, source_date_epoch: "1596027629"
+```
+
+Add `mksquashfs_flags` to the `config :nerves, :firmware` entry you already have. Keep your own `rootfs_overlay` value, and `fwup_conf` if you added it. A project generated by `mix nerves.new` already sets `source_date_epoch`. Keep its value.
+
+The trade-off is a larger root filesystem on the device and a larger full download. If the build stops with `fwup: file size assertion failed on ... combined.squashfs`, the uncompressed root filesystem no longer fits your system's root filesystem partition. Remove `mksquashfs_flags` again and rebuild before you upload anything: the failed build leaves an incomplete `my_app.fw` behind, and `nh firmware upload` rejects that file with a signature error.
+
+### Check `fwup` on the device
+
+`fwup` on the device applies the delta, and it comes from the Nerves system. A raw delta needs `fwup` 1.6.0 or later. A system that also declares FAT delta sources, as `nerves_system_rpi4` does, needs 1.10.0. Check from the [remote console](/management/remote-console):
+
+```elixir
+System.cmd("fwup", ["--version"])
+```
+
+A device with an older `fwup` is sent the full firmware.
+
+### Send 1.3.0 in full, then turn deltas on
+
+A change to `fwup.conf` has to reach a device as a full update before the device can take patches. The build settings work the same way, because a delta is computed against the firmware the device already runs.
+
+<Steps>
+  <Step title="Release 1.3.0 with delta updates still off">
+    Set the version to `1.3.0`, build, and release it. `bench` still has delta updates off, so the device downloads the full file:
+
+    ```bash
+    mix firmware
+    nh firmware upload _build/rpi4_dev/nerves/images/my_app.fw --key my_app_key --deploy bench
+    ```
+
+    Wait until the device runs `1.3.0`. If you changed neither `fwup.conf` nor the build settings, you can skip this step. Your delta is then built from `1.2.0`, and the next step's release is your `1.3.0`.
+  </Step>
+  <Step title="Turn delta updates on for bench">
+    Open the `bench` group, go to the **Settings** tab, switch **Delta updates** on, and click **Save**. Or run:
+
+    ```bash
+    nh deployment update bench --delta-updatable
+    ```
+  </Step>
+  <Step title="Release 1.4.0">
+    Make a small change, set the version to `1.4.0`, and build and release it with the same two commands. NervesHub builds a delta from `1.3.0` and holds the release until it is ready.
+  </Step>
+</Steps>
+
+<Warning>
+  A release does not fall back to the full firmware. While a delta is **Building**, and after one has **Failed** or **Timed out**, the devices that need it wait. If the cause is fixed, click **Retry** next to the delta on the group's **Releases** tab. Otherwise release a new firmware version. With **Delta updates** off it goes out in full. With it on, it waits for a delta of its own. See [Releases wait for their deltas](/management/delta-updates#releases-wait-for-their-deltas).
+</Warning>
+
+### Check it works
+
+1. Open `1.4.0` from the product's **Firmware** page. **Delta updates to** must not read "This firmware can't be delta updated, so devices always download the full file."
+2. On the `bench` group's **Releases** tab, expand the [release](/deployments/releases#view-releases). **Delta updates** lists a delta from `1.3.0` that moves from **Building** to **Ready**. A small delta can be **Ready** within seconds.
+3. After the device updates, the group's **Stats** tab shows **Delta** in the **Download** column for `1.3.0`.
+
+**Go deeper:** [Delta updates](/management/delta-updates) for FAT and encrypted deltas, failure causes and limits; [Deployment groups](/setup/deployments); [Releases](/deployments/releases); [Feature prerequisites](/hosting/feature-prerequisites#firmware-formats).
+
+## Where you are now
+
+Your device runs `1.4.0`, or `1.2.0` if you skipped part 4.
+
+### The complete configuration
+
+```elixir
+# config/target.exs
+config :nerves_hub_link,
+  host: "your.nerveshub.host",
+  # Part 1, Shared secret tab. If you chose Local certificate, you have
+  #   configurator: NervesHubLink.Configurator.LocalCertKey,
+  # in place of shared_secret.
+  shared_secret: [
+    product_key: System.fetch_env!("NERVES_HUB_PRODUCT_KEY"),
+    product_secret: System.fetch_env!("NERVES_HUB_PRODUCT_SECRET")
+  ],
+  # Part 2
+  fwup_public_keys: ["<my_app_key public key>"],
+  remote_iex: true,
+  # Part 3
+  extension_modules: [
+    NervesHubLink.Extensions.Health,
+    NervesHubLink.Extensions.Geo,
+    NervesHubLink.Extensions.NetworkIdentity,
+    NervesHubLink.Extensions.Logging,
+    NervesHubLink.Extensions.ErrorReports
+  ],
+  logging: [level: :info]
+```
+
+Part 4 changed `config :nerves` in `config/config.exs`, not this block.
+
+### What to do with the bench group
+
+A device belongs to at most one deployment group, and changing a device's tags never takes it out of the group it is in. Keep `bench` for now, whichever guide you read next:
+
+- **[Basic fleet operations](/guides/basic-fleet-operations)** uses `bench` for one last release from your machine, then deletes it when it creates the tagged `qa` and `production` groups. Your device can only join one of those once it has left `bench`.
+- **The [complete device guide](/guides/complete-device-setup)** releases its firmware through `bench`.
+
+### Where to go next
+
+- [Complete Nerves device setup](/guides/complete-device-setup) continues from here: per-device certificates from your own CA, control over when updates are applied, the remaining extensions, and connection tuning.
+- [Basic fleet operations](/guides/basic-fleet-operations) moves from one bench device to a fleet: firmware built and signed in CI, `qa` and `production` groups, and Slack notifications.

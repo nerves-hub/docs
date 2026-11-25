@@ -1,0 +1,694 @@
+---
+title: "Complete fleet operations"
+sidebarTitle: "Complete fleet operations"
+description: "Extend the basic fleet setup into a two-stage CI/CD pipeline that rolls out to production through canaries and a human approval, reports to your own backend, and has guardrails."
+---
+
+This guide continues from the end of [Basic fleet operations](/guides/basic-fleet-operations). At the end you have:
+
+- A pipeline that releases every merge to `qa` and releases to `production` when you push a version tag.
+- A `production` rollout that goes to a few canary devices first, waits for a person to approve, then reaches the rest of the fleet.
+- A webhook that reports each rollout to your own backend.
+- Rollout limits, narrow roles for approvers and CI, and two-factor authentication.
+
+## Before you start
+
+You need everything the basic guide left in place:
+
+- Devices set up as in [Basic Nerves device setup](/guides/basic-device-setup), running firmware that trusts the CI signing key `my_app_ci_key`.
+- `.github/workflows/firmware.yml`, which builds on every push to `main` and releases to `qa`, with the repository secrets and the repository variable `DEVICE_SSH_PUBLIC_KEY` that guide had you add.
+- The `qa` and `production` deployment groups, both on, with devices tagged `qa` and `prod`.
+- A Slack channel that gets notifications for `my_app`, and your Slack account linked.
+
+The examples still build for a Raspberry Pi 4. Any of the Nerves [supported targets](https://hexdocs.pm/nerves/supported-targets.html) works, with its name in place of `rpi4`.
+
+The guide has four parts. Do them in order.
+
+## 1. Build a two-stage release pipeline
+
+This part adds a second stage to the basic guide's workflow: pushing a tag `v<version>` releases that firmware version to `production`.
+
+The tag job does not build anything. It finds the firmware that `qa` already received and creates a [release](/deployments/releases) of that same firmware on `production`. The fleet gets the exact file your QA devices ran, and the production job never holds the signing key.
+
+### The workflow
+
+Replace the whole of `.github/workflows/firmware.yml` with the file below. Both jobs switch from the upload action to the [`nh` CLI](/outbound/ci-cd#upload-and-deploy-with-nh) and create their release with [`nh deployment release create`](/cli/reference#nh-deployment-release). The production job only creates a release and has nothing to upload, which the action cannot do. The build steps, the firmware path, and the repository secrets and variable are the ones you already have.
+
+```yaml
+name: Firmware
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  NERVES_HUB_URI: https://your.nerveshub.host # leave out for NervesCloud
+  NERVES_HUB_ORG: acme
+  NERVES_HUB_PRODUCT: my_app
+  NERVES_HUB_TOKEN: ${{ secrets.NERVES_HUB_TOKEN }}
+  NERVES_HUB_NON_INTERACTIVE: "true"
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  qa:
+    if: github.ref_type == 'branch'
+    runs-on: ubuntu-latest
+    env:
+      MIX_TARGET: rpi4
+      MIX_ENV: prod
+      FWUP_VERSION: "1.13.2"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install fwup and squashfs-tools
+        run: |
+          wget https://github.com/fwup-home/fwup/releases/download/v${FWUP_VERSION}/fwup_${FWUP_VERSION}_amd64.deb
+          sudo dpkg -i fwup_${FWUP_VERSION}_amd64.deb
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends squashfs-tools
+
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: "27"
+          elixir-version: "1.18"
+
+      - name: Install nh
+        run: |
+          gh release download --repo nerves-hub/nh --pattern 'nh_*_linux_amd64.tar.gz' --output nh.tar.gz
+          mkdir -p "$HOME/.local/bin"
+          tar -xzf nh.tar.gz -C "$HOME/.local/bin" nh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Add the SSH public key the firmware authorizes
+        env:
+          DEVICE_SSH_PUBLIC_KEY: ${{ vars.DEVICE_SSH_PUBLIC_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$DEVICE_SSH_PUBLIC_KEY" > ~/.ssh/id_ed25519.pub
+
+      - name: Build firmware
+        env:
+          NERVES_HUB_PRODUCT_KEY: ${{ secrets.NERVES_HUB_PRODUCT_KEY }}
+          NERVES_HUB_PRODUCT_SECRET: ${{ secrets.NERVES_HUB_PRODUCT_SECRET }}
+        run: |
+          mix archive.install hex nerves_bootstrap --force
+          mix deps.get
+          mix firmware
+
+      - name: Sign, upload and release to qa
+        env:
+          NERVES_HUB_PRIVATE_KEY: ${{ secrets.NERVES_HUB_PRIVATE_KEY }}
+        run: |
+          uuid=$(nh firmware upload _build/rpi4_prod/nerves/images/my_app.fw -o json | jq -r .uuid)
+          nh deployment release create qa --firmware "$uuid" \
+            --description "main at ${GITHUB_SHA::7}"
+
+  production:
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install nh
+        run: |
+          gh release download --repo nerves-hub/nh --pattern 'nh_*_linux_amd64.tar.gz' --output nh.tar.gz
+          mkdir -p "$HOME/.local/bin"
+          tar -xzf nh.tar.gz -C "$HOME/.local/bin" nh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Release the tested firmware to production
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          uuid=$(nh deployment release list qa -o json \
+            | jq -r --arg v "$version" '[.[] | select(.firmware.version == $v)][0].firmware.uuid // empty')
+          if [ -z "$uuid" ]; then
+            echo "No qa release has firmware version $version" >&2
+            exit 1
+          fi
+          nh deployment release create production --firmware "$uuid" \
+            --description "my_app $version" \
+            --notes "Promoted from qa by tag $GITHUB_REF_NAME at ${GITHUB_SHA::7}."
+```
+
+What changed from the basic workflow, apart from the tool:
+
+- **The `build` job is now `qa`, and it creates its release explicitly.** The action's `deployment` input and `nh firmware upload --deploy` cannot describe a release. So the job uploads with `-o json`, reads the firmware UUID, and runs `nh deployment release create` with a `--description`. See [the deploy option](/outbound/ci-cd#the-deploy-option).
+- **The `production` job looks the firmware up.** `nh deployment release list qa` returns the group's releases newest first, so the job takes the newest `qa` release whose firmware version matches the tag.
+- **The production release carries a description and notes.** Neither can change later. `nh deployment release show` prints both. The group's **Releases** tab shows the description on each row, and the notes when you open the row.
+
+Each `nh deployment release create` call prints the number of the release it created.
+
+The tag only names a version. Bump `version` in `mix.exs`, merge, wait for the QA run to finish, and push the tag once you are happy with what `qa` is running. Every merge needs a new version, because the production job finds firmware by its version.
+
+The `nh deployment release` commands need a server with the release API, and descriptions and notes need NervesHub 2.5.0. See [Releases](/deployments/releases#requirements). If later firmware depends on a release being installed first, add `--required` to the `production` job's `nh deployment release create` command. See [Required releases](/deployments/releases#required-releases).
+
+### Credentials for CI
+
+`NERVES_HUB_TOKEN` currently holds your user access token. It works on every NervesHub version, but it can do everything you can do, in every organization you belong to, and it stops working when your account is deleted.
+
+Today, you can move the token to a user that holds a custom role with only the two permissions the pipeline uses. [Part 4](#give-approvers-and-ci-their-own-roles) creates that role as `CI`. Later, a product API key is the better fit: it reaches `my_app` only, holds a role of its own, and keeps working when the person who created it leaves.
+
+<Note>
+  Product API keys are on the NervesHub main branch but in no tagged release as of NervesHub 2.5.4. On 2.5.4 and earlier, keep the user access token.
+</Note>
+
+To switch to a product API key:
+
+1. In `my_app`, open **Product settings** and select the **API keys** tab.
+2. Click **Create key**. Enter a **Name**, such as `CI deploys`.
+3. Change the **Role** from **View** to **Manage**, or to the `CI` role from part 4. A **View** key cannot create a release.
+4. Click **Create key**, copy the key, and save it as the `NERVES_HUB_TOKEN` secret in GitHub. It is shown only once.
+
+The workflow needs no change, because `nh` sends either credential the same way. See [API authentication](/api/authentication#product-api-keys) for what a key can and cannot reach.
+
+### Check it works
+
+1. Bump the version and merge to `main`. When the run finishes, list the `qa` releases and note the version and firmware UUID of the newest one:
+
+   ```bash
+   nh deployment release list qa
+   ```
+
+2. Tag that commit and push the tag, with the version you merged in place of `<version>`:
+
+   ```bash
+   git tag v<version>
+   git push origin v<version>
+   ```
+
+3. When the `production` job finishes, list the `production` releases:
+
+   ```bash
+   nh deployment release list production
+   ```
+
+   The newest release is marked with `*`, shows the version you tagged, and has the same firmware UUID as the `qa` release. Run `nh deployment release show production <number>` to see its description and notes, or open the group's **Releases** tab in the web UI.
+
+Devices tagged `prod` start updating as soon as the release exists, as long as the [`production` group](/setup/deployments) is on.
+
+**Go deeper:** [CI and automation](/outbound/ci-cd) · [Releases](/deployments/releases) · [Deployment groups](/setup/deployments) · [Build, sign, and upload firmware](/setup/firmware) · [API authentication](/api/authentication) · [Roles](/access/roles) · [nh command reference](/cli/reference)
+
+## 2. Roll out through canaries with an approval gate
+
+Without a workflow, the `production` group sends each release to every `prod` device, paced only by the group's settings. A [deployment workflow](/concepts/deployment-workflows) splits the release into ordered steps: here a few canaries, a human sign-off, then the rest of the fleet. Workflows need NervesHub 2.5.0 or later and are an early release feature.
+
+### Tag the canaries
+
+Add the `canary` tag to a handful of `prod` devices that you can reach if an update goes wrong. On the product's **Devices** page, run the query `tags contains "prod"`, tick the devices, then choose **Tags** and **Add** in the bar at the foot of the list. See [Bulk actions](/management/finding-devices#bulk-actions).
+
+From the CLI, `--tag` sets the whole tag list, so repeat `prod`:
+
+```bash
+nh device update <identifier> --tag prod --tag canary
+```
+
+### Write the workflow
+
+Save this as `production-workflow.json`:
+
+```json
+{
+  "version": 1,
+  "steps": [
+    {
+      "name": "Canary",
+      "description": "Devices tagged canary",
+      "matching_conditions": {
+        "tags": ["canary"],
+        "match_limit": 5
+      },
+      "concurrent_updates": 5,
+      "failure_tolerance": { "devices": 2 }
+    },
+    {
+      "type": "approval_required",
+      "name": "Sign-off",
+      "description": "Someone confirms the canaries are healthy"
+    },
+    {
+      "type": "catch_all",
+      "name": "Rest of the fleet",
+      "concurrent_updates": 25
+    }
+  ]
+}
+```
+
+- **Canary** claims up to five devices tagged `canary` and completes when all of them run the new firmware. It waits for offline canaries too, so tag devices that connect reliably.
+- With this `failure_tolerance`, the step fails when a second canary lands in the [penalty box](/deployments/rollout-controls#penalty-box). Leave it out and the first one fails the step.
+- **Sign-off** covers no devices. It holds the rollout until someone approves it.
+- **Rest of the fleet** updates every device no earlier step claimed.
+
+<Warning>
+  Always set `match_limit`. A step that has `matching_conditions` but no `match_limit` covers at most 10 devices, however many carry the tag. The others wait for the catch-all step, behind the approval.
+</Warning>
+
+### Upload it
+
+Open the `production` group's **Settings** tab. On the **Workflow** card, select **Upload** and pick the file. Once the group has a workflow, the button reads **Replace**. The card then lists the three steps. An invalid file is rejected with the path of each problem.
+
+The workflow applies from the next [release](/deployments/releases). The current release carries on as it was.
+
+While the group has a workflow, each step's `concurrent_updates` and the step order replace two of the group's own settings. [Part 4](#set-the-rollout-controls) covers which.
+
+### Add the workflow events to Slack
+
+On the organization's **Integrations** tab, open the row menu of the Slack channel you set up for `my_app` in the basic guide and choose **Edit**. Tick **Workflow waiting for approval** and **Workflow step failed**, then click **Save channel**. See [Channel notifications](/outbound/slack#channel-notifications).
+
+Anyone who will approve from Slack must have linked their Slack account with `/nerveshub link`, as you did in the basic guide's Slack check. The instance needs a Slack app: see [Feature prerequisites](/hosting/feature-prerequisites#slack).
+
+### Approve the rollout
+
+Each new release starts at step 1. The group's **Overview** tab shows every step with its updated and total device counts.
+
+Once every canary runs the new firmware, the group's badge reads **Awaiting approval** and the group appears under **Needs you** on the **Deployment groups** page. Check the canaries, then approve in either place:
+
+- **Web UI:** on the group's **Overview** tab, select **Approve and continue** and confirm.
+- **Slack:** select **Approve** on the **Workflow waiting for approval** message. See [Act on deployment workflows from Slack](/outbound/slack#act-on-deployment-workflows-from-slack).
+
+Either way, your role needs the **Create, edit and approve releases** permission. The built-in **Manage** and **Admin** roles have it. Part 4 creates a `Release approver` role for people who should hold little else.
+
+### If the canary step fails
+
+The badge reads **Stopped** and nothing further is sent until you choose one of these on the **Overview** tab:
+
+- **Retry step** lets the failed devices out of the penalty box, clears their attempts, and runs the step again.
+- **Skip step** releases the canaries to the catch-all step, once you confirm. The rollout moves on to **Sign-off**, which still waits for approval.
+
+Both are offered only on a step that has failed. A release with fixed firmware is the third way out. It starts again at step 1.
+
+In Slack, the **Workflow step failed** message has **Retry** and **Skip** buttons. They need the same permission. See [Retry or skip a failed step](/concepts/deployment-workflows#retry-or-skip-a-failed-step).
+
+### Check it works
+
+1. Merge a new version, let `qa` run it, and push its tag so the pipeline releases it to `production`.
+2. On the **Overview** tab, confirm that only the canaries update.
+3. When the badge reads **Awaiting approval** and the message arrives in Slack, approve.
+4. Confirm that the count on **Rest of the fleet** climbs.
+
+**Go deeper:** [Deployment workflows](/concepts/deployment-workflows) · [Releases](/deployments/releases) · [Rollout controls](/deployments/rollout-controls) · [Slack](/outbound/slack) · [Finding devices](/management/finding-devices) · [Roles and permissions](/access/roles)
+
+## 3. Report rollouts to your backend with a webhook
+
+A [webhook](/outbound/webhooks) sends each moment of a rollout to an HTTP endpoint you run, as a signed JSON `POST`. You use one webhook for two jobs: a rollout dashboard in your backend, and paging someone when a step needs a person.
+
+Webhooks need NervesHub 2.5.0 or later and the **Manage** or **Admin** role, or a [custom role](/access/roles#custom-roles) with the webhook permissions.
+
+### Choose the events
+
+| Use | Events | What must be in place |
+| --- | --- | --- |
+| Rollout dashboard | `device.firmware_update.scheduled`, `device.firmware_update.finished` | Nothing. They fire for every update, with or without a workflow. |
+| Rollout dashboard | `deployment_group.workflow_step.started`, `deployment_group.workflow_step.completed`, `deployment_group.workflow_step.skipped` | A group with a workflow. `production` has one. `qa` does not, so it sends only the device events. |
+| Page someone | `deployment_group.workflow_step.awaiting_approval`, `deployment_group.workflow_step.failed` | A group with a workflow. |
+
+The payloads are in the [event reference](/outbound/webhooks#events).
+
+### Create the webhook
+
+Your endpoint must be on a public address, and should use `https://`. NervesHub refuses loopback, private and other reserved addresses unless the instance's operator allows them. See [Feature prerequisites](/hosting/feature-prerequisites#webhooks-to-private-addresses).
+
+<Tabs>
+  <Tab title="nh CLI">
+    ```bash
+    nh webhook create \
+      --url https://hooks.example.com/nerves-hub \
+      --description "Rollout dashboard and paging" \
+      --products my_app \
+      --events device.firmware_update.scheduled,device.firmware_update.finished,deployment_group.workflow_step.started,deployment_group.workflow_step.awaiting_approval,deployment_group.workflow_step.completed,deployment_group.workflow_step.failed,deployment_group.workflow_step.skipped
+    ```
+
+    The command prints the signing secret once. Save it then. `nh webhook list` shows the webhook's id, which you need for the check below. See [`nh webhook`](/cli/reference#nh-webhook).
+  </Tab>
+  <Tab title="Web UI">
+    <Steps>
+      <Step title="Open the Integrations page">
+        Open the `acme` organization and select the **Integrations** tab.
+      </Step>
+      <Step title="Add the webhook">
+        Click **Add integration**, then **Webhook**. Enter the **URL**. Under **Products**, select **Only some** and tick `my_app`. Under **Events**, tick **Update sent** and **Update finished**, and all five under **Deployment workflows**. Those are the seven events above. Click **Add webhook**.
+      </Step>
+      <Step title="Copy the signing secret">
+        Open the webhook's row menu and choose **Copy signing secret**.
+      </Step>
+    </Steps>
+  </Tab>
+</Tabs>
+
+### Receive and verify deliveries
+
+This receiver uses only the Python standard library (Python 3.9 or later). It verifies the signature over the raw body, answers straight away, and drops any delivery whose `webhook-id` it has already seen. Save it as `receiver.py`.
+
+```python
+import base64
+import hashlib
+import hmac
+import json
+import os
+import time
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+SECRET = os.environ["NERVES_HUB_WEBHOOK_SECRET"]  # whsec_...
+seen = set()  # use a database table with a unique index in production
+
+
+def verify(secret: str, headers: dict, raw_body: bytes, tolerance_seconds: int = 300) -> bool:
+    """Return True if the delivery was signed with `secret`."""
+    msg_id = headers["webhook-id"]
+    timestamp = headers["webhook-timestamp"]
+
+    # Refuse deliveries whose timestamp is too far from your clock.
+    if abs(time.time() - int(timestamp)) > tolerance_seconds:
+        return False
+
+    key = base64.b64decode(secret.removeprefix("whsec_"))
+    signed = f"{msg_id}.{timestamp}.".encode() + raw_body
+    expected = "v1," + base64.b64encode(hmac.new(key, signed, hashlib.sha256).digest()).decode()
+
+    # The header can hold several space-separated signatures.
+    return any(
+        hmac.compare_digest(candidate, expected)
+        for candidate in headers["webhook-signature"].split()
+    )
+
+
+def handle(event: dict) -> None:
+    kind, data = event["type"], event["data"]
+    if kind == "webhook.test":
+        print("test event:", data["message"])
+    elif kind.startswith("device.firmware_update."):
+        # Rollout dashboard: upsert by device identifier, order by event["timestamp"].
+        print(event["timestamp"], kind, data["device"]["identifier"], data.get("outcome", ""))
+    elif kind in (
+        "deployment_group.workflow_step.awaiting_approval",
+        "deployment_group.workflow_step.failed",
+    ):
+        # Call your paging service here.
+        print("PAGE:", data["deployment_group"]["name"], data["step"]["name"], kind)
+    else:
+        print(event["timestamp"], kind)
+
+
+class Receiver(BaseHTTPRequestHandler):
+    def do_POST(self):
+        raw_body = self.rfile.read(int(self.headers.get("content-length", 0)))
+        headers = {name.lower(): value for name, value in self.headers.items()}
+        try:
+            ok = verify(SECRET, headers, raw_body)
+        except (KeyError, ValueError):
+            ok = False
+        if not ok:
+            self.send_response(401)
+            self.end_headers()
+            return
+
+        # Accept first. NervesHub only reads the status.
+        self.send_response(204)
+        self.end_headers()
+
+        if headers["webhook-id"] in seen:
+            return  # a retry of an event you already have
+        seen.add(headers["webhook-id"])
+        handle(json.loads(raw_body))
+
+
+HTTPServer(("0.0.0.0", int(os.environ.get("PORT", "8080"))), Receiver).serve_forever()
+```
+
+```bash
+NERVES_HUB_WEBHOOK_SECRET='whsec_...' python3 receiver.py
+```
+
+The receiver listens on plain HTTP on port 8080, or on the port in `PORT` if you set it. Put it behind the proxy that serves your public `https://` URL. The Standard Webhooks libraries can replace `verify`. See [Verify signatures](/outbound/webhooks#verify-signatures).
+
+### Plan for retries and failures
+
+- **Answer within 15 seconds with any `2xx`.** Anything else is a failure, and NervesHub retries it several times over the following hours before it drops the delivery.
+- **Expect duplicates and reordering.** `webhook-id` is the same on every retry, which is what the receiver deduplicates on. Order events by the body's `timestamp`, not by arrival.
+- **A dead endpoint turns the webhook off.** This happens when the endpoint has accepted no delivery for 24 hours, or answers `410 Gone`. `my_app` gets a [product notification](/management/notifications) saying why. Fix the endpoint, then choose **Turn on** from the row menu or run `nh webhook update <id> --enabled`.
+
+<Warning>
+  Do not make the webhook your only route for approval and failure pages. Events sent while the webhook is off are dropped, not saved. The Slack channel from part 2, the group's status badge and the **Needs you** list on the **Deployment groups** page still show a release that is waiting.
+</Warning>
+
+See [Retries, ordering and duplicates](/outbound/webhooks#retries-ordering-and-duplicates) and [When an endpoint keeps failing](/outbound/webhooks#when-an-endpoint-keeps-failing).
+
+To show one device's update live, with its stage and percentage, open the [event stream](/outbound/event-stream) instead. It is a WebSocket that replays nothing, so keep the webhook for the record.
+
+### Check it works
+
+<Steps>
+  <Step title="Send a test event">
+    Run `nh webhook test <id>`, or choose **Send test event** from the webhook's row menu. NervesHub sends a `webhook.test` event and reports how your endpoint answered.
+  </Step>
+  <Step title="Read the receiver's output">
+    The receiver prints a line starting `test event:`. A `401` in its log means the secret does not match the webhook.
+  </Step>
+  <Step title="Watch a real rollout">
+    Release the next version to `production`. The receiver prints a `scheduled` and a `finished` line for each canary, then a `PAGE:` line when the release reaches the approval step.
+  </Step>
+</Steps>
+
+**Go deeper:** [Webhooks](/outbound/webhooks) · [Event stream](/outbound/event-stream) · [Deployment workflows](/concepts/deployment-workflows) · [`nh webhook`](/cli/reference#nh-webhook) · [Product notifications](/management/notifications) · [Feature prerequisites](/hosting/feature-prerequisites#webhooks-to-private-addresses)
+
+## 4. Add guardrails
+
+This part limits the damage a bad release or a leaked credential can do, and shows where to look when a rollout goes wrong.
+
+### Set the rollout controls
+
+Open a group and select the **Settings** tab. Each card saves on its own with **Save**. See [Rollout controls](/deployments/rollout-controls) for every setting.
+
+| Card | Setting | In a group with a workflow |
+| --- | --- | --- |
+| **Sending updates** | **Devices updating at once** | Not used. Each step sets its own `concurrent_updates`. |
+| **Sending updates** | **Priority queue**, with **On this version or older** set to a version well behind the fleet | Not used. The step order decides who goes first. |
+| **Penalty box** | **After this many failed attempts** | Still applies |
+
+`production` has a workflow, so the first two are disabled on it. Set them on `qa`, and on any group without a workflow. If you ever select **Remove workflow** on `production`, later releases go to the whole group, paced by these settings.
+
+Keep the penalty box defaults. A device that reports a failed update goes into the penalty box straight away, whatever the attempt limits are. The limits cover a device that keeps starting an update without finishing it. In a workflow, a device in the penalty box is what counts as a failed device towards its step's `failure_tolerance`.
+
+A device in the penalty box gets no updates until the penalty ends, and its page header shows **Blocked**. Once you have fixed the cause, let it out:
+
+```bash
+nh device clear-penalty <identifier>
+```
+
+**Retry step** on a failed workflow step also lets that step's failed devices out. See [Let a device out early](/deployments/rollout-controls#let-a-device-out-early).
+
+### Give approvers and CI their own roles
+
+Custom roles need NervesHub 2.5.4 or later. You need the built-in **Admin** role to create them. See [Custom roles](/access/roles#custom-roles).
+
+<Steps>
+  <Step title="Create the approver role">
+    Open the `acme` organization and select the **Roles** tab. Click **Add role**, name it `Release approver`, and tick **Create, edit and approve releases** and **Clear a device's penalty box**. Click **Create role**.
+  </Step>
+  <Step title="Create the CI role">
+    Add a second role named `CI`. Tick **Upload firmware** and **Create, edit and approve releases**. Those are the two permissions the pipeline uses.
+  </Step>
+  <Step title="Assign them">
+    On the **Users** tab, pick each role in the **Role** column: `Release approver` for the people who approve, `CI` for the user whose access token the pipeline holds. Custom roles can only be assigned in the web UI.
+  </Step>
+</Steps>
+
+Approving a step and creating a release are the same permission, so the two roles differ only in what else they hold. Neither can change group settings, signing keys or device tags.
+
+<Note>
+  A product API key can take the `CI` role instead of a user. Product API keys are on the NervesHub main branch but in no tagged release as of NervesHub 2.5.4. See [Credentials for CI](#credentials-for-ci).
+</Note>
+
+### Require two-factor authentication
+
+Two-factor authentication needs NervesHub 2.5.4 or later and `SECRETS_ENCRYPTION_KEY` set on the instance. See [Feature prerequisites](/hosting/feature-prerequisites#secrets-encryption-key).
+
+<Steps>
+  <Step title="Turn it on for every account first">
+    Each member sets it up on their own account page. Under **Two-factor authentication**, click **Set up** beside **Authenticator app**, scan the QR code, enter the **Code from the app** and click **Turn on**. Do this for the CI user too, and for yourself: an admin without it cannot turn the requirement on.
+  </Step>
+  <Step title="Require it">
+    On the organization's **Settings** tab, tick **Require two-factor authentication for every member** and click **Save**. The page lists the members who would be turned away.
+  </Step>
+</Steps>
+
+<Warning>
+  Once the requirement is on, API requests for `acme` answer `403` for a member who does not have two-factor authentication on. That includes the pipeline, if its token belongs to such a user. Existing access tokens of accounts that do have it on keep working.
+</Warning>
+
+`nh user auth` fails for any account with two-factor authentication on. Sign in with `nh user login`, which uses the browser. See [Two-factor authentication](/access/two-factor#effect-on-the-api-and-cli).
+
+### When a rollout misbehaves
+
+Work from the fleet down to the device.
+
+1. **Pause the group.** Select **Pause** on the `production` group page and confirm. Devices already updating finish. See [Pause a group](/setup/deployments#pause-a-group).
+2. **Product Insights.** **Failing updates** lists devices that keep failing, and **Stands out** names a firmware version that is less healthy than the rest. See [Insights and history](/management/insights).
+3. **Product notifications.** A workflow that stopped after failures shows here, as does a webhook that was turned off. See [Product notifications](/management/notifications).
+4. **The device page.** The header shows **Blocked** for a device in the penalty box. The **Firmware History** tab shows what the device installed, and the **Health** tab shows current metrics and alarms. See [Health monitoring](/management/health-monitoring).
+5. **The audit trail.** The **Activity** tab on the device and on the group records who released, approved, retried or skipped. See [Audit log](/access/audit-log).
+
+Trend charts, per-attempt update history and health charts need ClickHouse on the instance. See [Feature prerequisites](/hosting/feature-prerequisites#clickhouse), and [ClickHouse](/hosting/clickhouse) if you run your own.
+
+### Check it works
+
+1. Run this before a rollout. It should return no devices:
+
+   ```bash
+   nh device list --query 'updates = "penalty-box"'
+   ```
+
+2. Open the `qa` group's **Activity** tab. Your settings changes are listed with your name. The `production` group's tab lists the workflow upload and every release, approval, retry and skip.
+3. After the two-factor requirement is on, run any `nh` command with the CI token, such as `nh device list`. It still succeeds.
+4. On the next `production` rollout, have someone with the `Release approver` role select **Approve and continue** when the canary step finishes.
+
+**Go deeper:** [Rollout controls](/deployments/rollout-controls) · [Deployment workflows](/concepts/deployment-workflows) · [Roles and permissions](/access/roles) · [Two-factor authentication](/access/two-factor) · [Audit log](/access/audit-log) · [Insights and history](/management/insights) · [Product notifications](/management/notifications) · [Health monitoring](/management/health-monitoring) · [Finding devices](/management/finding-devices) · [ClickHouse](/hosting/clickhouse) · [CI and automation](/outbound/ci-cd)
+
+## What you have now
+
+The finished `.github/workflows/firmware.yml`, unchanged since part 1:
+
+```yaml
+name: Firmware
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  NERVES_HUB_URI: https://your.nerveshub.host # leave out for NervesCloud
+  NERVES_HUB_ORG: acme
+  NERVES_HUB_PRODUCT: my_app
+  NERVES_HUB_TOKEN: ${{ secrets.NERVES_HUB_TOKEN }}
+  NERVES_HUB_NON_INTERACTIVE: "true"
+  GH_TOKEN: ${{ github.token }}
+
+jobs:
+  qa:
+    if: github.ref_type == 'branch'
+    runs-on: ubuntu-latest
+    env:
+      MIX_TARGET: rpi4
+      MIX_ENV: prod
+      FWUP_VERSION: "1.13.2"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install fwup and squashfs-tools
+        run: |
+          wget https://github.com/fwup-home/fwup/releases/download/v${FWUP_VERSION}/fwup_${FWUP_VERSION}_amd64.deb
+          sudo dpkg -i fwup_${FWUP_VERSION}_amd64.deb
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends squashfs-tools
+
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: "27"
+          elixir-version: "1.18"
+
+      - name: Install nh
+        run: |
+          gh release download --repo nerves-hub/nh --pattern 'nh_*_linux_amd64.tar.gz' --output nh.tar.gz
+          mkdir -p "$HOME/.local/bin"
+          tar -xzf nh.tar.gz -C "$HOME/.local/bin" nh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Add the SSH public key the firmware authorizes
+        env:
+          DEVICE_SSH_PUBLIC_KEY: ${{ vars.DEVICE_SSH_PUBLIC_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$DEVICE_SSH_PUBLIC_KEY" > ~/.ssh/id_ed25519.pub
+
+      - name: Build firmware
+        env:
+          NERVES_HUB_PRODUCT_KEY: ${{ secrets.NERVES_HUB_PRODUCT_KEY }}
+          NERVES_HUB_PRODUCT_SECRET: ${{ secrets.NERVES_HUB_PRODUCT_SECRET }}
+        run: |
+          mix archive.install hex nerves_bootstrap --force
+          mix deps.get
+          mix firmware
+
+      - name: Sign, upload and release to qa
+        env:
+          NERVES_HUB_PRIVATE_KEY: ${{ secrets.NERVES_HUB_PRIVATE_KEY }}
+        run: |
+          uuid=$(nh firmware upload _build/rpi4_prod/nerves/images/my_app.fw -o json | jq -r .uuid)
+          nh deployment release create qa --firmware "$uuid" \
+            --description "main at ${GITHUB_SHA::7}"
+
+  production:
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install nh
+        run: |
+          gh release download --repo nerves-hub/nh --pattern 'nh_*_linux_amd64.tar.gz' --output nh.tar.gz
+          mkdir -p "$HOME/.local/bin"
+          tar -xzf nh.tar.gz -C "$HOME/.local/bin" nh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Release the tested firmware to production
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          uuid=$(nh deployment release list qa -o json \
+            | jq -r --arg v "$version" '[.[] | select(.firmware.version == $v)][0].firmware.uuid // empty')
+          if [ -z "$uuid" ]; then
+            echo "No qa release has firmware version $version" >&2
+            exit 1
+          fi
+          nh deployment release create production --firmware "$uuid" \
+            --description "my_app $version" \
+            --notes "Promoted from qa by tag $GITHUB_REF_NAME at ${GITHUB_SHA::7}."
+```
+
+The workflow definition, `production-workflow.json`, uploaded on the `production` group's **Workflow** card:
+
+```json
+{
+  "version": 1,
+  "steps": [
+    {
+      "name": "Canary",
+      "description": "Devices tagged canary",
+      "matching_conditions": {
+        "tags": ["canary"],
+        "match_limit": 5
+      },
+      "concurrent_updates": 5,
+      "failure_tolerance": { "devices": 2 }
+    },
+    {
+      "type": "approval_required",
+      "name": "Sign-off",
+      "description": "Someone confirms the canaries are healthy"
+    },
+    {
+      "type": "catch_all",
+      "name": "Rest of the fleet",
+      "concurrent_updates": 25
+    }
+  ]
+}
+```
+
+## Where to go next
+
+- [Complete Nerves device setup](/guides/complete-device-setup) covers the device side of a production fleet: certificate authentication, control over when updates apply, and every extension.
+- [Deployment workflows](/concepts/deployment-workflows) has the full workflow file format, for more steps than these three.
+- [Connecting code](/deployments/connecting-code) and [Required releases](/deployments/releases#required-releases) are the two release features this guide does not use.
+- [Microsoft Teams](/outbound/teams) and [Discord](/outbound/discord) take the same notifications as Slack.

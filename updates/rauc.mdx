@@ -1,0 +1,196 @@
+---
+title: "RAUC bundles"
+sidebarTitle: "RAUC"
+description: "Enable RAUC bundle support, sign and upload verity bundles, and understand how NervesHub reads their metadata."
+---
+
+NervesHub can store and deploy [RAUC](https://rauc.io/) bundles (`.raucb`) alongside fwup archives. Use it for Linux devices built with Yocto or Buildroot that already update with `rauc install`.
+
+<Warning>
+  RAUC support is experimental and off by default. It must be turned on for the instance and then for each product.
+</Warning>
+
+## Requirements
+
+| What | Needed |
+| --- | --- |
+| NervesHub | 2.5.0 or later |
+| Instance | `RAUC_FIRMWARE_ENABLED=true`, and `openssl` on the server. See [feature prerequisites](/hosting/feature-prerequisites#firmware-formats). |
+| RAUC used to build bundles | 1.9 or later |
+| RAUC on the device | 1.9 or later |
+| Bundle format | `verity` |
+| Device client | The [Linux agent](/integrations/linux-agent) built with its `rauc` feature |
+
+RAUC versions before 1.9 drop `[meta.<label>]` manifest sections while building a bundle, so the metadata NervesHub needs never reaches it. On the device, `bundle.hash` was added to slot status in 1.9, and that is how a device reports which bundle it is running.
+
+## Enable RAUC
+
+<Steps>
+  <Step title="Enable it on the instance">
+    Whoever hosts the instance sets `RAUC_FIRMWARE_ENABLED=true`. Until then no `.raucb` file is recognised and the product setting below is not shown. See [feature prerequisites](/hosting/feature-prerequisites#firmware-formats).
+  </Step>
+
+  <Step title="Enable it on the product">
+    Open **Product settings**. On the **General** tab, in the **Firmware** card, turn on **RAUC bundles**.
+
+    With the CLI:
+
+    ```bash
+    nh product update my_app --allow-tool rauc
+    ```
+
+    With the API, set `allowed_update_tools` on the product:
+
+    ```bash
+    curl -X PATCH \
+      -H "Authorization: token $NERVES_HUB_TOKEN" \
+      -H "Content-Type: application/json" \
+      -d '{"allowed_update_tools": ["fwup", "rauc"]}' \
+      https://<host>/api/orgs/<org>/products/<product>
+    ```
+
+    Listing a format the instance has not enabled returns a 422.
+  </Step>
+
+  <Step title="Register your signing certificate">
+    See [Signing](#signing). A bundle is refused until the organization holds a certificate it verifies against.
+  </Step>
+</Steps>
+
+A product accepts only the formats in `allowed_update_tools`. The default is `["fwup"]`, and fwup cannot be removed. Uploading a `.raucb` to a product that has not opted in is rejected with a message naming the product.
+
+## Write the manifest
+
+A RAUC manifest carries `compatible` and `version`. NervesHub needs more than that, so add a `[meta.nerveshub]` section:
+
+```ini
+[update]
+compatible=acme-gateway
+version=1.4.2
+description=nightly
+
+[bundle]
+format=verity
+
+[meta.nerveshub]
+product=Gateway
+architecture=aarch64
+```
+
+NervesHub reads its firmware fields from the manifest like this:
+
+| NervesHub field | Source |
+| --- | --- |
+| Product | `[meta.nerveshub] product`, falling back to `[update] compatible` |
+| Version | `[update] version` (required) |
+| Architecture | `[meta.nerveshub] architecture` (required) |
+| Platform | `[meta.nerveshub] platform`, falling back to `[update] compatible` |
+| UUID | `[meta.nerveshub] uuid` if set, otherwise derived from the manifest |
+| Description | `[update] description` |
+| VCS identifier | `[update] build` |
+| Author | `[meta.nerveshub] author` |
+| Misc | `[meta.nerveshub] misc` |
+
+Rules to follow:
+
+- The product must match the name of the NervesHub product you upload to.
+- `[update] compatible` is required.
+- `[update] version` must be a valid semantic version, such as `1.4.2`. NervesHub does not rewrite RAUC versions.
+- `architecture` has no fallback. Deployment groups match on it.
+- The bundle must be in the `verity` format. Plain bundles are refused.
+
+### The firmware UUID
+
+RAUC has no firmware UUID, so NervesHub gets one in one of two ways.
+
+**Derived.** Without a declared UUID, NervesHub takes the SHA-256 of the manifest as embedded in the bundle's signature, and stores the first 128 bits formatted as a UUID. This is the digest RAUC reports as `hash` in `rauc info --output-format=json` and records as `bundle.hash` for the slot it installed into. A device can therefore read the same value back from `rauc status` after an install. The UUID changes whenever anything in the manifest changes, including the checksum of any image in the bundle.
+
+**Declared.** Set `uuid` in `[meta.nerveshub]` to name the firmware yourself. The value must be a UUID. Use this when devices are first flashed by something other than `rauc install`, such as a factory image. RAUC records a bundle hash only for slots it installed, so such a device cannot report a derived UUID until its first RAUC update. With a declared UUID your build can write the same value into the manifest and into the image. The [Linux agent](/integrations/linux-agent#rauc) reads it from a file in the root filesystem.
+
+## Signing
+
+RAUC signs bundles with CMS against an X.509 keyring, so the key you register with NervesHub is a certificate, not a bare public key.
+
+```bash
+openssl req -x509 -newkey rsa:4096 -nodes -days 3650 \
+  -keyout signing-key.pem -out signing-cert.pem -subj "/CN=acme-signing"
+
+rauc bundle --cert signing-cert.pem --key signing-key.pem input-dir/ bundle.raucb
+```
+
+Register `signing-cert.pem` with your organization:
+
+<Tabs>
+  <Tab title="Web">
+    In your organization's settings, under **Signing keys**, select **Add signing key**. Choose the **RAUC (X.509 certificate)** scheme and paste the PEM certificate.
+  </Tab>
+
+  <Tab title="CLI">
+    ```bash
+    nh key add rauc-signing --scheme x509_certificate --public-key signing-cert.pem
+    ```
+  </Tab>
+</Tabs>
+
+How verification works:
+
+- A bundle must verify against a certificate registered to the organization, or the upload is rejected.
+- Only the organization's certificates are trusted. The server's system CA store is not consulted.
+- If you sign with a leaf certificate issued by your own CA, register the CA certificate. Registering the leaf also works, but then you must register each new leaf when you rotate it.
+- fwup Ed25519 keys and ESP-IDF RSA keys held by the organization are ignored for RAUC.
+- There is no setting to allow unsigned RAUC bundles. RAUC does not build them.
+
+<Warning>
+  Do not restrict the signing certificate's `extendedKeyUsage` to `codeSigning`. RAUC verifies with the default S/MIME signing purpose, and NervesHub applies the same check, so such a bundle is refused at upload. `openssl x509 -purpose` should report `S/MIME signing : Yes` for the certificate.
+</Warning>
+
+NervesHub's check does not replace the device's. RAUC on the device verifies every bundle against the keyring in its own `system.conf`.
+
+## Upload a bundle
+
+Upload a `.raucb` the same way as any other firmware. NervesHub identifies the format from the file's contents, not from its extension.
+
+<Tabs>
+  <Tab title="Web">
+    Open the product's **Firmware** page and select **Upload firmware**.
+  </Tab>
+
+  <Tab title="CLI">
+    ```bash
+    nh firmware upload bundle.raucb
+    ```
+
+    `nh` previews the manifest's `[update]` and `[meta.nerveshub]` values and uploads the bundle as it is. Bundles are signed when they are built, so `nh` does not sign them.
+  </Tab>
+</Tabs>
+
+Then create or update a [deployment group](/setup/deployments) as you would for fwup firmware.
+
+## Check that it works
+
+After the upload, the firmware appears in the product's firmware list with the version, platform and architecture from the manifest. If the upload fails, the message says which rule was broken:
+
+| Message mentions | Cause |
+| --- | --- |
+| The product does not accept rauc firmware | The product has not turned on **RAUC bundles** |
+| No `[meta.nerveshub]` section | The section is missing, or the bundle was built with RAUC older than 1.9 |
+| The manifest has no `[meta.nerveshub] architecture` | The section is there but the field is not |
+| Plain format | Rebuild with `format=verity` in `[bundle]` |
+| A uuid that is not a UUID | `[meta.nerveshub] uuid` is set to something else |
+| Signing certificate is not valid for signing | The certificate's `extendedKeyUsage` excludes S/MIME signing |
+| Could not run `openssl` | `openssl` is missing on the server |
+
+## Limits
+
+- **No delta updates.** NervesHub never generates [deltas](/management/delta-updates) for RAUC bundles. A deployment group with **Delta updates** turned on still sends RAUC devices the whole bundle URL. RAUC itself fetches only the blocks the target slot lacks, using HTTP range requests against the bundle.
+- **Streaming needs range requests.** The Linux agent hands RAUC the firmware URL. The firmware storage behind your instance must honour `Range` requests, and the download URL must stay valid for the length of the install.
+- **Bundle contents are not inspected.** What a bundle installs is decided by your manifest and the device's slot configuration.
+- **Archives are separate.** [Archives](/updates/archives) are fwup files regardless of the firmware format.
+
+## Related pages
+
+- [Linux agent](/integrations/linux-agent)
+- [Yocto layer](/integrations/yocto)
+- [Firmware signing](/concepts/firmware-signing)
+- [How firmware updates work](/updates/overview)
+- [Firmware format prerequisites](/hosting/feature-prerequisites#firmware-formats)

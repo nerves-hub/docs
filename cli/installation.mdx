@@ -1,66 +1,60 @@
 ---
 title: "Install the nh CLI"
 sidebarTitle: "Installation"
-description: "Install the nh CLI on macOS, Linux, or Windows using Homebrew, a prebuilt binary, or Go — no Elixir toolchain required."
+description: "Install the nh CLI on macOS, Linux or Windows with Homebrew, a prebuilt binary, or Go."
 ---
 
-The `nh` CLI is a standalone binary that lets you manage your NervesHub organization, devices, firmware, and deployment groups directly from the command line or inside CI/CD pipelines — no Elixir toolchain required. Choose the installation method that fits your operating system and workflow below.
+`nh` is the command-line interface for NervesHub and NervesCloud. It is a single binary written in Go, so it needs no Elixir toolchain. It manages organizations, products, devices, firmware, [archives](/updates/archives), [deployment groups](/setup/deployments) and [signing keys](/concepts/firmware-signing), and generates the X.509 certificates devices authenticate with.
 
-## Install Options
+## Install
 
 <Tabs>
-  <Tab title="macOS / Linux (Homebrew)">
-    The quickest way to install `nh`. Homebrew also handles future upgrades.
-
+  <Tab title="Homebrew (macOS and Linux)">
     ```bash
     brew install nerves-hub/tap/nh-cli
     ```
 
-    To upgrade an existing installation:
+    To upgrade later:
 
     ```bash
     brew upgrade nerves-hub/tap/nh-cli
     ```
 
     <Warning>
-      The same tap also carries an older Elixir build of the CLI as `nerves-hub/tap/nh`, which provides its own `nh` command. If you have it installed, remove it first so the two do not collide:
+      The same tap carries the older Elixir CLI as `nerves-hub/tap/nh`, which installs the same `nh` command. If you have it, remove it first:
 
       ```bash
       brew uninstall nerves-hub/tap/nh
       ```
     </Warning>
-
-    <Note>
-      If macOS reports that the `nh` binary is not trusted after installation, open **System Settings → Privacy & Security**, scroll to the Security section, and click **Open Anyway** next to the `nh` entry. Then re-run `nh` in your terminal.
-    </Note>
   </Tab>
 
   <Tab title="Prebuilt binary">
-    Download an archive from the [latest release](https://github.com/nerves-hub/nh/releases/latest). Archives are named `nh_<version>_<os>_<arch>`, where `os` is `darwin`, `linux`, or `windows`, and `arch` is `amd64` or `arm64`. Windows archives are `.zip`; everything else is `.tar.gz`.
-
     <Steps>
-      <Step title="Download the release archive">
-        Pick the archive matching your OS and CPU — for example `nh_1.2.0_darwin_arm64.tar.gz` on Apple Silicon.
+      <Step title="Download the archive">
+        Download the archive for your system from the [latest release](https://github.com/nerves-hub/nh/releases/latest).
+
+        Archives are named `nh_<version>_<os>_<arch>`. `os` is `linux`, `darwin` or `windows`. `arch` is `amd64` or `arm64`. Windows archives are `.zip`. The others are `.tar.gz`.
       </Step>
 
       <Step title="Extract the binary">
-        Extract it to a directory of your choice, for example `C:\Tools\nh\` on Windows or `~/.local/bin/` on Linux and macOS.
+        Extract the archive. It contains the `nh` binary (`nh.exe` on Windows).
       </Step>
 
-      <Step title="Add to PATH">
-        Add the directory containing the `nh` (or `nh.exe`) binary to your system `PATH` so it is available from any terminal.
+      <Step title="Put it on your PATH">
+        Move the binary to a directory on your `PATH`.
       </Step>
     </Steps>
   </Tab>
 
-  <Tab title="From source (Go)">
-    Building `nh` yourself requires Go 1.26.4 or newer.
+  <Tab title="From source">
+    Building `nh` needs Go 1.26.4 or newer.
 
     ```bash
     go install github.com/nerves-hub/nh@latest
     ```
 
-    Or clone the repository and build it directly:
+    Or clone the repository and build it:
 
     ```bash
     git clone https://github.com/nerves-hub/nh.git
@@ -71,40 +65,73 @@ The `nh` CLI is a standalone binary that lets you manage your NervesHub organiza
   </Tab>
 </Tabs>
 
-## Verify Installation
+## Check the installation
 
-After installing, confirm that `nh` is available and check the installed version:
+Print the installed version:
 
 ```bash
 nh --version
 ```
 
-To see top-level help and a summary of all available commands:
+A release build prints the version, then the commit and build date:
+
+```text
+nh <version> (<commit>) <date>
+```
+
+List the available commands:
 
 ```bash
 nh --help
 ```
 
-A successful installation prints the version string, for example:
-
-```text
-nh version 0.x.y
-```
-
-## Runtime Dependency
-
-Signing and uploading firmware shells out to [`fwup`](https://github.com/fwup-home/fwup), which must be on your `PATH`. No other command needs it, and it is not required when uploading with `--skip-signing`.
-
-## Migrating from the Elixir CLI
-
-If you previously used the Elixir `nerves_hub_cli`, import its settings once:
+Once you have [set the server](/cli/configuration#set-the-server), check that `nh` can reach it. This needs no sign-in.
 
 ```bash
-nh migrate
+nh status
 ```
 
-This reads that CLI's data directory (`~/.nerves-hub`, or `$NERVES_HUB_HOME`) and copies your saved defaults, API token, and signing keys into `nh`'s own data directory. It leaves the original files in place, and signing keys are re-encoded rather than decrypted, so no key password is required and password-protected keys keep theirs.
+## Tools nh calls
 
-<Note>
-  `nh` is open source under the MIT license. View the source code, report issues, and track releases at [github.com/nerves-hub/nh](https://github.com/nerves-hub/nh).
-</Note>
+Most commands need nothing else installed. Signing depends on the firmware format.
+
+| Task | Needs on your `PATH` |
+| --- | --- |
+| Sign or preview an fwup (`.fw`) image with `nh firmware upload` | [`fwup`](https://github.com/fwup-home/fwup) |
+| Check and sign an archive with `nh archive upload` | [`fwup`](https://github.com/fwup-home/fwup) |
+| Sign an ESP-IDF (`.bin`) image | `espsecure.py` or `espsecure`, from [esptool](https://github.com/espressif/esptool) |
+| Sign an AtomVM (`.avm`) packbeam | Nothing. `nh` signs it itself. |
+| Upload a RAUC (`.raucb`) bundle | Nothing. Bundles are signed when they are built. |
+
+`fwup` is not needed when you pass `--skip-signing`. Without it, `nh firmware upload --skip-signing` warns that it cannot read the image's metadata and uploads the file as it is. `nh archive upload --skip-signing` warns and leaves the metadata check to the server.
+
+## Migrate from the Elixir CLI
+
+If you used the Elixir `nerves_hub_cli`, import its settings and keys:
+
+```bash
+nh migrate --dry-run   # show what would be imported
+nh migrate             # import it
+```
+
+`nh migrate` reads the old CLI's data directory (`~/.nerves-hub`, or `$NERVES_HUB_HOME`) and copies into `nh`'s data directory:
+
+- Your saved API URI, organization, product and API token.
+- Your signing keys, from `keys/<org>/` in the old directory to `keys/<org>/` in the new one.
+
+| Flag | Description |
+| --- | --- |
+| `--from <dir>` | Read the old CLI's data from another directory. |
+| `--dry-run` | Show what would be imported without writing anything. |
+| `--force` | Overwrite `nh` settings and keys that already exist. |
+
+The old directory is only read, never changed. Signing keys are re-encoded, not decrypted, so you need no key password and password-protected keys keep theirs. Existing `nh` settings and keys are left alone unless you pass `--force`, so you can run it more than once.
+
+After migrating, run `nh user whoami` to confirm the token still works. If it does not, sign in again with `nh user login`.
+
+## Related pages
+
+- [Configure the nh CLI](/cli/configuration)
+- [nh command reference](/cli/reference)
+- [Quickstart](/quickstart)
+- [CI and automation](/outbound/ci-cd)

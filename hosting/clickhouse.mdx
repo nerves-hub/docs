@@ -1,0 +1,157 @@
+---
+title: "ClickHouse for a self-hosted instance"
+sidebarTitle: "ClickHouse"
+description: "What connecting ClickHouse adds to a NervesHub instance, which features and pages are missing without it, and how its variables, migrations and retention work."
+---
+
+NervesHub keeps its core data in PostgreSQL. It keeps high-volume device data in ClickHouse: metric history, logs, error reports, connection history, update history and the device message log. ClickHouse is optional, but each of those features needs it. NervesHub 2.5.0 moved metric history and connection history there from PostgreSQL.
+
+You turn it on by setting `CLICKHOUSE_URL`. NervesHub calls this "analytics" in its code and in its messages to users.
+
+## What is missing without ClickHouse
+
+### Extensions that are not offered
+
+Three extensions report as disabled when `CLICKHOUSE_URL` is unset, so NervesHub does not attach them to any device:
+
+| Extension | Without ClickHouse |
+| --- | --- |
+| [Logging](/extensions/logging) | Not offered. Device logs are not stored. |
+| [Error reports](/extensions/error-reports) | Not offered. No error reports are stored. |
+| [Metrics](/extensions/metrics-and-alarms) | Not offered. Devices report metrics through the [Health extension](/extensions/health) instead. |
+
+The Health, Geo, Alarms, Local Shell and Network Identity extensions do not depend on ClickHouse. See [Extensions overview](/extensions/overview).
+
+### Pages and data
+
+| Where | Without ClickHouse |
+| --- | --- |
+| Device page, **Logs** tab | Shows "Analytics aren't enabled for your platform." |
+| Device page, **Errors** tab | Shows the same notice. |
+| Device page, **Data History** tab | Shows the same notice. Device messages are not recorded. |
+| Device page, **Health** tab | Shows current metric values. Each chart reads "Metric history needs analytics, which isn't enabled for your platform." The connection lane and the offline shading on charts are not drawn. |
+| Device page, **Firmware History** tab, **Update attempts** view | Empty: "No update attempts recorded for the device." |
+| Product **Insights** ([Insights and history](/management/insights)) | Fleet composition and the list of devices failing to update still work. The trends row and the **Flapping** list are left out. |
+| [Deployment group](/setup/deployments), **Stats** tab | Update outcomes and durations read "This server doesn't keep update outcomes." |
+| Firmware page | The count of failed installs over the last 7 days is not loaded. |
+| Product settings, **Device health** | You can edit and save health profiles. The preview of what a change does to the fleet, and the fleet's observed readings, are not available. |
+| Alarm history and health status history | Not recorded. Current alarms and current health status still work. |
+
+### Health status
+
+With ClickHouse, NervesHub judges each device against its product's [health profile](/management/health-monitoring), over a window of stored readings.
+
+Without ClickHouse, health profiles are not evaluated. NervesHub instead checks the values in each health report against fixed thresholds:
+
+| Metric | Warning at | Unhealthy at |
+| --- | --- | --- |
+| `cpu_usage_percent` | 80 | 90 |
+| `mem_used_percent` | 70 | 80 |
+| `disk_used_percentage` | 80 | 90 |
+| `load_15min` | 8 | 10 |
+
+### API
+
+| Endpoint | Without ClickHouse |
+| --- | --- |
+| Device logs (`.../devices/{identifier}/logs`) | 501, "This platform has no analytics database configured, so device logs are not stored." |
+| Device metrics (`.../devices/{identifier}/metrics`) | 501, "This platform has no analytics database configured, so device metric history is not stored." |
+
+### What keeps working
+
+Current metric values, the devices list's metrics filter and `metric:` [advanced queries](/management/finding-devices) read PostgreSQL. They work without ClickHouse, using the metrics devices report through the Health extension.
+
+## Enable it
+
+<Steps>
+  <Step title="Run a ClickHouse server">
+    Use a ClickHouse server or a managed service that every NervesHub node can reach. Create a database for NervesHub.
+  </Step>
+  <Step title="Set the URL">
+    Set `CLICKHOUSE_URL` on every node, with the user, password, host, port and database:
+
+    ```bash
+    CLICKHOUSE_URL=https://nerveshub:password@clickhouse.example.com:8443/nerves_hub
+    ```
+
+    If your ClickHouse presents a certificate from a private CA, also set `CLICKHOUSE_CA_PEM` to the base64-encoded PEM bundle of that CA.
+  </Step>
+  <Step title="Restart the nodes">
+    Each node connects at boot and runs any pending ClickHouse migrations.
+  </Step>
+</Steps>
+
+## Check that it works
+
+1. Open a device's **Data History** tab. It lists the device's messages instead of the "Analytics aren't enabled" notice.
+2. Turn on the Logging extension for a product, then open the **Logs** tab of one of its devices. See [Logging](/extensions/logging).
+3. Open the device's **Health** tab after it has reported. The charts show readings stored since you connected ClickHouse.
+
+## Variables
+
+All of these are only read in a production release, and only when `CLICKHOUSE_URL` is set.
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `CLICKHOUSE_URL` | none | ClickHouse connection URL. Setting it turns analytics on. |
+| `CLICKHOUSE_CA_PEM` | none | Base64-encoded PEM bundle of CA certificates to verify ClickHouse against. It replaces the system CA store for these connections, so set it only for a ClickHouse behind a private CA. |
+| `ANALYTICS_POOL_SIZE` | `10` | Connections per pool. |
+| `ANALYTICS_POOL_COUNT` | `1` | Number of pools. |
+| `ANALYTICS_AUTO_MIGRATOR` | `true` | Run pending ClickHouse migrations when a node boots. |
+| `ANALYTICS_BUFFER_MAX_BATCH_SIZE` | `1000` | Rows buffered before a write is flushed. |
+| `ANALYTICS_BUFFER_MAX_DELAY_MS` | `500` | Milliseconds before a partial batch is flushed anyway. |
+| `ANALYTICS_BUFFER_MAX_SIZE` | `50000` | The most rows a buffer holds while ClickHouse is unreachable. Past it, the oldest rows are dropped. |
+| `DEVICE_MESSAGES_MAX_PAYLOAD_BYTES` | `8192` | How much of one device message body is stored for the **Data History** tab. Longer bodies are truncated. |
+
+Health evaluation also uses analytics connections. Each running evaluation holds one, so keep `HEALTH_EVALUATION_CONCURRENCY` below `ANALYTICS_POOL_SIZE` multiplied by `ANALYTICS_POOL_COUNT`. Unset, it is half the analytics pool, and at most 10. The node logs a warning at boot if the concurrency is not below the pool.
+
+Writes are buffered on each node and sent in batches. A page can take a moment to show something a device just sent.
+
+## Migrations
+
+ClickHouse has its own migrations, separate from the PostgreSQL ones. They live in `priv/analytics_repo/migrations` in the NervesHub source.
+
+With `ANALYTICS_AUTO_MIGRATOR=true`, the default, each node runs pending ClickHouse migrations when it boots.
+
+If you set `ANALYTICS_AUTO_MIGRATOR=false`, run migrations yourself before starting the new version:
+
+```bash
+bin/nerves_hub eval "NervesHub.Release.Tasks.migrate()"
+```
+
+That task migrates PostgreSQL, and ClickHouse as well when `CLICKHOUSE_URL` is set.
+
+NervesHub creates its tables with the `MergeTree` family of engines, and sets `MergeTree` as the default table engine, which ClickHouse Cloud requires.
+
+## Retention
+
+Each ClickHouse table has a time to live (TTL) written into its definition when the migration creates it. ClickHouse deletes rows older than the TTL on its own. None of these TTLs follows an environment variable.
+
+| Table | Holds | Kept for |
+| --- | --- | --- |
+| `device_log_lines` | Device logs | 3 days |
+| `device_messages` | The device message log (**Data History**) | 3 days |
+| `device_error_reports` | Error report occurrences | 30 days |
+| `device_metrics` | Metric history | 30 days |
+| `device_alarm_history` | Alarms being set and cleared | 90 days |
+| `device_health_history` | Health status changes | 90 days |
+| `device_update_history` | How each update attempt ended | 365 days |
+| `device_connection_history` | Device connections | No TTL |
+
+Two environment variables look like they control retention and do not:
+
+- `EXTENSIONS_LOGGING_DAYS_TO_KEEP` (default `3`) is read at boot, but no code on main uses the value. Device logs follow the 3 day TTL of `device_log_lines`.
+- `HEALTH_CHECK_DAYS_TO_RETAIN` (default `7`) is read at boot, but no code on main uses the value. Metric history follows the 30 day TTL of `device_metrics`.
+
+## Upgrading from before 2.5.0
+
+The 2.5.0 migrations drop device health history and the PostgreSQL device metrics table. They do not copy the data to ClickHouse. Metric history starts empty. Once those migrations have run, rolling back to 2.4.0 is not supported.
+
+## Related pages
+
+- [Feature prerequisites](/hosting/feature-prerequisites)
+- [Health monitoring](/management/health-monitoring)
+- [Insights and history](/management/insights)
+- [Logging extension](/extensions/logging)
+- [Error reports extension](/extensions/error-reports)
+- [Runtime configuration on GitHub](https://github.com/nerves-hub/nerves_hub_web/blob/main/docs/runtime_configuration.md)

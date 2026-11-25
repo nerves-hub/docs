@@ -1,18 +1,24 @@
 ---
-title: "Remote Console and Shell Access"
-sidebarTitle: "Remote Console"
-description: "Connect to any online device for live debugging with IEx, a system shell, or one-off code execution — no SSH keys or inbound firewall rules required."
+title: "Remote console"
+sidebarTitle: "Remote console"
+description: "Open a remote IEx console on a connected device from the browser or the nh CLI."
 ---
 
-NervesHub lets you open a live IEx (Elixir REPL) or system shell session on any connected device directly from the browser or CLI — without physical access, without SSH keys, and without exposing your devices to the public internet. This makes it possible to debug a misbehaving device in the field, inspect runtime state, or run a one-off command on a remote device the same way you would on a device sitting on your desk.
+The remote console is an IEx session on a device, carried over the connection the device already holds to NervesHub. You do not need SSH keys or a route to the device. Use it to inspect a running device, try a fix, or send it a file.
 
-<Note>
-  Remote console requires `remote_iex: true` in your device firmware configuration. If you publish firmware without this setting, the console option will not be available for devices running that build.
-</Note>
+<Warning>
+  A console gives full access to the device's Elixir runtime. Anyone who can open one can read secrets from the application environment and call any function on the device. Check who holds the `device:console` permission in production organizations.
+</Warning>
 
-## Enable Remote IEx
+## Requirements
 
-Add the following to your firmware's target config to enable the remote console feature in NervesHubLink:
+* A device running `nerves_hub_link` with `remote_iex: true`. It is off by default.
+* The device is online.
+* The `device:console` permission. The built-in **Manage** and **Admin** roles hold it. The **View** role does not. A custom role can be given it. See [Roles](/access/roles).
+
+The console needs nothing extra on the NervesHub instance.
+
+## Enable it in firmware
 
 ```elixir
 # config/target.exs
@@ -20,90 +26,111 @@ config :nerves_hub_link,
   remote_iex: true
 ```
 
-Rebuild and ship your firmware after adding this setting. Devices running firmware without this flag will not accept console connections.
+Build and deploy firmware with this setting. Devices running firmware without it do not offer a console.
 
-## From the CLI
+The IEx process starts on the first data from NervesHub and stops after 5 minutes of inactivity. Change that with `remote_iex_timeout`, in seconds:
 
-### Open an IEx Console
+```elixir
+config :nerves_hub_link,
+  remote_iex: true,
+  remote_iex_timeout: 900
+```
 
-Connect to a live IEx REPL on a device using the `nh` CLI. The device must be online and running firmware with `remote_iex: true`.
+## Open a console in the browser
+
+<Steps>
+  <Step title="Open the device">
+    In your product, select **Devices**, then the device.
+  </Step>
+  <Step title="Select the Console tab">
+    The tab is dimmed while the device is offline. When the device is online and its firmware has `remote_iex: true`, the terminal connects.
+  </Step>
+</Steps>
+
+If the terminal shows "The device console isn't currently available", the device is offline or its firmware does not enable `remote_iex`. If it shows "You don't have the required permissions to access a Device console", your role lacks `device:console`.
+
+The session is shared. Everyone who has the **Console** tab open for the device sees the same console.
+
+### Send a file to the device
+
+Drop a file on the console to send it to the device. NervesHub shows the upload, then the device receiving and saving the file. This needs `nerves_hub_link` 2.1.0 or later.
+
+## Open a console from the CLI
 
 ```bash
 nh device console my-device-001
 ```
 
-This drops you into an interactive Elixir session on the remote device. You can call any function available in the device's runtime environment, inspect process state, and evaluate arbitrary Elixir expressions — exactly as if you had connected via `iex --name` locally.
+`nh` needs an interactive terminal. The session stays open until the device's console ends or you press Ctrl-C.
 
-### Open a System Shell
+### Send code without a session
 
-If you need access to the underlying Linux shell rather than the Elixir REPL:
-
-```bash
-nh device shell my-device-001
-```
-
-The shell session gives you access to the device's filesystem, running processes, and system tools available in the Nerves system image.
-
-<Note>
-  The system shell is delivered by the `local_shell` extension. Enable it on the product under **Settings → Extensions** before using it — the IEx console does not require it.
-</Note>
-
-### Run Code Without a Full Session
-
-For quick one-off evaluations where you don't need an interactive session, use `run-code` to send a single Elixir expression and get the result:
+`run-code` sends Elixir code to the device's console:
 
 ```bash
-nh device run-code my-device-001 "System.version()"
+nh device run-code my-device-001 'IO.puts("hello from nh")'
 ```
 
-This is useful for scripted checks — for example, querying the current firmware version or reading a configuration value across many devices without opening a full console session for each.
+The output appears in the device's console, not in the command's output. To run code and get its output back, use a [support script](/management/support-scripts).
 
-## From the NervesCloud UI
+## System shell
 
-If you prefer a browser-based workflow, every device's Detail page in [NervesCloud](https://manage.nervescloud.com) includes a **Console** tab. Click it to open an in-browser IEx terminal connected directly to that device. The browser console behaves identically to the CLI console — the same Phoenix Channel backs both.
+A shell on the device, as opposed to IEx, is a separate, optional [extension](/extensions/overview) with its own permission. It is mostly for devices that are not Nerves devices. See [Local shell](/extensions/local-shell).
 
-No additional configuration is needed beyond enabling `remote_iex: true` in your firmware.
+## Console over iroh
 
-## P2P Console via Iroh
+`nh` can also open an IEx console over a peer-to-peer [iroh](https://docs.iroh.computer/what-is-iroh) connection, instead of through NervesHub's WebSocket.
 
-Devices behind strict NAT or firewalls that block outbound connections to NervesHub can still accept console connections using the Iroh peer-to-peer transport. Iroh establishes a direct encrypted tunnel between your machine and the device without requiring inbound firewall rules.
+### Requirements
 
-First, register the device as an Iroh endpoint:
+* The device runs [`iroh_console`](https://hex.pm/packages/iroh_console).
+* The device reports its iroh endpoint to NervesHub through the network identity extension, which needs `nerves_hub_link` 2.13.0 or later. `nh` reads where to reach the device from that report. See [Network identity](/extensions/network-identity).
+* Your role can register network identities (`network_identity:create`). The built-in **Manage** and **Admin** roles can.
 
-```bash
-nh iroh-endpoint register my-device-001
-```
-
-Then open a console through the P2P tunnel:
+### Connect
 
 ```bash
 nh device iroh-console my-device-001
 ```
 
-The Iroh console provides the same IEx experience as the standard console — it simply uses a different transport layer to reach the device.
+`nh` keeps one iroh key per organization in its data directory. The first time you connect, it registers that key with the organization, attached to you, under an instance named for your machine (`nh-<host>-<key prefix>`).
 
-## Support Scripts
-
-NervesHub supports reusable Elixir scripts that you can save to your organization and run on any device. This is useful for common support tasks like checking memory fragmentation, reading sensor state, or inspecting supervision tree health.
-
-List your saved scripts:
+The device authenticates you however its `IrohConsole.Auth` adapter is configured. `nh` prompts when the device challenges, or you can answer up front:
 
 ```bash
-nh script list
+nh device iroh-console my-device-001 --auth "$CONSOLE_PASSWORD"
 ```
 
-Run a saved script on a device:
+Press Ctrl-] to detach.
+
+<ParamField path="--auth" type="string">
+  The response to the device's auth challenge, such as a password or a TOTP code.
+</ParamField>
+
+<ParamField path="--instance" type="string" default="iroh_console">
+  Which of the device's iroh endpoints to connect to, for a device that runs more than one.
+</ParamField>
+
+### Manage iroh endpoints
+
+Devices record their own endpoint ids when they connect. `nh device iroh-console` registers your machine's. You only need to manage endpoints by hand for anything else.
 
 ```bash
-nh device run-script my-device-001 check-memory
+nh iroh-endpoint list
+nh iroh-endpoint list --owner device --search my-device
+nh iroh-endpoint show <endpoint-id>
+nh iroh-endpoint register <endpoint-id> --user-email you@example.com
+nh iroh-endpoint delete <endpoint-id>
 ```
 
-Scripts run in the device's IEx context and return their output to the CLI, making it easy to run the same diagnostic across multiple devices or automate support workflows.
+The argument is the iroh endpoint id, not a device identifier. An id that is already registered anywhere is refused.
 
-<Note>
-  Creating, editing, and deleting support scripts requires the `manage` role. **Running** an existing script only requires `view`, so you can let a wider group execute vetted diagnostics without granting them the ability to change what those scripts do.
-</Note>
+The web UI has the same registry on the organization's **Iroh endpoints** settings page. That page is hidden unless the NervesHub instance sets `ORG_IROH_ENDPOINTS_UI_ENABLED=true`. See [Feature prerequisites](/hosting/feature-prerequisites#iroh-endpoints).
 
-<Warning>
-  The remote console grants full access to the device's Elixir runtime. Anyone with console access can read secrets from the application environment, modify running state, and call any function in the system. Console access requires the `manage` role — audit who holds it in production organizations.
-</Warning>
+## Related pages
+
+- [Support scripts](/management/support-scripts)
+- [Local shell extension](/extensions/local-shell)
+- [Network identity extension](/extensions/network-identity)
+- [Roles and permissions](/access/roles)
+- [nh command reference](/cli/reference)

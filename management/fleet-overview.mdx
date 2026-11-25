@@ -1,103 +1,136 @@
 ---
-title: "Fleet Overview"
-sidebarTitle: "Fleet Overview"
-description: "View real-time online/offline status, connection history, firmware version distribution, and health metrics across your entire device fleet."
+title: "Fleet overview"
+sidebarTitle: "Fleet overview"
+description: "Where NervesHub shows the state of your devices: the home page, a product's devices list, and the device page."
 ---
 
-The fleet overview in NervesHub gives you a real-time picture of every device in your organization — what's online, what firmware each device is running, and how your fleet has been connecting over time. Whether you're managing ten devices or hundreds of thousands, NervesHub surfaces the information you need to stay on top of your fleet without writing custom monitoring infrastructure.
+NervesHub shows your fleet at three levels: every organization you belong to, one product, and one device.
 
-## Fleet Dashboard
+## The home page
 
-When you open your product in the NervesCloud UI, the Fleet Dashboard is the first thing you see. It gives you a high-level summary of your entire device population at a glance:
+You land on the home page after you sign in. It shows, in order:
 
-* **Online / Offline counts** — a live count of devices currently connected via WebSocket versus those that have gone silent
-* **Connection history** — a time-series chart showing how many devices were online at each point in the past, useful for spotting patterns like overnight disconnects or rollout-related disruptions
-* **Firmware version distribution** — a breakdown of how many devices are running each firmware version, so you can track rollout progress and identify devices stuck on older builds
-* **Alarm summary** — a count of devices currently in an alarmed state, linking directly to the filtered device list
+* What needs attention across your organizations: [releases](/deployments/releases) waiting for approval, unhealthy devices, and devices stuck in the [penalty box](/deployments/rollout-controls).
+* Your pinned devices.
+* Each organization's products.
 
-The dashboard refreshes automatically, so you always see the current state of your fleet without needing to reload the page.
+Selecting a product opens its **Insights** page.
 
-## Device List
+## A product
 
-The Device List shows every device registered under your product. You can sort, filter, and search to find exactly the devices you need:
+Every product page has a sidebar. Its header names the organization and product and counts the devices online. The links are **Insights**, **Devices**, **Deployment groups**, **Firmware**, **Archives**, **Support scripts**, **Errors**, **Notifications**, and **Product settings**.
 
-* **Search by identifier** — type a device identifier or partial match to narrow the list instantly
-* **Filter by status** — show only online, offline, or never-connected devices
-* **Filter by firmware version** — isolate devices running a specific build
-* **Filter by tag** — tags are the primary mechanism for fleet segmentation in NervesHub; use them to separate production from staging, or to group devices by region, hardware revision, or customer
-* **Sort by last connection time** — find devices that haven't checked in recently
+Some links carry a status line. **Devices** shows how many devices are unhealthy, or failing that, how many have warnings. **Deployment groups** shows a release that is awaiting approval. **Notifications** shows a count.
 
-Each row in the device list shows the device identifier, current firmware version, connection status, last-seen timestamp, and any active alarms.
+<Note>
+  A member whose custom role is limited to devices with certain tags sees only those devices. Pages built from all of a product's devices, such as **Insights** and **Notifications**, are closed to them. See [Roles](/access/roles).
+</Note>
 
-## CLI: List Devices
+| Page | What it answers | More |
+| --- | --- | --- |
+| **Insights** | What the fleet is made of by connection, health and firmware version, and how that has moved | [Insights and history](/management/insights) |
+| **Devices** | Which devices match a state, a filter or a query | [Finding devices](/management/finding-devices) |
+| **Notifications** | What NervesHub noticed that nothing else would show you | [Product notifications](/management/notifications) |
+| **Support scripts** | The scripts you can run on a device | [Support scripts](/management/support-scripts) |
 
-You can inspect your fleet from the terminal using the `nh` CLI. The commands below assume you are authenticated and have your org and product configured.
+<Note>
+  The fleet dashboard from NervesHub 2.4 and earlier was removed in 2.5.0. **Insights** takes its place.
+</Note>
 
-List all devices in the current product:
+## The devices list
+
+**Devices** lists every device in the product. Tabs across the top slice the list by state:
+
+| Tab | Devices it holds |
+| --- | --- |
+| **All** | Every device |
+| **Online** | Connected now |
+| **Needs attention** | Unhealthy, stopped taking updates after repeated failures, or not seen in 14 days |
+| **Updating** | Installing an update now |
+| **Offline** | Not connected now, including devices never seen |
+
+**Needs attention** has its own reasons to narrow by: **Unhealthy**, **Update failing**, and **Not seen 14 d+**.
+
+The table always shows the device. You choose which of the other columns show: **Health**, **Firmware**, **Platform**, **Deployment group**, **Connection**, and **Tags**.
+
+Selecting a row opens a side panel with enough about the device to decide whether to open its page.
+
+For searching, filtering, columns, bulk actions, and export, see [Finding devices](/management/finding-devices).
+
+## The device page
+
+Selecting a device's identifier opens its page. The header shows the device's connection, and has the **Identify**, **Reconnect**, **Reboot…**, and **Pin device** actions. Pinned devices show on your home page.
+
+| Tab | What it shows | More |
+| --- | --- | --- |
+| **Details** | Health, firmware updates, support scripts, and general info | |
+| **Health** | Health status, metric charts, and when the device was online | [Health monitoring](/management/health-monitoring) |
+| **Firmware History** | Each firmware the device reported, and how each update sent to it ended | [Insights and history](/management/insights) |
+| **Console** | A remote IEx console | [Remote console](/management/remote-console) |
+| **System Shell** | A shell on the device | [Local shell](/extensions/local-shell) |
+| **Logs** | Log lines the device sent | [Logging](/extensions/logging) |
+| **Errors** | Errors the device reported | [Error reports](/extensions/error-reports) |
+| **Activity** | The audit log for the device | [Audit log](/access/audit-log) |
+| **Data History** | Every message that crossed the device's connection | [Insights and history](/management/insights) |
+| **Settings** | The device's settings | [Devices](/setup/devices) |
+
+## Connection status
+
+A device is online while it holds a WebSocket connection to NervesHub. When the connection closes, NervesHub records when and why, and the device shows as offline with when it was last seen.
+
+A device that has been added but has never connected shows as never connected.
+
+A battery device that sleeps between reports can tell NervesHub so, and shows as asleep instead of offline. See [Devices that sleep](/management/sleeping-devices).
+
+## What needs ClickHouse
+
+Current state is always available: the devices list, the device page, what the fleet is made of on **Insights**, and the list of devices failing to update.
+
+History needs ClickHouse on the NervesHub instance:
+
+* The trend charts and the **Flapping** list on **Insights**
+* The connection lane on a device's **Health** tab
+* The **Update attempts** view on a device's **Firmware History** tab
+* The **Data History**, **Logs**, and **Errors** tabs
+* Metric history charts
+
+See [Feature prerequisites](/hosting/feature-prerequisites#clickhouse).
+
+## Inspect the fleet from the CLI
+
+The commands below assume you have signed in and set a default organization and product. See [CLI configuration](/cli/configuration).
+
+List the devices in the product:
 
 ```bash
 nh device list
 ```
 
-Filter the list to devices carrying a specific tag:
+Narrow the list with `--filter key:value`. Repeat the flag to combine filters:
 
 ```bash
-nh device list --tag main
+nh device list --filter connection:connected --filter tags:prod
 ```
 
-Show full detail for a single device:
+A `tags` filter takes comma-separated tags. A device needs all of them, and each is matched as part of a tag, so `prod` matches `production`.
+
+Show one device:
 
 ```bash
 nh device show my-device-001
 ```
 
-<Tip>
-  Use `--output json` with any `nh device` command to get machine-readable output. You can then pipe it into `jq` for scripted fleet inspection — for example, to find all offline devices:
-
-  ```bash
-  nh device list --output json | jq '.[] | select(.status == "offline")'
-  ```
-
-  This is useful for building alerting scripts, populating dashboards, or generating reports without hitting the HTTP API directly.
-</Tip>
-
-## Device Detail
-
-Clicking any device in the list opens the Device Detail page. This per-device view consolidates everything NervesHub knows about a single device:
-
-* **Firmware validation status** — whether the device has confirmed the firmware as valid after the last update
-* **Connection history** — a timeline of every connect and disconnect event, with timestamps and duration
-* **Health metrics** — CPU usage, memory usage, and system load averages charted over time (see [Health Monitoring](/management/health-monitoring))
-* **Active alarms** — any alarms currently firing on the device
-* **Geolocation** — if the `geo` extension is enabled, NervesHub can plot the device on a map
-* **Update history** — the sequence of firmware updates the device has received
-
-## Connection Status
-
-A device appears as **online** when it maintains an active WebSocket connection to the NervesHub server at `wss://{host}/socket/websocket`. The connection uses Phoenix Channels over mTLS, so both the server and the device authenticate each other before any data flows.
-
-A device transitions to **offline** as soon as the WebSocket connection drops — whether from a reboot, a network outage, or a firmware update in progress. NervesHub records the exact timestamp of each transition, so you have a complete connection history for every device.
-
-There is no polling interval to worry about: NervesHub detects disconnections immediately via the WebSocket heartbeat.
-
-## Filtering by Tag and Version
-
-Tags are strings you assign to devices to segment your fleet. A device can carry multiple tags. Deployment groups target devices by tag, so your tagging strategy directly controls which devices receive which firmware.
-
-Common tagging patterns include:
-
-| Tag              | Purpose                                       |
-| ---------------- | --------------------------------------------- |
-| `main`           | Devices tracking your primary release channel |
-| `beta`           | Opt-in devices for pre-release firmware       |
-| `region-us-east` | Geographic grouping                           |
-| `hw-rev-3`       | Hardware revision gating                      |
-
-To view all devices with a given tag in the UI, use the tag filter on the Device List page. From the CLI:
+Every command accepts `-o json` (`--output json`) for machine-readable output:
 
 ```bash
-nh device list --tag beta
-nh device list --tag hw-rev-3
+nh device list --filter connection:not_seen -o json
 ```
 
-Combining tag filtering with version filtering lets you answer questions like "which beta devices are still on the previous release?" without writing any custom queries.
+`nh device list` also takes the search bar's query language with `--query`. See [Finding devices](/management/finding-devices).
+
+## Related pages
+
+- [Finding devices](/management/finding-devices)
+- [Insights and history](/management/insights)
+- [Health monitoring](/management/health-monitoring)
+- [Product notifications](/management/notifications)

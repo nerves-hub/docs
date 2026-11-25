@@ -1,108 +1,146 @@
 ---
-title: "Firmware Signing"
-sidebarTitle: "Firmware Signing"
-description: "How to create signing keys, embed public keys in your Nerves firmware, sign and upload firmware, and manage multiple keys for production safety."
+title: "Firmware signing"
+sidebarTitle: "Firmware signing"
+description: "How fwup firmware is signed, where NervesHub and the device each verify the signature, and how to give devices the public keys they need."
 ---
 
-Firmware signing ensures that only firmware produced by a party you trust can run on your devices. Before a device applies any OTA update, it verifies the signature embedded in the `.fw` file against a public key that was compiled into the firmware at build time. This verification happens entirely on the device — independently of NervesHub — so the chain of trust holds even if the server or the network is compromised.
+Every fwup firmware file carries an Ed25519 signature made with a private key you hold. The signature is checked twice: by NervesHub when you upload, and by `fwup` on the device before anything is written. A device refuses firmware it cannot verify.
 
-## How It Works
+This page covers fwup firmware and [archives](/updates/archives). ESP-IDF and RAUC use different key types, described in [ESP-IDF](/updates/esp-idf) and [RAUC](/updates/rauc).
 
-Signing happens inside the `fwup` tool that packages Nerves firmware, using a public/private key pair you create. The signature is then checked in two places:
+## Where the signature is checked
 
-1. At build time, you embed the **public key** into your firmware image via the `fwup_public_keys` configuration. Every device that runs that firmware will only accept OTA updates signed by the corresponding private key.
-2. When you upload firmware to NervesHub, the server checks the signature against the public keys registered for your product. Unsigned firmware or firmware signed by an unregistered key is rejected at upload time.
+| Where | What is checked | Keys used |
+| --- | --- | --- |
+| NervesHub, at upload | The file is signed by one of your organization's keys. Unsigned files and files signed by an unknown key are refused. | The Ed25519 public keys registered for the organization. |
+| The device, at install | `fwup` verifies the signature before it applies the update. | The public keys `nerves_hub_link` holds: from `fwup_public_keys` in your firmware config, or requested from NervesHub. |
 
-The **private key** is used only during the signing step and should never leave your secure build environment.
+Only the private key can sign. Keep it out of source control, and out of the firmware.
 
-## Creating a Signing Key
+## Create and register a key
 
-Use the `nh` CLI to generate a keypair and register the public key with your NervesHub product in one step:
+Signing keys belong to an organization. Every product in the organization shares them.
 
-```bash
-nh key create my-key
-```
+<Tabs>
+  <Tab title="nh key create">
+    ```bash
+    nh key create my_app_key
+    ```
 
-This command creates the keypair locally and uploads the public key to NervesHub. The private key is stored in your local `nh` configuration directory — treat it with the same care as any other secret credential.
+    This generates the key pair, uploads the public key, and saves both halves under `~/.nh/keys/<org>/` as `my_app_key.priv` and `my_app_key.pub`. The private key file is encrypted at rest, with an optional passphrase.
+  </Tab>
+  <Tab title="fwup -g">
+    Generate the pair with `fwup` and register only the public half:
 
-<Warning>
-  Never commit signing private keys to source control. In CI/CD pipelines, pass the private key via the `NERVES_HUB_FW_PRIVATE_KEY` environment variable rather than writing it to disk. Rotate any key that has been exposed and remove the corresponding public key from NervesHub immediately.
-</Warning>
+    ```bash
+    fwup -g -o my_app_key
+    nh key add my_app_key --public-key my_app_key.pub
+    ```
 
-## Embedding the Public Key in Firmware
+    `fwup -g` writes `my_app_key.priv` and `my_app_key.pub`. The private key file is not encrypted. This is the form `--key-file` and the `NERVES_HUB_PRIVATE_KEY` environment variable expect, so it suits CI.
+  </Tab>
+</Tabs>
 
-For a device to verify firmware signatures independently, the public key must be compiled into the firmware image at build time. Add the base64-encoded public key to your `config/target.exs`:
+You can also add a public key in the web UI, on the organization's **Signing keys** page. Choose the **fwup (Ed25519)** scheme and paste the base64 public key.
+
+`nh key list` prints each Ed25519 public key in full. That value is what goes into `fwup_public_keys`.
+
+## Give devices the public keys
+
+A device needs at least one public key before it accepts an update.
+
+### Put the keys in the firmware
+
+List the base64 public keys in your firmware config:
 
 ```elixir
 # config/target.exs
 config :nerves_hub_link,
-  fwup_public_keys: ["base64_encoded_public_key_here"]
+  fwup_public_keys: [
+    "base64_public_key_1",
+    "base64_public_key_2"
+  ]
 ```
 
-You can retrieve the base64-encoded public key for any registered key from the NervesHub console or with:
+The device accepts firmware signed by any key in the list. Entries that are not strings are ignored.
+
+With keys configured this way, the device does not ask NervesHub for keys. Since `nerves_hub_link` 2.14.0 it also ignores any keys NervesHub sends without being asked. Verification then depends only on what you built into the firmware. Changing the list means shipping new firmware, signed by a key the running firmware already trusts.
+
+### Ask NervesHub for the keys
+
+A device with no `fwup_public_keys` asks NervesHub for keys each time it connects. NervesHub replies with all of the organization's Ed25519 public keys. This needs `nerves_hub_link` 2.2.1 or later.
+
+To request keys even when some are configured, set `request_fwup_public_keys`:
+
+```elixir
+# config/target.exs
+config :nerves_hub_link,
+  fwup_public_keys: ["base64_public_key"],
+  request_fwup_public_keys: true
+```
+
+When NervesHub replies with keys, they replace the configured list in memory. When it replies with none, the device keeps the keys it has.
+
+<Warning>
+  Requested keys come from the same server that supplies the firmware. The signature check then tells you the firmware matches a key NervesHub knows, not a key you built into the device. Put the keys in the firmware if you want verification that does not depend on the server.
+</Warning>
+
+## Unverifiable firmware is refused
+
+Since `nerves_hub_link` 2.13.0, a device with no usable public key refuses the update. `fwup` only checks a signature when it is given a key, so earlier versions applied the firmware unverified.
+
+The refusal happens before `update_available/1` is called, so your [Client](/updates/applying-updates) is not asked. The device logs:
+
+```
+[NervesHubLink:UpdateManager] Refusing firmware update : no public keys are available to verify the firmware signature
+```
+
+It also reports the update to NervesHub as failed, with the reason `Refusing unverified firmware : no public keys available`.
+
+<Warning>
+  A device that has no `fwup_public_keys` and receives none from NervesHub stops taking updates on 2.13.0 and later. Before you upgrade `nerves_hub_link`, check that every device either has keys configured or belongs to an organization with at least one Ed25519 signing key.
+</Warning>
+
+Two related changes tighten how keys from the server are handled:
+
+| Version | Change |
+| --- | --- |
+| 2.13.0 | An empty key list from NervesHub no longer clears keys configured on the device. |
+| 2.14.0 | Keys NervesHub sends are ignored unless the device asked for them when it connected. The device keeps its own keys and logs a warning. |
+
+When a signature does not match any key the device holds, `fwup` fails and the update is reported as failed. See [failed updates](/updates/applying-updates#when-an-update-fails).
+
+## Sign firmware
+
+`nh firmware upload` signs before it uploads:
 
 ```bash
-nh key list
+nh firmware upload my_app.fw --key my_app_key
 ```
 
-Replace `"base64_encoded_public_key_here"` with the value shown for your key. Rebuild and re-flash any devices that need to accept firmware signed by the new key — the embedded public keys are part of the firmware itself and cannot be updated over the air without a matching signed update.
+See [Firmware](/setup/firmware#upload-firmware) for the other ways to supply the key. To upload a file that is already signed, pass `--skip-signing`. NervesHub still verifies the signature.
 
-## Signing and Uploading Firmware
-
-Once you have a signing key registered, sign your firmware and upload it to NervesHub in a single command:
+To sign without uploading, use `fwup` directly:
 
 ```bash
-nh firmware upload my_project.fw --key my-key
+fwup --sign -i my_app.fw -o my_app_signed.fw -s my_app_key.priv
 ```
 
-The CLI signs the `.fw` file with the private key associated with `my-key` and then uploads the signed binary to NervesHub. The server verifies the signature against the registered public key before accepting the upload.
+## Use more than one key
 
-<Tip>
-  If your build system already signs the firmware (for example, in a CI pipeline using a hardware signing service), pass `--skip-signing` to upload the pre-signed file without re-signing it:
+- **Separate development and production.** Sign release builds with a production key held only by your release pipeline. Build production firmware with only the production public key in `fwup_public_keys`. Development-signed firmware then cannot be installed on production devices.
+- **Rotate a key.** Ship firmware that lists both the old and the new public key, signed with the old key. Once devices run it, sign later firmware with the new key. Remove the old public key from the list in a later release.
 
-  ```bash
-  nh firmware upload my_project.fw --skip-signing
-  ```
+Removing a key from `fwup_public_keys` only affects devices that receive the firmware built without it.
 
-  The server will still verify the signature against registered keys — `--skip-signing` only skips the client-side signing step.
-</Tip>
+## Archive keys
 
-## Using Multiple Signing Keys
+Archives are verified the same way, with their own key list. See [Archives](/updates/archives#signing-keys) for `archive_public_keys` and `request_archive_public_keys`.
 
-Maintaining more than one signing key is a best practice for production fleets. A common setup uses two keys:
+## Related pages
 
-* **Production key** — tightly controlled; used only in your release pipeline; private key stored in a secrets manager or HSM.
-* **Development key** — used for internal builds and QA; acceptable to store in developer workstations.
-
-To support multiple keys:
-
-1. Register each key with NervesHub:
-   ```bash
-   nh key create production-key
-   nh key create dev-key
-   ```
-
-2. Embed all accepted public keys in your firmware. A device will accept firmware signed by **any** of the keys listed in `fwup_public_keys`:
-   ```elixir
-   # config/target.exs
-   config :nerves_hub_link,
-     fwup_public_keys: [
-       "base64_production_public_key",
-       "base64_dev_public_key"
-     ]
-   ```
-
-3. Sign each firmware with the appropriate key for its intended audience:
-   ```bash
-   # Release build — sign with production key
-   nh firmware upload my_project.fw --key production-key
-
-   # QA build — sign with development key
-   nh firmware upload my_project_qa.fw --key dev-key
-   ```
-
-Production devices can be built with only the production public key embedded (removing the dev key from `fwup_public_keys` in your production Mix target), ensuring that development-signed firmware cannot be installed on production hardware even if an attacker gains access to the dev key.
-
-<Note>
-  Removing a public key from `fwup_public_keys` and rebuilding only affects devices that receive the new firmware. Devices still running older firmware will continue to accept the keys that were embedded when that firmware was built.
-</Note>
+- [Build, sign, and upload firmware](/setup/firmware)
+- [CI and automation](/outbound/ci-cd)
+- [Applying updates on the device](/updates/applying-updates)
+- [Archives](/updates/archives)
+- [Security: PKI and the chain of trust](/concepts/pki)
