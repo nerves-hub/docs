@@ -1,0 +1,265 @@
+---
+title: "Device-managed updates"
+sidebarTitle: "Device-managed updates"
+description: "Let a device choose when it takes the firmware its deployment group offers, instead of being sent it on the group's schedule."
+---
+
+By default a device takes firmware whenever its deployment group sends it. Some devices should not: a machine mid-cycle, a vehicle in motion, or a device whose owner has a say over when it restarts.
+
+A device-managed device chooses **when** it takes firmware. It does not choose **what** firmware. Its [deployment group](/setup/deployments) still decides that. A device can never turn its own updates off, so an operator can always reach it.
+
+## Requirements
+
+- `nerves_hub_link` 2.13.0 or later. It reports device API version 2.4.0, which is what NervesHub checks.
+- NervesHub 2.5.0 or later.
+- NervesHub 2.5.1 or later for the product settings that grant the permission to new or all devices.
+- No instance prerequisite.
+
+## Update modes
+
+Every device has an update mode. The mode is stored in NervesHub, not on the device, so it survives a reboot and an operator can see and change it.
+
+| Mode             | Web UI label       | Deployment group pushes | Device may ask for its update | Manual push |
+| ---------------- | ------------------ | ----------------------- | ----------------------------- | ----------- |
+| `automatic`      | **Automatic**      | Yes                     | Yes, if eligible              | Yes         |
+| `device_managed` | **Device managed** | Never                   | Yes, if eligible              | Yes         |
+| `off`            | **Off**            | Never                   | Never                         | Yes         |
+
+Three rules hold in every mode:
+
+- The deployment group names the firmware. A device-managed device stays in its group and is only left out of pushes.
+- A manual push always lands. Sending firmware by hand to an `automatic` device also sets it to `off`, so the group does not overwrite what you sent. Other modes are left as they are.
+- A device may only fetch firmware its deployment group would send it. A device in a [workflow](/concepts/deployment-workflows) step that has not started is refused whatever its mode.
+
+## Enable it
+
+<Warning>
+  Do these steps in order. A device in `device_managed` mode that connects with a client older than device API version 2.4.0 is returned to `automatic` and starts receiving pushes again. Roll out firmware that supports device-managed updates first, then set the mode.
+</Warning>
+
+<Steps>
+  <Step title="Ship firmware that asks for its own updates">
+    Update `nerves_hub_link` to 2.13.0 or later and add code that checks for and starts updates. This example checks every 30 minutes and updates only when your application says it is safe:
+
+    ```elixir
+    defmodule MyApp.UpdateWindow do
+      use GenServer
+
+      require Logger
+
+      @check_interval :timer.minutes(30)
+
+      def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+      @impl GenServer
+      def init(_opts) do
+        {:ok, %{}, {:continue, :schedule}}
+      end
+
+      @impl GenServer
+      def handle_continue(:schedule, state) do
+        Process.send_after(self(), :maybe_update, @check_interval)
+        {:noreply, state}
+      end
+
+      @impl GenServer
+      def handle_info(:maybe_update, state) do
+        if MyApp.safe_to_restart?() do
+          case NervesHubLink.check_for_update() do
+            {:ok, %{available?: true}} -> apply_update()
+            _ -> :ok
+          end
+        end
+
+        {:noreply, state, {:continue, :schedule}}
+      end
+
+      defp apply_update() do
+        case NervesHubLink.start_update() do
+          :ok ->
+            Logger.info("firmware update started")
+
+          {:error, {:busy, minutes}} ->
+            # NervesHub asked the device to wait before asking again.
+            Process.send_after(self(), :maybe_update, :timer.minutes(minutes))
+
+          {:error, reason} ->
+            Logger.warning("firmware update refused: #{inspect(reason)}")
+        end
+      end
+    end
+    ```
+
+    Add the module to your application's supervision tree. No `config :nerves_hub_link` key is needed.
+  </Step>
+
+  <Step title="Roll that firmware out">
+    Release the firmware through the device's deployment group while the device is still in `automatic` mode. Wait until the devices you plan to switch are running it.
+  </Step>
+
+  <Step title="Set the mode">
+    Choose who sets the mode: you, or the device.
+
+    <Tabs>
+      <Tab title="You set it">
+        Open the device. In the page header, select the update mode and choose **Device managed**.
+
+        From the CLI:
+
+        ```bash
+        nh device update <identifier> --update-mode device_managed
+        ```
+
+        Through the API, set `update_mode` to `device_managed` in a device update.
+
+        Setting these device fields through the API or `nh` needs NervesHub 2.5.3 or later.
+
+        An operator can always set any mode. The permission below is not needed.
+      </Tab>
+      <Tab title="The device sets it">
+        First allow the device to choose. On the device's **Settings** tab, in the **Firmware updates** card, switch on **Let the device choose its update mode**.
+
+        From the CLI:
+
+        ```bash
+        nh device update <identifier> --managed-updates-allowed
+        ```
+
+        Then the firmware can move itself between `:automatic` and `:device_managed`:
+
+        ```elixir
+        if NervesHubLink.managed_updates_allowed?() do
+          NervesHubLink.set_update_mode(:device_managed)
+        end
+        ```
+      </Tab>
+    </Tabs>
+  </Step>
+</Steps>
+
+## Check that it works
+
+- The device page header shows **Device managed** as the update mode.
+- On the device, `NervesHubLink.update_mode()` returns `:device_managed`.
+- Create a release in the device's group. The device is not sent it. `NervesHubLink.check_for_update()` returns `{:ok, %{available?: true, firmware_meta: meta}}`, and `NervesHubLink.start_update()` returns `:ok` and the update starts.
+- Each mode change is recorded in the [audit log](/access/audit-log). When the device asked for the change, the device is recorded as the actor.
+
+To find devices by mode, use `updates = "device-managed"` or `updates = "automatic"` in the device list's advanced query. See [Finding devices](/management/finding-devices).
+
+## Ask for an update from firmware
+
+Checking and updating are separate calls.
+
+```elixir
+case NervesHubLink.check_for_update() do
+  {:ok, %{available?: true, firmware_meta: meta}} ->
+    Logger.info("firmware #{meta["version"]} is waiting")
+
+  {:ok, %{available?: false}} ->
+    :nothing_to_do
+
+  {:error, reason} ->
+    Logger.warning("could not check for firmware: #{inspect(reason)}")
+end
+```
+
+`check_for_update/1` is allowed in every mode, including `:off`. It is read-only and returns firmware metadata without a download URL. A device with updates off can still tell its user that an update exists.
+
+```elixir
+case NervesHubLink.start_update() do
+  :ok -> :updating
+  {:error, {:busy, minutes}} -> reschedule_in(minutes)
+  {:error, reason} -> Logger.warning("update refused: #{inspect(reason)}")
+end
+```
+
+`start_update/1` fetches the firmware URL and applies the update. It returns `:ok` once NervesHub has sent the update. From there the update runs exactly like one the deployment group pushed and reports through your `NervesHubLink.Client`. See [Applying updates](/updates/applying-updates).
+
+Firmware URLs are signed and time limited. That is why the URL is fetched at the moment the device is about to use it, not when it checks.
+
+| Return value                | Meaning                                                                                   |
+| --------------------------- | ----------------------------------------------------------------------------------------- |
+| `:ok`                       | NervesHub sent the update.                                                                |
+| `{:error, {:busy, minutes}}` | The server refused with the reason `busy`. Do not retry sooner than `minutes`.            |
+| `{:error, :updating}`       | The device is already applying firmware.                                                  |
+| `{:error, :no_update}`      | There is no firmware for the device right now.                                            |
+| `{:error, :no_deployment_group}` | The device is not in a deployment group.                                             |
+| `{:error, :disconnected}`   | There is no connection to ask over.                                                       |
+| `{:error, :error}`          | NervesHub refused for another reason, such as an update it already has in progress for the device. |
+
+### Pacing
+
+NervesHub does not pace device requests. A device that asks for its update gets it whenever its deployment group has firmware for it, and the group's [rollout controls](/deployments/rollout-controls) do not apply to the request. NervesHub refuses a request only when the device is in no deployment group, when there is no update for it, or when it already has an update in progress. The [`update_rejected`](/device-api/websocket-events#update_rejected) event carries the reason.
+
+`nerves_hub_link` still returns `{:error, {:busy, minutes}}` when a server answers with the reason `busy`. Handle it as "not now", and ask again after `minutes`.
+
+A device that has downloaded an [archive](/updates/archives) counts as having an update in progress, and `start_update/1` returns `{:error, :error}` until the device reconnects. Call `NervesHubLink.reconnect()` after your code has handled the archive.
+
+## Let the device choose its mode
+
+A device may move itself between `:automatic` and `:device_managed`, and only when an operator has allowed it. A device can never set `:off`.
+
+`NervesHubLink.set_update_mode/2` returns:
+
+| Return value                | Meaning                                              |
+| --------------------------- | ---------------------------------------------------- |
+| `:ok`                       | NervesHub changed the mode.                          |
+| `{:error, :not_permitted}`  | The operator has not allowed the device to choose.   |
+| `{:error, :disconnected}`   | There is no connection to ask over.                  |
+
+The change is not queued while the device is offline. To keep a user-facing switch and NervesHub in step, set the mode again each time the device connects:
+
+```elixir
+defmodule MyApp.NervesHubLinkClient do
+  use NervesHubLink.Client
+
+  @impl NervesHubLink.Client
+  def connected() do
+    if MyApp.Settings.automatic_updates?() do
+      NervesHubLink.set_update_mode(:automatic)
+    else
+      NervesHubLink.set_update_mode(:device_managed)
+    end
+
+    :ok
+  end
+end
+```
+
+Setting the same mode again is safe.
+
+`NervesHubLink.update_mode/1` returns `nil` until NervesHub reports the mode. A NervesHub too old to know about update modes never reports it, and the device keeps taking updates as before. Treat `nil` as "not device managed", not as an error.
+
+### Grant the permission to many devices
+
+The permission is the `managed_updates_allowed` field on a device. A new device starts with its product's default, which is off.
+
+- **New devices:** in **Product settings**, in the **Device-managed updates** card, switch on **Let new devices choose their update mode**. From the CLI, run `nh product update <name> --default-managed-updates-allowed`. This applies to devices created from then on and does not change existing devices.
+- **Existing devices:** in the same card, the **Existing devices** row has **Allow on all** and **Revoke on all**.
+- **One device through the API:** set `managed_updates_allowed` when you create or update the device.
+
+Revoking the permission does not move a device that is already in `device_managed` mode. Set its mode back to `automatic` yourself if you want it to receive pushes again.
+
+Each change to the permission is recorded in the audit log per device.
+
+## Firmware too old to manage itself
+
+A device in `device_managed` mode that connects reporting a device API version below 2.4.0 is returned to `automatic`. NervesHub records the change in the audit log with the device as the actor.
+
+NervesHub does this because the device would otherwise be stranded. The deployment group does not push to it, and its firmware cannot ask. This matters most after a firmware auto-revert, where a failed update drops a device back onto an image that predates the feature.
+
+Nothing reverses this automatically. Once the device runs firmware that supports device-managed updates, set its mode again.
+
+## Limits
+
+- A device cannot set `off`, and cannot take itself out of `off`. Only an operator can.
+- `updates_enabled` is deprecated. The API still returns it, derived as `update_mode != off`.
+- In the device list's advanced query, `updates = "enabled"` and `updates = "disabled"` keep their earlier meanings.
+
+## Related pages
+
+- [Applying updates on the device](/updates/applying-updates)
+- [Rollout controls](/deployments/rollout-controls)
+- [Deployment groups](/setup/deployments)
+- [Devices that sleep](/management/sleeping-devices)
+- [WebSocket channel events](/device-api/websocket-events)

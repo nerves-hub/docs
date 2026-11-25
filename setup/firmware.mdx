@@ -1,107 +1,132 @@
 ---
-title: "Build, Sign, and Upload Firmware"
+title: "Build, sign, and upload firmware"
 sidebarTitle: "Firmware"
-description: "How to build a fwup firmware file with Nerves, sign it, and upload it to NervesHub for delivery to your device fleet."
+description: "Build a fwup firmware file with Nerves, sign it with one of your organization's signing keys, and upload it to a NervesHub product."
 ---
 
-NervesHub stores firmware as fwup-format `.fw` files — ZIP-based archives that carry a cryptographic signature alongside the filesystem image. Before a device applies an update, it verifies the signature against a trusted public key registered with NervesHub. This end-to-end signing chain ensures that no untrusted firmware can be installed on your devices, even if your update infrastructure is compromised.
+NervesHub stores Nerves firmware as fwup `.fw` files. A `.fw` file is a ZIP archive that holds the firmware's metadata, its data, and an Ed25519 signature. NervesHub checks the signature when you upload, and the device checks it again before it installs. See [Firmware signing](/concepts/firmware-signing) for how the keys fit together.
 
-<Note>
-  A firmware entry's UUID is derived from the content of the `.fw` file. Uploading the same binary twice produces the same UUID, and NervesHub will skip the upload on the second attempt. This makes CI pipelines idempotent — re-running a failed upload job is always safe.
-</Note>
+This page covers fwup firmware, which is what a product accepts by default. For other formats see [RAUC](/updates/rauc), [ESP-IDF](/updates/esp-idf) and [AtomVM](/updates/atomvm).
 
-## Build Firmware
+## Before you start
 
-Build your Nerves firmware with the standard Mix workflow. Set `MIX_TARGET` to your hardware target before running `mix firmware`:
+- A [product](/setup/products) whose name matches your firmware's product name. NervesHub refuses firmware built for a different product.
+- The [`nh` CLI](/cli/installation), signed in, with your organization and product set. See [CLI configuration](/cli/configuration).
+- `fwup` installed on the machine that uploads. `nh` uses it to sign `.fw` files.
+
+## Build firmware
+
+Build with the standard Nerves workflow:
 
 ```bash
 export MIX_TARGET=rpi4
 mix firmware
 ```
 
-The compiled `.fw` file is written to `./_build/${MIX_TARGET}_dev/nerves/images/my_project.fw` by default. Adjust the path to match your application name and `MIX_ENV`.
+The `.fw` file is written under `_build/${MIX_TARGET}_${MIX_ENV}/nerves/images/`.
 
-## Create a Signing Key
+The firmware's version must be a valid SemVer version, such as `1.4.0`. NervesHub 2.5.0 and later reject uploads with any other version.
 
-If you have not yet created a signing key for your product, create one now. The `nh key create` command generates a signing keypair and registers the public key with NervesHub:
+## Create a signing key
 
-```bash
-nh key create my-key
-```
-
-Store the private key material in a secure location (a secrets manager, HSM, or encrypted CI/CD variable). You will need it every time you upload firmware. The public key is stored in NervesHub and distributed to devices automatically.
-
-## Sign Firmware
-
-You can sign a firmware file independently of uploading it — useful when the signing step runs on a separate secure host or HSM, and the resulting signed file is then passed to a build or deployment system:
+Signing keys belong to your organization, not to one product. Create one if you have none:
 
 ```bash
-nh firmware sign my_project.fw --key my-key
+nh key create my_app_key
 ```
 
-This writes the signature into the `.fw` archive in place. The signing key's private key material must be accessible to the host running this command.
+This generates an Ed25519 key pair, uploads the public key to NervesHub, and saves both halves under `~/.nh/keys/<org>/` as `my_app_key.priv` and `my_app_key.pub`. The private key is encrypted at rest. `--password` sets its passphrase. The passphrase is optional, and `nh` prompts for one when it runs interactively.
 
-## Upload Firmware
+You can also see and add keys in the web UI under the organization's settings, on the **Signing keys** page.
 
-Upload a firmware file to NervesHub. The CLI signs the firmware with your registered key before uploading:
+To register a public key you generated elsewhere, for example with `fwup -g`, use `nh key add <name> --public-key <file>`.
+
+## Upload firmware
 
 ```bash
-nh firmware upload ./_build/rpi4_dev/nerves/images/my_project.fw
+nh firmware upload ./_build/rpi4_dev/nerves/images/my_app.fw --key my_app_key
 ```
 
-If you manage multiple signing keys, specify which key to use:
+Inside a Nerves project you can leave the path out. `nh` then looks for a single image under `_build/<MIX_TARGET>_<MIX_ENV>/nerves/images/` and asks you to confirm it.
+
+`nh` reads the firmware's metadata, shows it, signs a temporary copy with `fwup`, and uploads that copy. Your original file is not modified. On success it prints the firmware's version and UUID.
+
+The signing key comes from one of:
+
+| Source | Use |
+| --- | --- |
+| `--key <name>` | A key made with `nh key create`. Add `--password` if it has a passphrase. |
+| `--key-file <path>` | An fwup private key file, as `fwup -g` writes. |
+| `NERVES_HUB_PRIVATE_KEY` | An unencrypted base64 private key in the environment. Used when neither flag is given. |
+
+If the file is already signed with a key your organization has registered, upload it as is:
 
 ```bash
-nh firmware upload my_project.fw --key my-key
+nh firmware upload my_app.fw --skip-signing
 ```
 
-A successful upload prints the firmware UUID. Save this UUID if you intend to create a release manually in the next step.
+You can also upload from the web UI. Open the product's **Firmware** page and click **Upload firmware**, or drop the file anywhere on the page. The web UI does not sign, so the file must already be signed.
 
-## List and Inspect Firmware
+### What NervesHub checks
 
-List all firmware binaries uploaded to the current product:
+NervesHub refuses an upload when:
+
+- Your organization has no signing keys.
+- The signature matches none of your organization's keys.
+- The firmware's product name is not the product you uploaded to.
+- The version is not valid SemVer.
+- Firmware with the same UUID is already in the product. The UUID comes from the firmware's contents, so this means the same build was uploaded before.
+- The product has **Require unique firmware versions** on and already holds firmware with this version for the same platform and architecture. The upload fails with "has already been taken for this product". Raise the version in `mix.exs` and build again. The setting is on for products created on NervesHub 2.5.0 or later. Change it in **Product settings**, in the **Firmware** card on the **General** tab, or with `nh product update <product> --require-unique-firmware-version=false`.
+- The firmware needs a newer `fwup` than the NervesHub server has.
+
+### Deploy in the same command
+
+`--deploy` creates a [release](/deployments/releases) with the new firmware on a deployment group after the upload succeeds. It does not turn the group on. Repeat it to update several groups:
+
+```bash
+nh firmware upload my_app.fw --key my_app_key --deploy production
+```
+
+If `--deploy` is not given, `nh` uses the `NERVES_HUB_DEPLOYMENT_NAME` environment variable when it is set. If the upload succeeds and a deployment update fails, the firmware stays uploaded and the error says which group failed.
+
+## List, inspect, download, and delete
 
 ```bash
 nh firmware list
+nh firmware show <uuid>
+nh firmware download <uuid>
+nh firmware delete <uuid>
 ```
 
-Inspect the metadata for a specific firmware entry by UUID:
+`download` saves the image in the current directory as `<uuid>` with the extension for its format, which is `.fw` for fwup firmware. Pass `--file <path>` to choose the path.
+
+NervesHub refuses to delete firmware that is the current release of a deployment group, or that devices are in the middle of installing. Deleting firmware also deletes the [deltas](/management/delta-updates) built from it.
+
+## Upload from CI
+
+In a pipeline, give `nh` its settings through the environment and pass the firmware path:
 
 ```bash
-nh firmware show <UUID>
-```
-
-The metadata includes the firmware version, platform, architecture, upload timestamp, and the signing key used.
-
-## Download and Delete Firmware
-
-Download a firmware binary to inspect it locally or re-sign it with a different key:
-
-```bash
-nh firmware download <UUID>
-```
-
-Delete a firmware entry that is no longer needed. You cannot delete firmware that is referenced by an active deployment group:
-
-```bash
-nh firmware delete <UUID>
-```
-
-## CI/CD Pattern
-
-Automate firmware builds and uploads in your CI/CD pipeline using environment variables. The example below builds firmware and uploads it, optionally shipping it to a named deployment group in a single command:
-
-```bash
-export NERVES_HUB_TOKEN=$NH_TOKEN
+export NERVES_HUB_TOKEN=...               # a product API key or user access token
 export NERVES_HUB_ORG=my-org
-export NERVES_HUB_PRODUCT=my-product
+export NERVES_HUB_PRODUCT=my_app
+export NERVES_HUB_PRIVATE_KEY=...         # unencrypted base64 fwup private key
+export NERVES_HUB_NON_INTERACTIVE=true    # fail with an error instead of prompting
 
 mix firmware
-
-nh firmware upload ./_build/${MIX_TARGET}_dev/nerves/images/my_project.fw \
-  --deploy "production"
+nh firmware upload _build/rpi4_prod/nerves/images/my_app.fw --deploy production
 ```
 
-`NERVES_HUB_TOKEN` is a personal access token or CI token generated in the NervesCloud UI under **Account → API Tokens**. Store it as a protected secret in your CI/CD system — never commit it to source control.
+Always pass the path in CI. Without one, `nh` looks for the image itself and asks you to confirm it, which fails without a terminal. Store the token and the private key as protected secrets in your CI system.
 
-The `--deploy` flag creates a release against the existing deployment group named `"production"` with the newly uploaded firmware, combining the upload and rollout steps into one command.
+`NERVES_HUB_PRIVATE_KEY` needs an unencrypted fwup key, as `fwup -g` writes. A key made with `nh key create` is encrypted and does not work there. See [Sign in CI](/outbound/ci-cd#sign-in-ci).
+
+See [CI/CD](/outbound/ci-cd) for access tokens, product API keys, and the GitHub Action.
+
+## Related pages
+
+- [Deployment groups](/setup/deployments)
+- [Firmware signing](/concepts/firmware-signing)
+- [How firmware updates work](/updates/overview)
+- [Delta updates](/management/delta-updates)
+- [CI and automation](/outbound/ci-cd)

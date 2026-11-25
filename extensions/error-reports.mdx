@@ -1,0 +1,160 @@
+---
+title: "Error reports extension"
+sidebarTitle: "Error reports"
+description: "Send crashes and handled exceptions from Nerves devices to NervesHub, where they are grouped into issues you can resolve or mute."
+---
+
+The Error reports extension sends the device's exceptions, exits and explicit error reports to NervesHub. NervesHub groups occurrences of the same bug into one issue across the fleet, which you can resolve or mute. Reports travel one way: nothing is sent back to the device.
+
+## Requirements
+
+- `nerves_hub_link` 2.13.0 or later. The extension is not in the default extension list.
+- NervesHub 2.5.0 or later.
+- ClickHouse on the instance. Without it, NervesHub does not offer the extension to devices. See [Feature prerequisites](/hosting/feature-prerequisites#clickhouse).
+
+## Enable it
+
+<Steps>
+  <Step title="Add Error reports to your firmware">
+    Name the module in `extension_modules`:
+
+    ```elixir
+    config :nerves_hub_link,
+      extension_modules: [
+        NervesHubLink.Extensions.ErrorReports,
+        NervesHubLink.Extensions.Geo,
+        NervesHubLink.Extensions.Health,
+        NervesHubLink.Extensions.NetworkIdentity
+      ]
+    ```
+
+    <Warning>
+      `extension_modules` replaces the default list. Name every extension you want. The list leaves out the optional [Local shell](/extensions/local-shell) extension.
+    </Warning>
+  </Step>
+
+  <Step title="Turn it on for the product">
+    In **Product settings**, on the **General** tab, switch on **Error reports** in the **Device extensions** card. A product created in the web UI starts with every extension on. A product created through the API or `nh` starts with every extension off.
+  </Step>
+
+  <Step title="Check the device setting">
+    On the device's **Settings** tab, **Error Reports** in the **Extensions** card is on by default.
+  </Step>
+</Steps>
+
+## Check that it works
+
+Reconnect the device if it was connected before you turned the extension on. Then report a test error from the device's console:
+
+```elixir
+iex> NervesHubLink.report_error(%RuntimeError{message: "test report"}, [], group: "test")
+```
+
+Reports go out in batches, at most once every 60 seconds. Open **Errors** in the product sidebar, or the **Errors** tab on the device. The test error appears as an unresolved issue.
+
+## What counts as an error
+
+Anything the runtime attaches a `crash_reason` to:
+
+- A process dying from an exception, an exit or a throw.
+- A GenServer terminating abnormally.
+- A failed `Task`.
+- A `Logger.error(message, crash_reason: {exception, stacktrace})` call in your own code.
+
+It is not every line logged at `:error`. Most of those are text, with no stacktrace to group by.
+
+Reports are collected from application start, not from the moment the extension attaches. A crash during boot, or while the device is offline, is sent once there is a connection.
+
+## Report an error you handled
+
+Crashes report themselves. Use `NervesHubLink.report_error/3` for an error your code rescued and still wants counted:
+
+```elixir
+try do
+  charge(order)
+rescue
+  error ->
+    NervesHubLink.report_error(error, __STACKTRACE__,
+      group: "payments",
+      context: %{"order" => order.id}
+    )
+
+    :error
+end
+```
+
+| Option | Meaning |
+| --- | --- |
+| `:group` | Group these reports under a key of your own in place of the stacktrace. |
+| `:context` | A map of extra detail for this report alone. |
+| `:kind` | `:error` (the default), `:exit` or `:throw`. |
+
+The function returns `:ok` whether or not the extension is running.
+
+## How errors are grouped
+
+NervesHub decides which occurrences are the same bug. It uses the kind of error, the reason with per-occurrence detail such as pids removed, and the top three stack frames. Line numbers are ignored, so an issue does not split when unrelated code above it changes.
+
+Use `:group` when your application knows something the stacktrace does not. Every failure in a payment integration might arrive through one HTTP client function. A group of your own wins outright.
+
+## Attach device state
+
+Every report carries the device's uptime as `uptime_ms`. To add more to every report, point `context` at a function that returns a map:
+
+```elixir
+config :nerves_hub_link,
+  error_reports: [context: {MyApp.Telemetry, :error_context, []}]
+```
+
+```elixir
+defmodule MyApp.Telemetry do
+  def error_context() do
+    %{"reboot_count" => MyApp.reboot_count(), "site" => "depot-4"}
+  end
+end
+```
+
+The function runs once per batch on the extension's own process, never in the process that crashed. If it raises, the report loses its context and nothing else.
+
+NervesHub gives the keys `uptime_ms`, `free_memory_bytes` and `reboot_count` labels and units. Other keys are shown as they arrive. NervesHub keeps at most 32 context keys and 512 bytes per value, and redacts values under keys that look like credentials.
+
+You do not need to send the firmware UUID. NervesHub fills it in from the device's connection.
+
+## Buffering and limits
+
+```elixir
+config :nerves_hub_link,
+  error_reports: [
+    # How many reports the collector holds before dropping the oldest.
+    max_reports: 100,
+    # Never less than 60, whatever you put here.
+    interval_seconds: 60
+  ]
+```
+
+- The buffer drops the oldest reports past `max_reports`. What it dropped is reported as an error of its own.
+- A message carries at most 25 reports. A flush with more splits into several messages.
+- Reasons are cut at 2KB and messages at 8KB. A stacktrace is trimmed past 30 frames.
+- NervesHub accepts one message per second per device, with a burst of five. A message over the limit is dropped.
+
+## Work with issues in NervesHub
+
+The product's **Errors** page lists issues under **Unresolved**, **Muted** and **Resolved**. You can search error messages and stack frames.
+
+- **Resolve** an issue when you have shipped a fix. If it happens again, it reopens and is marked as regressed. Any occurrence after you resolve reopens it, including one from a device still on the old firmware.
+- **Mute** an issue you know about and do not want in the queue. A muted issue keeps counting and does not reopen.
+- **Reopen** and **Unmute** move an issue back to **Unresolved**.
+
+The device's **Errors** tab shows the issues that device has hit.
+
+## Retention
+
+Occurrences are kept for 30 days. The issue outlives them: its event count, and when and on which firmware it was first and last seen, stay. The chart, the affected devices, the split by firmware, and the latest event's frames and context are read from occurrences, so they go empty once the last one expires.
+
+## Related pages
+
+- [Extensions overview](/extensions/overview)
+- [Logging extension](/extensions/logging)
+- [Webhook events](/outbound/webhooks#events)
+- [Product notifications](/management/notifications)
+- [ClickHouse for a self-hosted instance](/hosting/clickhouse)

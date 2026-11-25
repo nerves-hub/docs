@@ -1,0 +1,83 @@
+---
+title: "Metrics and Alarms extensions"
+sidebarTitle: "Metrics and alarms"
+description: "What the standalone Metrics and Alarms extensions are, which device clients implement them, and how Nerves devices send the same data through Health."
+---
+
+NervesHub has two extensions that carry part of what the [Health extension](/extensions/health) carries, each at its own pace:
+
+- **Metrics** sends metric readings in batches, each with the device's own timestamp.
+- **Alarms** sends each alarm at the moment it is raised or cleared.
+
+<Warning>
+  `nerves_hub_link` 2.14.0 implements neither extension. Turning **Metrics** or **Alarms** on for a product does nothing for a Nerves device. Nerves devices send metrics and alarms inside the [Health extension](/extensions/health)'s report, and NervesHub stores them in the same place.
+</Warning>
+
+## Which clients implement them
+
+| Client | `metrics` | `alarms` |
+| --- | --- | --- |
+| `nerves_hub_link` 2.14.0 | No. Use Health. | No. Use Health. |
+| `nerves_hub_link_atomvm_esp32` | No | Yes, on its main branch. Not in a tagged release as of 0.2.0. |
+| `nerves-hub-link-agent` ([Linux agent](/integrations/linux-agent)) | No | No |
+| `nerves-hub-link-esp32` | No | No |
+
+Both extensions have a written contract so that any client can implement them: [`docs/metrics.md`](https://github.com/nerves-hub/nerves_hub_web/blob/main/docs/metrics.md) and [`docs/alarms.md`](https://github.com/nerves-hub/nerves_hub_web/blob/main/docs/alarms.md) in `nerves_hub_web`. The [extensions protocol reference](/device-api/extensions) summarizes the messages.
+
+## Requirements
+
+- NervesHub 2.5.0 or later.
+- **Metrics** needs ClickHouse on the instance. Without it, NervesHub does not offer the extension, and devices report metrics through Health. See [Feature prerequisites](/hosting/feature-prerequisites#clickhouse).
+- **Alarms** works without ClickHouse. The current alarms are stored either way. Alarm history needs ClickHouse.
+- A device client that implements the extension.
+
+## Why they exist
+
+Health sends metrics, metadata and alarms in one report, on a timer NervesHub controls. That timer is hourly while nobody is looking at the device.
+
+- For metrics, the report repeats metadata that only changes when the device is updated. The Metrics extension lets a device sample often, batch readings with their own timestamps, and keep readings taken while offline.
+- For alarms, an alarm raised just after a report waits up to an hour to be seen, and one raised and cleared between two reports is never seen. The Alarms extension sends the event when it happens.
+
+Health keeps accepting metrics and alarms. Both paths end in the same place in NervesHub.
+
+## Turn them on
+
+<Steps>
+  <Step title="Use a client that implements the extension">
+    See the table above. For AtomVM on ESP32, see [AtomVM on ESP32](/integrations/atomvm-esp32).
+  </Step>
+
+  <Step title="Turn it on for the product">
+    In **Product settings**, on the **General** tab, switch on **Metrics** or **Alarms** in the **Device extensions** card. A product created in the web UI starts with every extension on. A product created through the API or `nh` starts with every extension off.
+  </Step>
+
+  <Step title="Check the device setting">
+    On the device's **Settings** tab, **Metrics** and **Alarms** in the **Extensions** card are on by default.
+  </Step>
+</Steps>
+
+## Metrics extension behaviour
+
+- NervesHub asks for a report every 15 minutes while nobody has the device's page open, and every 60 seconds while somebody does. A device may also report without being asked.
+- A message carries at most 60 reports. Each report has a `timestamp` and a `metrics` map of names to numbers.
+- A report whose timestamp is more than 24 hours from the server's clock is skipped. A client with no clock should use Health until its clock is set.
+- The rate limit is one message per second per device, with a burst of five.
+- The name limits are the same as for Health: 64 bytes per name, 20 names per report by default, numbers only.
+- History is kept for 30 days.
+
+## Alarms extension behaviour
+
+- When the extension attaches, NervesHub sends `alarms:sync`. The device answers with `alarms:snapshot`, the full set of alarms raised right now. NervesHub replaces what it has stored with that set.
+- After that, the device sends `alarms:raised` and `alarms:cleared` as alarms change.
+- A device that attaches Alarms should leave the `alarms` key out of its health reports. A health report with an empty `alarms` map clears every stored alarm.
+- NervesHub uses the device's `raised_at` and `cleared_at` when they are no more than 1 hour ahead of its clock and no more than 72 hours in the past. Otherwise it uses the arrival time.
+- The rate limit is one message per second per device, with a burst of ten. If NervesHub drops a message, it sends `alarms:sync` ten seconds later to correct its state.
+- An alarm name longer than 255 characters is ignored. A leading `Elixir.` is stripped.
+
+## Related pages
+
+- [Extensions overview](/extensions/overview)
+- [Health extension](/extensions/health)
+- [Health monitoring](/management/health-monitoring)
+- [Extensions protocol](/device-api/extensions)
+- [ClickHouse for a self-hosted instance](/hosting/clickhouse)

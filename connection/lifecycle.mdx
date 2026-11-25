@@ -1,0 +1,254 @@
+---
+title: "Connection lifecycle"
+sidebarTitle: "Lifecycle"
+description: "Control when NervesHubLink starts, how it builds its configuration, how it waits for the network and reconnects, and what it reports about the connection."
+---
+
+NervesHubLink starts with your firmware, waits for the network, connects, and reconnects on its own after a failure. This page covers the points where you can take control: who starts the connection, how its configuration is built, how reconnects are paced, and how your application learns the connection state.
+
+For what goes over the connection, see [Connection transport](/connection/transport).
+
+## What happens by default
+
+1. The `:nerves_hub_link` OTP application starts `NervesHubLink.Supervisor`.
+2. The supervisor builds its configuration from `config :nerves_hub_link, ...` and passes it through a configurator.
+3. The socket process sets the `NervesHubLink.Disconnected` alarm and waits until it can reach the NervesHub host.
+4. The socket connects, joins the device channel, clears the alarm and calls your client's `connected/0` callback.
+5. When the connection drops, the socket sets the alarm again and reconnects with a backoff.
+
+## Start the connection yourself
+
+By default the application starts the connection at boot. To start it later, for example after your own runtime setup has finished, turn off the automatic start. This needs `nerves_hub_link` 2.13.0 or later.
+
+```elixir
+# config/target.exs
+config :nerves_hub_link, start: :manual
+```
+
+With `start: :manual` the application starts nothing. Add `NervesHubLink.Supervisor` to your own supervision tree:
+
+```elixir
+children = [
+  # ...
+  NervesHubLink.Supervisor
+]
+```
+
+Started without options, the supervisor builds its configuration from the application environment, exactly as the automatic start does. `config :nerves_hub_link, ...` keeps working.
+
+To pass the configuration explicitly, give the supervisor a `NervesHubLink.Configurator.Config` struct:
+
+```elixir
+children = [
+  {NervesHubLink.Supervisor, config: MyApp.build_nh_config()}
+]
+```
+
+`NervesHubLink.Configurator.build/0` returns the struct that the default path uses, so you can call it at the moment you choose.
+
+<ParamField path="config" type="NervesHubLink.Configurator.Config">
+  The configuration to use. Defaults to the result of `NervesHubLink.Configurator.build/0`.
+</ParamField>
+
+<ParamField path="name" type="atom" default="NervesHubLink.Supervisor">
+  The name the supervisor registers under.
+</ParamField>
+
+The default (`start: :auto`) and manual mode use the same code path. Switching between them changes who starts the connection, not how it is configured.
+
+## Build configuration at runtime
+
+A configurator is a module that receives the configuration read from the application environment and returns the configuration to connect with. Write one when part of the configuration is only known on the device, for example:
+
+- choosing which certificate and key to use
+- reading a certificate file that is stored on the device and not available at compile time
+
+```elixir
+defmodule MyApp.Configurator do
+  @behaviour NervesHubLink.Configurator
+
+  @impl NervesHubLink.Configurator
+  def build(config) do
+    ssl = [certfile: "/root/ssl/cert.pem", keyfile: "/root/ssl/key.pem"]
+    %{config | ssl: ssl}
+  end
+end
+```
+
+Tell NervesHubLink to use it:
+
+```elixir
+config :nerves_hub_link, configurator: MyApp.Configurator
+```
+
+When you do not set `:configurator`, NervesHubLink picks one:
+
+1. `NervesHubLink.Configurator.NervesKey`, if the `NervesKey` module is loaded.
+2. `NervesHubLink.Configurator.TPM`, if the `TPM` module is loaded.
+3. `NervesHubLink.Configurator.SharedSecret` otherwise.
+
+Setting `:configurator` replaces this choice. See [NervesKey](/auth/nerveskey), [TPM](/auth/tpm) and [Shared secrets](/auth/shared-secret).
+
+## Disable the connection in tests
+
+To stop NervesHubLink from starting when you run tests on your host:
+
+```elixir
+# config/test.exs
+config :nerves_hub_link, connect: false
+```
+
+`connect: false` stops the application from starting `NervesHubLink.Supervisor`. It has no effect on a supervisor you add to your own tree with `start: :manual`. Leave the supervisor out of your children in that case.
+
+## Waiting for the network
+
+Before its first connection attempt, NervesHubLink checks that it can reach NervesHub. It opens a TCP connection to the configured host and port, with a two second timeout. If that fails, it logs `[NervesHubLink] waiting for network to become available` and checks again three seconds later.
+
+To skip the check and attempt the connection straight away:
+
+```elixir
+config :nerves_hub_link, connect_wait_for_network: false
+```
+
+The check only runs before the first attempt. After that, the reconnect backoff handles failures.
+
+## Reconnect backoff
+
+When the connection drops, NervesHubLink reconnects after a delay. The delay comes from a list of milliseconds. Each failed attempt moves to the next entry, and the last entry repeats.
+
+The default list starts at one second and doubles up to 60 seconds. Each delay has up to 50% added at random, so a fleet that loses its connection at the same moment does not reconnect at the same moment. A new random list is generated on each disconnect.
+
+### Set a fixed list
+
+```elixir
+config :nerves_hub_link,
+  socket: [reconnect_after_msec: [2_000, 5_000, 15_000, 60_000]]
+```
+
+### Decide at runtime
+
+Implement the optional `reconnect_backoff/0` callback in your [client module](/updates/applying-updates). NervesHubLink calls it each time the socket disconnects, before it starts to reconnect. Return a list of delays in milliseconds, or `nil` to use the default.
+
+```elixir
+defmodule MyApp.NervesHubLinkClient do
+  use NervesHubLink.Client
+
+  @impl NervesHubLink.Client
+  def reconnect_backoff() do
+    if MyApp.Network.metered?() do
+      [30_000, 60_000, 300_000]
+    else
+      nil
+    end
+  end
+end
+```
+
+```elixir
+config :nerves_hub_link, client: MyApp.NervesHubLinkClient
+```
+
+`MyApp.Network.metered?/0` stands for your own logic.
+
+A client built with `use NervesHubLink.Client` that does not override the callback returns `reconnect_after_msec` from `config :nerves_hub_link, socket: [...]`, or the default when that is not set. It reads the application environment. A `reconnect_after_msec` that you pass only through `{NervesHubLink.Supervisor, config: ...}` applies to the first connection, so implement `reconnect_backoff/0` as well in that case.
+
+### Related timing options
+
+<ParamField path="rejoin_after" type="integer | [integer]" default="[5_000]">
+  Delays in milliseconds before rejoining a channel that closed while the socket stayed connected.
+</ParamField>
+
+<ParamField path="heartbeat_interval_msec" type="integer" default="30_000">
+  How often the socket sends a heartbeat to NervesHub.
+</ParamField>
+
+### Reconnect on demand
+
+`NervesHubLink.reconnect/0` closes the socket and connects again. You can also ask a device to reconnect from your workstation with `nh device reconnect <identifier>`.
+
+If NervesHub answers a connection attempt with an HTTP redirect, NervesHubLink follows it, up to two redirects in a row (`nerves_hub_link` 2.10.0 or later).
+
+## React to the connection state
+
+### The `connected/0` callback
+
+Implement the optional `connected/0` callback in your client module to run code each time the socket connects, including reconnects. This needs `nerves_hub_link` 2.8.0 or later. The return value is ignored.
+
+```elixir
+defmodule MyApp.NervesHubLinkClient do
+  use NervesHubLink.Client
+
+  @impl NervesHubLink.Client
+  def connected() do
+    MyApp.StatusLed.set(:online)
+  end
+end
+```
+
+On a disconnect, NervesHubLink calls your client's `handle_error/1` with the reason.
+
+### Ask for the state
+
+| Function | Returns `true` when |
+| --- | --- |
+| `NervesHubLink.socket_connected?/0` | The WebSocket is connected. |
+| `NervesHubLink.connected?/0` | The device channel is joined. |
+| `NervesHubLink.console_connected?/0` | The [console](/management/remote-console) channel is joined. This needs `remote_iex: true`. |
+| `NervesHubLink.extensions_connected?/0` | The [extensions](/extensions/overview) channel is joined. |
+
+### Alarms
+
+NervesHubLink sets and clears alarms through Erlang's `:alarm_handler`. Read them with `:alarm_handler.get_alarms/0`, or with a library such as [Alarmist](https://hex.pm/packages/alarmist).
+
+| Alarm | Set | Cleared |
+| --- | --- | --- |
+| `NervesHubLink.Disconnected` | When the socket process starts, and each time the connection drops. After a drop, the alarm description is `[reason: reason]`. | When the socket connects. |
+| `NervesHubLink.UpdateInProgress` | While a firmware update is downloading or being applied. | When no update is running. |
+| `NervesHubLink.FirmwareReverted` | When the socket process starts, if the client's `firmware_auto_revert_detected?/0` check reports a revert. | NervesHubLink does not clear it. |
+
+```elixir
+iex> :alarm_handler.get_alarms()
+[{NervesHubLink.Disconnected, []}]
+```
+
+For how a revert is detected, see [Applying updates](/updates/applying-updates).
+
+<Note>
+  Support for devices that sleep is on the main branch of `nerves_hub_link` and is not in a tagged release as of 2.14.0. With it, a device that tells NervesHub it is going to sleep sets `NervesHubLink.Disconnected` with `[reason: :asleep]`. See [Sleeping devices](/management/sleeping-devices).
+</Note>
+
+## Client identification
+
+NervesHubLink names itself and its version in the `User-Agent` header of the WebSocket upgrade request and of firmware downloads, for example `NHL/2.14.0`. NervesHub records the library and version for each connection, so you can tell which version of NervesHubLink a device runs.
+
+### Requirements
+
+- `nerves_hub_link` 2.14.0 or later sends the header on the WebSocket. Earlier versions sent it on firmware downloads only.
+- NervesHub 2.5.2 or later records it. An older server ignores the header.
+
+You do not need to configure anything.
+
+### Custom headers
+
+- If the socket headers already contain a `User-Agent`, for example one set by a custom configurator, NervesHubLink leaves it alone and does not add its own.
+- `NervesHubLink.Configurator.SharedSecret` replaces the socket headers with its signature headers. A `User-Agent` set in `config :nerves_hub_link, socket: [headers: ...]` is dropped and NervesHubLink sends its own.
+- To send a different `User-Agent` with shared secret authentication, write a configurator that delegates to `NervesHubLink.Configurator.SharedSecret` and then adds the header to the socket headers it returns.
+- `NervesHubLink.Configurator.user_agent/0` returns the library's own token, for a configurator that sends it next to its own.
+
+### What NervesHub accepts
+
+NervesHub reads the header as product tokens, `<name>/<version>`.
+
+- The first token that names a client wins. Put your token first. You can add more after it, such as `NHL/2.14.0 Mint/1.7.1`.
+- `NHL` and `nerves_hub_link` are both recorded as `nerves_hub_link`. Names are matched exactly, including case.
+- A client that NervesHub does not list is recorded only when its name starts with `custom#`, for example `custom#acme-link/1.4.0`. It is recorded under that name with the prefix. The name after the prefix can be at most 64 letters, digits, `.`, `_` and `-`, and starts with a letter or digit.
+- The version must be SemVer with no leading `v`. Otherwise NervesHub records the library and leaves the version unknown.
+- Each connection is recorded fresh. A device that reconnects without the header goes back to unknown.
+
+## Related pages
+
+- [Connection transport](/connection/transport)
+- [Connecting devices](/setup/connecting)
+- [Applying updates on the device](/updates/applying-updates)
+- [Insights and history](/management/insights)
+- [NervesHubLink for Nerves](/integrations/nerves-hub-link)

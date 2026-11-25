@@ -1,0 +1,110 @@
+---
+title: "Geo extension"
+sidebarTitle: "Geo"
+description: "Report a device's location to NervesHub with the Geo extension, using GeoIP or your own resolver."
+---
+
+The Geo extension answers NervesHub's request for the device's location. By default it does a GeoIP lookup from the device's public IP address. If your device has GPS or a modem that can locate itself, you can supply your own resolver.
+
+## Requirements
+
+- `nerves_hub_link` 2.6.0 or later.
+- NervesHub 2.3.0 or later.
+- To draw the location on a map, the instance needs a Mapbox access token. Without one, the device page has no **Location** card. See [Feature prerequisites](/hosting/feature-prerequisites#device-location-map).
+
+## Enable it
+
+<Steps>
+  <Step title="Keep Geo in your firmware">
+    `NervesHubLink.Extensions.Geo` is in the default `extension_modules` list. If you set `extension_modules` yourself, that list replaces the default, so name Geo in it:
+
+    ```elixir
+    config :nerves_hub_link,
+      extension_modules: [
+        NervesHubLink.Extensions.Geo,
+        NervesHubLink.Extensions.Health,
+        NervesHubLink.Extensions.NetworkIdentity
+      ]
+    ```
+  </Step>
+
+  <Step title="Turn it on for the product">
+    In **Product settings**, on the **General** tab, switch on **Geo** in the **Device extensions** card. A product created in the web UI starts with every extension on. A product created through the API or `nh` starts with every extension off.
+  </Step>
+
+  <Step title="Check the device setting">
+    On the device's **Settings** tab, **Geo** in the **Extensions** card is on by default.
+  </Step>
+</Steps>
+
+## Check that it works
+
+Reconnect the device if it was connected before you turned Geo on. Open the device's **Details** tab and look at the **Location** card. It shows the map and where the location came from, for example **Approximate, from GeoIP**.
+
+If the resolver returned an error, the card shows the error code and description in place of the map.
+
+## The default resolver
+
+`NervesHubLink.Extensions.Geo.DefaultResolver` asks the Nerves project's [whenwhere](https://whenwhere.nerves-project.org/) service for a rough location based on the device's public IP address. It reports the result with `source: "geoip"`.
+
+The Nerves team provides no availability guarantee for that service.
+
+## Use your own resolver
+
+Implement the `NervesHubLink.Extensions.Geo.Resolver` behaviour. It has one callback, `resolve_location/0`:
+
+```elixir
+defmodule MyApp.GPSGeoResolver do
+  @behaviour NervesHubLink.Extensions.Geo.Resolver
+
+  @impl true
+  def resolve_location() do
+    case MyApp.GPS.fix() do
+      {:ok, %{lat: latitude, lon: longitude}} ->
+        {:ok, %{latitude: latitude, longitude: longitude, source: "gps"}}
+
+      {:error, reason} ->
+        {:error, "NO_FIX", inspect(reason)}
+    end
+  end
+end
+```
+
+Then configure it:
+
+```elixir
+config :nerves_hub_link,
+  geo: [
+    resolver: MyApp.GPSGeoResolver
+  ]
+```
+
+Load the module when your application starts, because `nerves_hub_link` 2.14.0 uses the default resolver instead, without a warning, when your resolver's module is not loaded yet:
+
+```elixir
+# lib/my_app/application.ex, at the top of start/2
+Code.ensure_loaded(MyApp.GPSGeoResolver)
+```
+
+When your resolver is in use, the device logs `Location resolution completed successfully using MyApp.GPSGeoResolver` at the `:debug` level.
+
+A successful result is a map with `latitude`, `longitude` and `source`, and optionally `accuracy`. NervesHub labels the sources `geoip`, `gps` and `manual`. Any other source is shown as **From** followed by the source name.
+
+<Note>
+  Return errors as `{:error, code, description}`. That is the shape the extension in `nerves_hub_link` 2.14.0 matches on and the shape the default resolver returns.
+</Note>
+
+## When the location is sent
+
+NervesHub asks for the location once, each time the extension attaches. That is the default: the repeat interval is an instance setting (`FEATURES_GEO_INTERVAL_MINUTES`) and is `0`, which means no repeat.
+
+## Set a location by hand
+
+A user who can update the device can override the reported location from the **Location** card, with **Manually set the location** or **Manually update location**.
+
+## Related pages
+
+- [Extensions overview](/extensions/overview)
+- [Fleet overview](/management/fleet-overview)
+- [Extensions protocol](/device-api/extensions)
+- [Device location map prerequisite](/hosting/feature-prerequisites#device-location-map)

@@ -1,0 +1,521 @@
+---
+title: "Basic fleet operations"
+sidebarTitle: "Basic fleet operations"
+description: "Build, sign and upload firmware from GitHub Actions, release every build to a QA deployment group, promote to production by hand, and send notifications to Slack."
+---
+
+This guide takes you from uploading firmware by hand to a fleet that CI feeds. At the end you have:
+
+- A GitHub Actions workflow that builds `my_app` for `rpi4`, signs it and uploads it on every push to `main`.
+- Two deployment groups: `qa` for test devices, which gets every build, and `production` for the rest of the fleet, which you release to by hand.
+- A Slack channel that hears about failed updates and unhealthy devices.
+
+## Before you start
+
+You need:
+
+- Devices set up as in [Basic Nerves device setup](/guides/basic-device-setup): they connect to the `my_app` product in the `acme` organization, trust the `my_app_key` signing key, and have taken updates through the throwaway `bench` deployment group.
+- The [`nh` CLI](/cli/installation) installed and logged in on your machine, with `acme` and `my_app` as its [default organization and product](/setup/products#set-the-default-organization-and-product-for-the-cli).
+- The **Manage** or **Admin** role in `acme`. Connecting Slack needs **Admin**.
+- The project in a GitHub repository.
+
+The examples build for a Raspberry Pi 4. Any of the Nerves [supported targets](https://hexdocs.pm/nerves/supported-targets.html) works, with its name in place of `rpi4`.
+
+The guide has four parts. Do them in order.
+
+1. [Build, sign and upload from CI](#1-build-sign-and-upload-from-ci)
+2. [Tag devices and create the deployment groups](#2-tag-devices-and-create-the-deployment-groups)
+3. [Release every build to QA, then promote by hand](#3-release-every-build-to-qa-then-promote-by-hand)
+4. [Send notifications to Slack](#4-send-notifications-to-slack)
+
+## 1. Build, sign and upload from CI
+
+Until now you built `my_app` on your own machine and uploaded it with `nh`. This part moves that to GitHub Actions. The workflow uses the [`upload-nerves-firmware` action](/outbound/ci-cd#github-action), which installs and runs `nh` for you. Nothing is released to devices yet.
+
+The workflow needs two repository secrets and one repository variable. If your devices use a shared secret, it needs two more secrets. Add them all in GitHub under **Settings** > **Secrets and variables** > **Actions**.
+
+### Secret 1: an access token
+
+In NervesHub, open the user menu, select **Access tokens**, click **New token**, enter a **Note** such as `CI`, and click **Create access token**. Store the value as `NERVES_HUB_TOKEN`. It is shown only once.
+
+The token acts as you, so your user needs the **Manage** or **Admin** role in `acme`. See [user access tokens](/api/authentication#user-access-tokens).
+
+### Secret 2: a signing key for CI
+
+The device guide had you create `my_app_key` with `nh key create`. That private key is stored encrypted, and CI needs an unencrypted fwup key. So keep `my_app_key` for uploads from your machine, and give CI its own key, `my_app_ci_key`. See [Sign in CI](/outbound/ci-cd#sign-in-ci).
+
+On your machine, generate the key and register its public half with `acme`. Run this outside the project directory, so the private key file cannot end up in a commit:
+
+```bash
+fwup -g -o my_app_ci_key
+nh key add my_app_ci_key --public-key my_app_ci_key.pub
+```
+
+Or, in the web UI, open the `acme` organization's **Signing keys** page and click **Add signing key**. Enter the **Name** `my_app_ci_key`, choose the **fwup (Ed25519)** scheme, paste the contents of `my_app_ci_key.pub` into **Key**, and click **Create Key**.
+
+Store the contents of `my_app_ci_key.priv` as the secret `NERVES_HUB_PRIVATE_KEY`.
+
+### Variable: your SSH public key
+
+A project made by `mix nerves.new` reads your SSH public key from `~/.ssh` when it builds, and stops if it finds none. A CI runner has none. Store the contents of the public key you use to reach your devices, such as `~/.ssh/id_ed25519.pub`, as the repository variable `DEVICE_SSH_PUBLIC_KEY`. Variables are on the **Variables** tab of the same GitHub page. The workflow writes the key to `~/.ssh` before it builds, so firmware built in CI accepts the same key as firmware built on your machine.
+
+### Shared secret only: the product key and secret
+
+If you chose the Shared secret tab in the [basic device guide](/guides/basic-device-setup), your config reads `NERVES_HUB_PRODUCT_KEY` and `NERVES_HUB_PRODUCT_SECRET` when the firmware is built. Store the two values you exported there as repository secrets with the same names. If your devices authenticate another way, skip this and remove the `env` block from the workflow's **Build firmware** step.
+
+### Make devices trust the CI key
+
+<Warning>
+  A device only installs firmware signed by a key in its `fwup_public_keys`. Your devices trust only `my_app_key`, so they refuse everything CI signs until they run firmware that lists the CI key too. Send that firmware first, signed from your machine with `my_app_key`.
+</Warning>
+
+If you followed the Tip in the [basic device guide](/guides/basic-device-setup) and your devices already run firmware with both keys, skip to [Give every build a new version](#give-every-build-a-new-version).
+
+<Steps>
+  <Step title="Add the CI public key to the firmware">
+    Put the contents of `my_app_ci_key.pub` next to the key that is already in `config/target.exs`:
+
+    ```elixir
+    # config/target.exs
+    config :nerves_hub_link,
+      fwup_public_keys: [
+        "<my_app_key public key>",
+        "<my_app_ci_key public key>"
+      ]
+    ```
+  </Step>
+
+  <Step title="Release it from your machine">
+    Bump `version` in `mix.exs`. Then build, sign with the old key, and release through the `bench` group from the device guide:
+
+    ```bash
+    export MIX_TARGET=rpi4
+    mix firmware
+    nh firmware upload _build/rpi4_dev/nerves/images/my_app.fw --key my_app_key --deploy bench
+    ```
+
+    If you already deleted `bench`, leave out `--deploy bench` and note the UUID that `nh` prints. In part 2 you create `qa` and `production` from this firmware, and devices take it when they join.
+  </Step>
+
+  <Step title="Wait for every device">
+    Run `nh device list` until every device reports the new version. Without `bench`, do this at the end of part 2. A device that misses this release cannot install a CI build later.
+  </Step>
+</Steps>
+
+This is a key rotation. [Firmware signing](/concepts/firmware-signing#use-more-than-one-key) describes it, including how to drop the old key later.
+
+### Give every build a new version
+
+NervesHub refuses a version that is not valid SemVer. A product with **Require unique firmware versions** turned on also refuses a version it already has for the same platform and architecture. So bump `version` in `mix.exs` in every change you merge to `main`. The setting is in [product settings](/setup/products#product-settings), and the full list of checks is in [what NervesHub checks](/setup/firmware#what-nerveshub-checks).
+
+### The workflow
+
+Create `.github/workflows/firmware.yml`. Set the Erlang and Elixir versions to the ones your project uses.
+
+```yaml
+name: Firmware
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      MIX_TARGET: rpi4
+      MIX_ENV: prod
+      FWUP_VERSION: "1.13.2"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install fwup and squashfs-tools
+        run: |
+          wget https://github.com/fwup-home/fwup/releases/download/v${FWUP_VERSION}/fwup_${FWUP_VERSION}_amd64.deb
+          sudo dpkg -i fwup_${FWUP_VERSION}_amd64.deb
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends squashfs-tools
+
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: "27"
+          elixir-version: "1.18"
+
+      - name: Add the SSH public key the firmware authorizes
+        env:
+          DEVICE_SSH_PUBLIC_KEY: ${{ vars.DEVICE_SSH_PUBLIC_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$DEVICE_SSH_PUBLIC_KEY" > ~/.ssh/id_ed25519.pub
+
+      - name: Build firmware
+        env:
+          NERVES_HUB_PRODUCT_KEY: ${{ secrets.NERVES_HUB_PRODUCT_KEY }}
+          NERVES_HUB_PRODUCT_SECRET: ${{ secrets.NERVES_HUB_PRODUCT_SECRET }}
+        run: |
+          mix archive.install hex nerves_bootstrap --force
+          mix deps.get
+          mix firmware
+
+      - name: Sign and upload to NervesHub
+        id: upload
+        uses: nervescloud/upload-nerves-firmware@main
+        with:
+          uri: https://your.nerveshub.host
+          token: ${{ secrets.NERVES_HUB_TOKEN }}
+          private-key: ${{ secrets.NERVES_HUB_PRIVATE_KEY }}
+          org: acme
+          product: my_app
+          firmware: _build/rpi4_prod/nerves/images/my_app.fw
+```
+
+Leave `uri` out if you use NervesCloud. The action signs with `fwup` and does not install it, which is why the workflow does. The build step gets the product key and secret because the Shared secret config reads them when the firmware is built. Pass any other value your config reads from the environment the same way.
+
+<Tip>
+  On another CI system, install `nh`, set `NERVES_HUB_TOKEN`, `NERVES_HUB_ORG`, `NERVES_HUB_PRODUCT`, `NERVES_HUB_URI`, `NERVES_HUB_PRIVATE_KEY` and `NERVES_HUB_NON_INTERACTIVE=true`, and run `nh firmware upload _build/rpi4_prod/nerves/images/my_app.fw`. See [Upload and deploy with nh](/outbound/ci-cd#upload-and-deploy-with-nh) and [CLI configuration](/cli/configuration#environment-variables).
+</Tip>
+
+### Check it works
+
+Bump the version and push to `main`. The run's summary shows the notice `Firmware <version> (<uuid>) uploaded`. Then confirm NervesHub has it:
+
+```bash
+nh firmware list
+```
+
+The new version also appears on the product's **Firmware** page. No device has it yet.
+
+**Go deeper:** [CI and automation](/outbound/ci-cd) · [Build, sign, and upload firmware](/setup/firmware) · [Firmware signing](/concepts/firmware-signing) · [API authentication](/api/authentication) · [Install the nh CLI](/cli/installation) · [CLI configuration](/cli/configuration)
+
+## 2. Tag devices and create the deployment groups
+
+CI now uploads firmware, but no device receives it. A [deployment group](/setup/deployments) decides which devices get which firmware, and it picks devices by tag. You make two groups: `qa` for your test devices and `production` for the rest of the fleet.
+
+### Tag the devices
+
+Give test devices the tag `qa` and every other device the tag `prod`. A device created by the product's shared secret starts with no tags.
+
+<Tabs>
+  <Tab title="One device">
+    ```bash
+    nh device update <identifier> --tag qa
+    ```
+
+    `--tag` sets the device's whole tag list. In the web UI, edit tags on the device's **Settings** tab. See [Set tags](/setup/devices#set-tags).
+  </Tab>
+
+  <Tab title="Many devices">
+    Open **Devices** in `my_app` and tick the devices. To take everything that matches a search or filter, choose **Select all** in the bar at the foot of the list. Open **Tags** in that bar, choose **Add**, enter `prod` and submit. See [Bulk actions](/management/finding-devices#bulk-actions).
+  </Tab>
+
+  <Tab title="New devices">
+    Set the tag when you add a device ahead of time:
+
+    ```bash
+    nh device create <identifier> --tag prod
+    ```
+
+    Devices that add themselves with a certificate get their tags from a [just-in-time provisioning](/auth/just-in-time-provisioning) profile, which the [complete device guide](/guides/complete-device-setup) sets up.
+  </Tab>
+</Tabs>
+
+### Delete the bench group
+
+The device guide left your devices in the `bench` group. A device belongs to one group at most, and changing its tags does not take it out. So if `bench` still exists, delete it before you make the real groups:
+
+```bash
+nh deployment delete bench
+```
+
+Answer `y` when `nh` asks you to confirm.
+
+### Create the two groups
+
+A group is created with its first firmware, which becomes its first [release](/deployments/releases). Use the firmware your devices run now, so that turning the groups on updates nothing. If the release that adds the CI key in part 1 has not gone out yet, use that firmware. Find its UUID:
+
+```bash
+nh firmware list
+```
+
+Then create both groups from it:
+
+```bash
+nh deployment create qa --firmware <UUID> --tag qa
+nh deployment create production --firmware <UUID> --tag prod
+```
+
+With no `--version` flag, a group matches devices on any firmware version. In the web UI, open **Deployment groups** and select **New deployment group**. The tag goes in **Tag(s) distributed to**.
+
+<Warning>
+  A new group has delta updates on. In such a group, a release whose delta fails to build is held back. It is not sent as full firmware. Firmware that is not built for deltas always fails that build. Unless you did the delta updates part of the [basic device guide](/guides/basic-device-setup), add `--delta-updatable=false` to both commands. See [Delta updates](/management/delta-updates#releases-wait-for-their-deltas).
+</Warning>
+
+### Turn the groups on
+
+A new group is off and sends nothing. Turn both on:
+
+```bash
+nh deployment update qa --state on
+nh deployment update production --state on
+```
+
+In the web UI, open the group, select **Resume**, and confirm.
+
+### Reconnect the devices
+
+A device joins a group only when it connects, and only if it is in no group at that moment. Your devices were online before `qa` and `production` existed, so make each one reconnect:
+
+```bash
+nh device reconnect <identifier>
+```
+
+The rules to remember, set out in full in [How devices join a group](/setup/deployments#how-devices-join-a-group):
+
+- The group must be on, and its tags, platform and architecture must match the device.
+- Tagging a device that is already connected does nothing until it connects again.
+- Changing a device's tags does not take it out of the group it is in.
+
+So to move a device from `qa` to `production` later, do two things. Replace its tag with `nh device update <identifier> --tag prod`. Then tick it in the **Devices** list, open **Deployment group** in the bar at the foot of the list, choose `production`, select **Add to group**, and confirm. The `nh` CLI cannot set a device's group.
+
+### Pause a group
+
+Pausing is the fastest way to stop a rollout:
+
+```bash
+nh deployment update production --state off
+```
+
+In the web UI, select **Pause** on the group page and confirm. Devices already taking the update finish it, and devices that have the firmware keep it. Turn the group on again to carry on. See [Pause a group](/setup/deployments#pause-a-group). The finer [rollout controls](/deployments/rollout-controls) come in the complete fleet guide.
+
+### Check it works
+
+```bash
+nh deployment list
+```
+
+Both groups show as on, and each device count goes up as tagged devices reconnect. In the web UI, search the **Devices** list for `deployment_group = "qa"` to see exactly which devices landed there.
+
+**Go deeper:** [Deployment groups](/setup/deployments) · [Devices](/setup/devices) · [Finding devices](/management/finding-devices) · [Just-in-time provisioning](/auth/just-in-time-provisioning) · [Releases](/deployments/releases) · [Rollout controls](/deployments/rollout-controls) · [Delta updates](/management/delta-updates) · [nh command reference](/cli/reference#nh-deployment)
+
+## 3. Release every build to QA, then promote by hand
+
+The workflow from part 1 uploads firmware and stops. Here you make it create a [release](/deployments/releases) on the `qa` group after each upload, so your test devices update on every push to `main`. `production` stays manual: you release a build there once it has run on QA.
+
+### Release to `qa` from CI
+
+Change the last step of `.github/workflows/firmware.yml`.
+
+<Tabs>
+  <Tab title="Upload action">
+    Add the `deployment` input:
+
+    ```yaml
+          - name: Sign and upload to NervesHub
+            id: upload
+            uses: nervescloud/upload-nerves-firmware@main
+            with:
+              uri: https://your.nerveshub.host
+              token: ${{ secrets.NERVES_HUB_TOKEN }}
+              private-key: ${{ secrets.NERVES_HUB_PRIVATE_KEY }}
+              org: acme
+              product: my_app
+              firmware: _build/rpi4_prod/nerves/images/my_app.fw
+              deployment: qa
+    ```
+  </Tab>
+  <Tab title="nh CLI">
+    If you upload with `nh`, as in the Tip in part 1, add `--deploy qa`:
+
+    ```bash
+    nh firmware upload _build/rpi4_prod/nerves/images/my_app.fw --deploy qa
+    ```
+  </Tab>
+</Tabs>
+
+Both create a release that becomes the group's current release. See [the deploy option](/outbound/ci-cd#the-deploy-option) and the [action's inputs](/outbound/ci-cd#inputs).
+
+<Warning>
+  The deploy option does not create a group and does not turn one on. `qa` must exist and be on, as you left it in part 2. A paused group takes the release but sends it only once you resume it. See [Upload and release in one command](/setup/deployments#upload-and-release-in-one-command).
+</Warning>
+
+### Promote a tested build to `production`
+
+Bump the version in `mix.exs`, push to `main`, and let the `qa` devices run the build. When you are satisfied, release the same firmware to `production`.
+
+<Tabs>
+  <Tab title="nh CLI">
+    Find the firmware's UUID, then create the release:
+
+    ```bash
+    nh firmware list
+    nh deployment update production --firmware <UUID>
+    ```
+  </Tab>
+  <Tab title="Web UI">
+    Open **Deployment groups**, select `production`, and select **New release**. Pick the version in the **Firmware** list, then select **Create release**.
+  </Tab>
+</Tabs>
+
+The group starts sending the release as soon as it is created. To add a description or notes, use `nh deployment release create` as shown in [Create a release](/deployments/releases#create-a-release).
+
+### Watch the rollout
+
+- **The group page.** The badge beside the group's name reads **Rolling out** and then **Up to date**. The **Overview** tab counts how many of the group's devices are on the release's version. The **Releases** tab lists every release, newest first. Open a release to see its delta updates, if it has any. If a release stalls there, see the delta warning in [part 2](#create-the-two-groups). If a rollout goes wrong, select **Pause**.
+- **A device.** Open the [device page](/management/fleet-overview#the-device-page) and select the **Firmware History** tab. **Installed firmware** lists each firmware the device reported. **Update attempts** shows how each update ended and needs ClickHouse on the instance: see [Feature prerequisites](/hosting/feature-prerequisites#clickhouse) and [Insights and history](/management/insights#firmware-update-history).
+- **The whole product.** The **Firmware** bar on [**Insights**](/management/insights) counts devices by version, and its **Failing updates** list names devices that keep failing.
+- **The terminal.** `nh deployment show` prints the group's state, device count and current release. `nh device list` prints each device's connection status and firmware version, and takes the [query language](/management/finding-devices#the-query-language) of the devices page:
+
+  ```bash
+  nh deployment show production
+  nh device list --query 'deployment_group = "production"'
+  ```
+
+### Check it works
+
+1. Push a commit with a new version to `main` and wait for the workflow to pass.
+2. Run `nh deployment release list qa`. The newest release, marked `*`, has the version you just built.
+3. Run `nh device list --query 'deployment_group = "qa"'` until your test devices report that version.
+
+**Go deeper:** [CI and automation](/outbound/ci-cd) · [Deployment groups](/setup/deployments) · [Releases](/deployments/releases) · [Build, sign, and upload firmware](/setup/firmware) · [Fleet overview](/management/fleet-overview) · [Insights and history](/management/insights) · [nh command reference](/cli/reference#nh-deployment)
+
+## 4. Send notifications to Slack
+
+CI now releases every build to `qa`. The last part has NervesHub tell your team when an update fails or a device starts misbehaving, so nobody has to watch the web UI. The [Slack](/outbound/slack) integration posts those events to a channel.
+
+Your NervesHub instance must have a Slack app configured, or Slack does not appear on the **Integrations** page at all. See [Feature prerequisites](/hosting/feature-prerequisites#slack), and [Create a Slack app for your instance](/hosting/slack-app) if you host the instance yourself.
+
+### Connect the workspace
+
+You need the built-in **Admin** role in `acme` for this step. See [Roles](/access/roles).
+
+<Steps>
+  <Step title="Open the Integrations page">
+    Open the `acme` organization and select the **Integrations** tab.
+  </Step>
+  <Step title="Start the install">
+    Click **Add to Slack**. If `acme` already has an integration, click **Add integration**, then **Connect a Slack workspace**.
+  </Step>
+  <Step title="Approve the install in Slack">
+    Slack sends you back to the **Integrations** page, which now lists the workspace.
+  </Step>
+</Steps>
+
+### Add a channel for `my_app`
+
+From here on, the **Manage** role is enough.
+
+<Steps>
+  <Step title="Add a channel">
+    On the **Integrations** page, click **Add integration**, then **Slack channel** under the workspace's name.
+  </Step>
+  <Step title="Choose the channel and product">
+    Pick a channel under **Channel**. Every public channel is listed. To use a private channel, invite the app to it in Slack first.
+
+    Choose **Only some** and select `my_app`, so other products in `acme` stay out of this channel.
+  </Step>
+  <Step title="Choose the events">
+    Start with these four:
+
+    - **Update failed**: a device's update fails, stalls, or ends with the device back on its old firmware.
+    - **New error**: a device reports an error not seen before in `my_app`. This needs the [Error reports extension](/extensions/error-reports) from the basic device guide.
+    - **Health status changed**: a device's [health status](/management/health-monitoring) moves, such as from healthy to warning.
+    - **Product notifications**: anything NervesHub adds to the product's [Notifications](/management/notifications) page.
+
+    Then click **Add channel**.
+  </Step>
+</Steps>
+
+This set only speaks up when something needs attention. **Update succeeded** posts for every device that finishes updating, so expect more traffic if you add it. The **Workflow** events stay quiet until a deployment group has a [deployment workflow](/concepts/deployment-workflows), which the [complete fleet operations guide](/guides/complete-fleet-operations) adds to this same channel.
+
+### Check it works
+
+1. On the **Integrations** page, open the channel's row menu and choose **Send test message**. A message arrives in the channel straight away, saying what the channel will get.
+2. In Slack, run `/nerveshub link` and follow the link it shows you. Your Slack account is then listed under **Linked accounts** on your NervesHub account page. See [Link your Slack account](/outbound/slack#link-your-slack-account).
+
+Each person links their own account once. Notifications arrive without it. You need it for the buttons and commands below, because they act as your NervesHub user with your role.
+
+### What else Slack can do
+
+A message about a single device has buttons to [act on the device](/outbound/slack#act-on-devices-from-slack) from the channel. The [`/nerveshub` slash command](/outbound/slack#slash-commands) looks up a device, identifies or reboots it, and runs [support scripts](/management/support-scripts). A link to a device or deployment group page posted in Slack gets a [preview](/outbound/slack#link-previews). If your team uses [Microsoft Teams](/outbound/teams) or [Discord](/outbound/discord), both can get the same notifications, without the buttons and commands.
+
+**Go deeper:** [Slack](/outbound/slack) · [Product notifications](/management/notifications) · [Microsoft Teams](/outbound/teams) · [Discord](/outbound/discord) · [Roles](/access/roles) · [Feature prerequisites](/hosting/feature-prerequisites#slack) · [Create a Slack app for your instance](/hosting/slack-app)
+
+## What you have now
+
+- Every push to `main` builds `my_app`, signs it with `my_app_ci_key`, uploads it and releases it to `qa`.
+- `production` takes a release when you create one, and pauses when you tell it to.
+- Slack hears about failed updates, new errors, health changes and product notifications.
+
+The finished `.github/workflows/firmware.yml`:
+
+```yaml
+name: Firmware
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      MIX_TARGET: rpi4
+      MIX_ENV: prod
+      FWUP_VERSION: "1.13.2"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install fwup and squashfs-tools
+        run: |
+          wget https://github.com/fwup-home/fwup/releases/download/v${FWUP_VERSION}/fwup_${FWUP_VERSION}_amd64.deb
+          sudo dpkg -i fwup_${FWUP_VERSION}_amd64.deb
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends squashfs-tools
+
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: "27"
+          elixir-version: "1.18"
+
+      - name: Add the SSH public key the firmware authorizes
+        env:
+          DEVICE_SSH_PUBLIC_KEY: ${{ vars.DEVICE_SSH_PUBLIC_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$DEVICE_SSH_PUBLIC_KEY" > ~/.ssh/id_ed25519.pub
+
+      - name: Build firmware
+        env:
+          NERVES_HUB_PRODUCT_KEY: ${{ secrets.NERVES_HUB_PRODUCT_KEY }}
+          NERVES_HUB_PRODUCT_SECRET: ${{ secrets.NERVES_HUB_PRODUCT_SECRET }}
+        run: |
+          mix archive.install hex nerves_bootstrap --force
+          mix deps.get
+          mix firmware
+
+      - name: Sign and upload to NervesHub
+        id: upload
+        uses: nervescloud/upload-nerves-firmware@main
+        with:
+          uri: https://your.nerveshub.host
+          token: ${{ secrets.NERVES_HUB_TOKEN }}
+          private-key: ${{ secrets.NERVES_HUB_PRIVATE_KEY }}
+          org: acme
+          product: my_app
+          firmware: _build/rpi4_prod/nerves/images/my_app.fw
+          deployment: qa
+```
+
+It uses the repository secrets `NERVES_HUB_TOKEN` and `NERVES_HUB_PRIVATE_KEY` and the repository variable `DEVICE_SSH_PUBLIC_KEY`. If your devices use a shared secret, it also uses the secrets `NERVES_HUB_PRODUCT_KEY` and `NERVES_HUB_PRODUCT_SECRET`.
+
+## Where to go next
+
+- [Complete fleet operations](/guides/complete-fleet-operations) continues from here: production releases from a version tag, canaries with an approval, webhooks into your own backend, and guardrails.
+- [Complete Nerves device setup](/guides/complete-device-setup) hardens the devices themselves: certificate authentication, control over when updates apply, and the remaining extensions.
+- [Rollout controls](/deployments/rollout-controls) and [Releases](/deployments/releases) cover what a group can do beyond this guide.

@@ -1,0 +1,124 @@
+---
+title: "Event stream"
+sidebarTitle: "Event stream"
+description: "Subscribe to a device's firmware update progress over a WebSocket, authenticated with an access token or a product API key."
+---
+
+The event stream is a WebSocket your own service can open to follow a device live. It carries one thing: the progress of the device's firmware updates. Use it when you need to show an update's progress as it happens, for example in your own support tool or companion app.
+
+For device connections, disconnections and the other fleet events, use [webhooks](/outbound/webhooks) instead.
+
+## Requirements
+
+- A credential: a user access token or a product API key. See [API authentication](/api/authentication).
+- The credential's role must be able to view the device. Every [built-in role](/access/roles) can.
+- A Phoenix Channels client. The stream uses the [Phoenix Channels](https://hexdocs.pm/phoenix/channels.html) protocol, and client libraries exist for most languages.
+
+<Note>
+  Authenticating with a product API key is on the NervesHub main branch but in no tagged release as of NervesHub 2.5.4. On 2.5.4 and earlier, use a user access token.
+</Note>
+
+## Connect
+
+Open a WebSocket to `/events-socket/websocket` on the web host, the same host that serves the HTTP API. Pass the credential as the `token` query parameter.
+
+```
+wss://manage.nervescloud.com/events-socket/websocket?token=<token>&vsn=2.0.0
+```
+
+A connection with a missing or invalid `token` is refused.
+
+## Subscribe to a device
+
+Join the topic `device:<identifier>`, where `<identifier>` is the device's identifier. Join one topic for each device you want to follow.
+
+```json
+["1", "1", "device:thermostat-0042", "phx_join", {}]
+```
+
+A successful join is answered with status `ok`. A refused join is answered with status `error` and this response:
+
+```json
+{ "reason": "unauthorized" }
+```
+
+A join is refused when:
+
+- The device does not exist, or the credential cannot see it. A product API key only sees devices in its own product. A member with a tag-scoped role only sees devices with matching tags.
+- The device's organization requires [two-factor authentication](/access/two-factor) and the token's user has not set it up.
+
+## The `firmware_update` event
+
+The server pushes `firmware_update` on the device's topic each time the device reports on an update.
+
+```json
+{ "stage": "downloading", "percent": 45 }
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `stage` | string | Where the update is. See the table below. |
+| `percent` | integer or null | Progress as a percentage. Set for `downloading` and `updating`. Null for the other stages. |
+
+| `stage` | Meaning |
+| --- | --- |
+| `received` | The device received the update. |
+| `started` | The device started the update. |
+| `downloading` | The device is downloading the firmware. |
+| `updating` | The device is applying the firmware. |
+| `completed` | The device applied the firmware. |
+| `ignored` | The device declined the update. |
+| `rescheduled` | The device deferred the update. |
+| `failed` | The update failed. |
+| `expired` | NervesHub gave up on the update because the device stopped reporting on it. |
+
+The stream carries no other event.
+
+## Example
+
+This example uses the [`phoenix`](https://www.npmjs.com/package/phoenix) JavaScript client.
+
+```javascript
+import { Socket } from "phoenix";
+
+const socket = new Socket("wss://manage.nervescloud.com/events-socket", {
+  params: { token: process.env.NERVES_HUB_TOKEN },
+});
+socket.connect();
+
+const channel = socket.channel("device:thermostat-0042");
+
+channel.on("firmware_update", ({ stage, percent }) => {
+  console.log(stage, percent);
+});
+
+channel
+  .join()
+  .receive("ok", () => console.log("subscribed"))
+  .receive("error", ({ reason }) => console.log("refused:", reason));
+```
+
+## Check that it works
+
+1. Connect and join the topic for a device that is online.
+2. Send firmware to the device, for example with `nh device upgrade <identifier> <firmware-uuid>`.
+3. Watch for `firmware_update` events as the device downloads and applies it.
+
+## When access changes
+
+The socket authenticates once, when it connects. NervesHub closes what you no longer have access to:
+
+- NervesHub checks your access to the device again when your role changes, when you are removed from the organization, when the organization starts requiring two-factor authentication, and when the device's tags change. If you can no longer view the device, the subscription is closed.
+- A socket opened with a product API key is disconnected when the key is deactivated, or when the custom role it holds is edited. Reconnect to pick up the edited role.
+
+## Limits
+
+- The stream is live only. Events sent while you are not subscribed are not replayed.
+- It covers firmware update progress for one device per topic. There is no topic for a whole product or organization.
+
+## Related pages
+
+- [Webhooks](/outbound/webhooks)
+- [API authentication](/api/authentication)
+- [CI and automation](/outbound/ci-cd)
+- [Applying updates on the device](/updates/applying-updates)

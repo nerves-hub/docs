@@ -1,0 +1,208 @@
+---
+title: "Applying updates on the device"
+sidebarTitle: "Applying updates"
+description: "Use the NervesHubLink.Client behaviour to decide when an update is applied, follow its progress, control the reboot, and report validation and reverts."
+---
+
+`NervesHubLink.Client` is the behaviour through which `nerves_hub_link` asks your application what to do with an update. Implement it when a device must not update at any moment, when you want to show progress, or when a reboot needs preparation. Without it, a device applies every update it is offered and reboots when the update finishes.
+
+## Requirements
+
+The callbacks on this page work with any `nerves_hub_link` 2.x release, except where this table says otherwise.
+
+| Feature | `nerves_hub_link` | NervesHub |
+| --- | --- | --- |
+| Ignored, rescheduled and failed statuses shown in NervesHub | 2.9.0 | 2.5.0 |
+| `firmware_validated?/0`, `firmware_auto_revert_detected?/0` | 2.8.1 | 2.3.0 |
+
+## Write a Client
+
+Create a module that calls `use NervesHubLink.Client` and override the callbacks you need. Every other callback keeps its default.
+
+```elixir
+defmodule MyApp.NervesHubLinkClient do
+  use NervesHubLink.Client
+
+  require Logger
+
+  @impl NervesHubLink.Client
+  def update_available(update_info) do
+    if MyApp.busy?() do
+      {:reschedule, 15, "device is busy"}
+    else
+      :apply
+    end
+  end
+
+  @impl NervesHubLink.Client
+  def handle_fwup_message({:progress, percent}) do
+    MyApp.Display.show_progress(percent)
+    :ok
+  end
+
+  def handle_fwup_message({:error, _code, message}) do
+    Logger.error("Firmware update failed: #{message}")
+    :ok
+  end
+
+  def handle_fwup_message(_message), do: :ok
+
+  @impl NervesHubLink.Client
+  def reboot() do
+    MyApp.Display.show("Restarting to finish the update")
+    MyApp.shutdown_gracefully()
+    Nerves.Runtime.reboot()
+  end
+end
+```
+
+Then tell `nerves_hub_link` to use it:
+
+```elixir
+# config/target.exs
+config :nerves_hub_link, client: MyApp.NervesHubLinkClient
+```
+
+`MyApp.busy?/0`, `MyApp.Display` and `MyApp.shutdown_gracefully/0` stand for your own code.
+
+You can use `@behaviour NervesHubLink.Client` instead of `use`. You then have to implement `update_available/1`, `archive_available/1`, `archive_ready/2`, `handle_fwup_message/1`, `handle_error/1` and `identify/0` yourself.
+
+## Decide whether to apply: `update_available/1`
+
+`nerves_hub_link` calls `update_available/1` when NervesHub offers an update, after it has confirmed it holds a [public key](/concepts/firmware-signing) to verify the firmware with. The argument is a `NervesHubLink.Message.UpdateInfo` struct:
+
+| Field | Description |
+| --- | --- |
+| `firmware_meta` | A `NervesHubLink.Message.FirmwareMetadata` struct for the target firmware: `uuid`, `version`, `platform`, `architecture`, `product`, `author`, `description`, `vcs_identifier`, `misc`, `fwup_version`. |
+| `firmware_url` | The URL to download, as a `URI`. It is signed and time limited. |
+| `size` | Size of the file in bytes, or `nil` if NervesHub did not send it. |
+| `checksum` | Hex SHA-256 of the file, or `nil`. |
+| `partials_checksums` | Hex SHA-256 of each part of the file, or `[]`. |
+
+Return one of:
+
+| Return value | Effect |
+| --- | --- |
+| `:apply` | Download and apply the update now. |
+| `:ignore` | Do not apply it. Reported to NervesHub as ignored. |
+| `{:ignore, reason}` | The same, with a reason string that NervesHub records. |
+| `{:reschedule, milliseconds}` | Do not apply it now. Ask NervesHub to offer it again later. |
+| `{:reschedule, minutes, reason}` | The same, with a reason string. Note that this form takes minutes. |
+
+The default implementation returns `:ignore` when the offered firmware's UUID equals the running firmware's UUID, and `:apply` otherwise.
+
+<Warning>
+  Any other return value is logged as an error and the update is applied. That includes the case where your callback raises: the exception is caught, and the update goes ahead. Rescue inside the callback if a failure should mean "not now".
+</Warning>
+
+### What ignoring and rescheduling do
+
+`nerves_hub_link` does not keep a timer for a rescheduled update. It reports the decision to NervesHub and waits to be offered the update again.
+
+- **Rescheduled.** The device asks NervesHub to hold the update back for the delay you returned. A delay in milliseconds is rounded to whole minutes. Delays under 5 minutes are raised to 5 minutes. Do not count on the delay. `nerves_hub_link` 2.14.0 sends it in minutes and NervesHub reads it in milliseconds, so the update is offered again within about a minute. Each offer counts as an attempt, so a device that keeps rescheduling meets its group's [penalty box](/deployments/rollout-controls#penalty-box) rules and is then offered nothing for the penalty time. [Let a device out early](/deployments/rollout-controls#let-a-device-out-early) shows how to clear it.
+- **Ignored.** NervesHub holds updates back from the device for the [deployment group](/setup/deployments)'s penalty timeout, as it does after a failed update. See [rollout controls](/deployments/rollout-controls).
+
+If an update message arrives while another update is being applied, `nerves_hub_link` drops it and lets the running update finish.
+
+## Follow progress: `handle_fwup_message/1`
+
+While an update is applied, `nerves_hub_link` passes each message from `fwup` to `handle_fwup_message/1`:
+
+| Message | Meaning |
+| --- | --- |
+| `{:progress, percent}` | `fwup` has applied `percent` (0 to 100) of the firmware. |
+| `{:warning, code, message}` | `fwup` reported a warning. |
+| `{:error, code, message}` | `fwup` failed. The update stops. |
+| `{:ok, code, message}` | `fwup` finished. A `code` of `0` completes the update. |
+
+The return value is not checked. The default implementation logs each message.
+
+The device also reports progress to NervesHub on its own. Download and install progress are sent as separate stages, at most once every 500 ms and only when the percentage has gone up. NervesHub shows this on the device's **Details** tab.
+
+While an update is in progress the `NervesHubLink.UpdateInProgress` alarm is set. It is cleared when the update completes or fails.
+
+## Control the reboot: `reboot/0`
+
+After `fwup` finishes, `nerves_hub_link` reports the update to NervesHub as completed and calls `reboot/0` in a new process. If your Client does not define `reboot/0`, it calls `Nerves.Runtime.reboot/0`.
+
+Define `reboot/0` to notify users or stop work cleanly first. The new firmware does not run until the device reboots, so your implementation must end in a reboot.
+
+Since `nerves_hub_link` 2.13.0 the same callback runs when someone reboots the device from NervesHub.
+
+## When an update fails
+
+When a download gives up or `fwup` reports an error, `nerves_hub_link`:
+
+1. Clears the `NervesHubLink.UpdateInProgress` alarm.
+2. Logs the reason.
+3. Reports the update to NervesHub as failed, with a reason that starts with `Download failed`, `FWUP error` or `Update failed`.
+
+The device keeps running its current firmware. It does not retry on its own beyond the download retries described in [download strategies](/updates/download-strategies). NervesHub records the failure and decides when to offer the update again. See [rollout controls](/deployments/rollout-controls) for failure thresholds and the penalty box.
+
+`handle_fwup_message/1` receives the `{:error, code, message}` from `fwup` before the update stops.
+
+<Note>
+  `handle_error/1` is not called for failed updates. In `nerves_hub_link` 2.14.0 it is called when the connection to NervesHub drops or the device channel closes, with the reason.
+</Note>
+
+## Validation and auto-revert
+
+After an update, a Nerves device boots the new firmware slot before that firmware has been marked valid. On systems that revert automatically, firmware that is not validated in time is abandoned and the device reboots into the previous slot. `nerves_hub_link` reports both facts to NervesHub so you can see which updates stuck.
+
+When the device connects, it sends:
+
+- Whether the running firmware is validated, from `firmware_validated?/0`.
+- Whether an automatic revert just happened, from `firmware_auto_revert_detected?/0`.
+
+If the firmware is not validated at connect time, `nerves_hub_link` checks again every 10 seconds and tells NervesHub as soon as it is.
+
+A device whose firmware is reported as not validated is not offered updates by its deployment group until it is.
+
+When a revert is detected at startup, `nerves_hub_link` sets the `NervesHubLink.FirmwareReverted` alarm.
+
+### Defaults
+
+Both callbacks are optional.
+
+| Callback | Default |
+| --- | --- |
+| `firmware_validated?/0` | `Nerves.Runtime.firmware_valid?/0` |
+| `firmware_auto_revert_detected?/0` | True when the other firmware slot has `nerves_fw_validated` set to `0` and non-empty `nerves_fw_platform` and `nerves_fw_architecture`. |
+
+Override them if your `fwup.conf` or `fwup-ops.conf` tracks validation or prevents reverts differently:
+
+```elixir
+defmodule MyApp.NervesHubLinkClient do
+  use NervesHubLink.Client
+
+  @impl NervesHubLink.Client
+  def firmware_validated?() do
+    MyApp.Firmware.validated?()
+  end
+
+  @impl NervesHubLink.Client
+  def firmware_auto_revert_detected?() do
+    MyApp.Firmware.reverted?()
+  end
+end
+```
+
+Both must return a boolean. For any other value, `firmware_validated?/0` is treated as `true` and `firmware_auto_revert_detected?/0` as `false`, with a warning in the log.
+
+`nerves_hub_link` reports validation. It does not validate firmware. Your application still has to mark the firmware valid, for example with `Nerves.Runtime.validate_firmware/0`, once it has decided the firmware works.
+
+## Other callbacks
+
+| Callback | Called when | Default with `use` |
+| --- | --- | --- |
+| `connected/0` | The connection to NervesHub is established. Optional. | Not defined |
+| `identify/0` | Someone asks the device to identify itself from NervesHub. | Logs a message |
+| `reconnect_backoff/0` | The socket disconnected. See [connection lifecycle](/connection/lifecycle). | Reads `socket: [reconnect_after_msec: ...]` |
+| `archive_available/1`, `archive_ready/2` | An archive is offered or downloaded. See [Archives](/updates/archives). | Ignores archives |
+
+## Related pages
+
+- [How firmware updates work](/updates/overview)
+- [Download strategies](/updates/download-strategies)
+- [Device-managed updates](/updates/device-managed-updates)
+- [Firmware signing](/concepts/firmware-signing)

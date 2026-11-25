@@ -1,105 +1,215 @@
 ---
-title: "API Authentication"
+title: "API authentication"
 sidebarTitle: "Authentication"
-description: "Learn how to obtain a NervesHub personal access token and authenticate every HTTP API request using Bearer token authorization headers."
+description: "Authenticate HTTP API requests with a user access token or a product API key sent as a bearer token."
 ---
 
-The NervesHub API uses Bearer token authentication — you generate a personal access token once and include it in the `Authorization` header of every request. Tokens are scoped to your user account and carry your organization permissions.
+The API accepts two kinds of credential. Both go in the same header.
 
-## Get a Token
+| | User access token | Product API key |
+| --- | --- | --- |
+| Prefix | `nhu_` | `nhpk_` |
+| Belongs to | A user | A product |
+| Reaches | Everything the user can reach, in every organization they belong to | That one product's API routes, and nothing else |
+| Permissions | The user's role in each organization | The role you give the key |
+| Stops working when | You delete it, or the user's account is deleted | You deactivate it, or its product or organization is deleted |
+| Best for | Your own scripts and the `nh` CLI on your machine | CI and other automation |
 
-You can obtain a token in two ways: via the `nh` CLI or from the NervesCloud web UI.
+<Note>
+  Product API keys are on the NervesHub main branch but in no tagged release as of NervesHub 2.5.4. An instance running 2.5.4 or earlier only accepts user access tokens.
+</Note>
+
+## Send the credential
+
+Put the token or key in the `Authorization` header with the `Bearer` scheme.
+
+```bash
+curl -H "Authorization: Bearer $NERVES_HUB_TOKEN" \
+  https://manage.nervescloud.com/api/orgs/acme/products/my_app/devices
+```
+
+The server also accepts the scheme `token` in place of `Bearer`. The scheme name is not case sensitive.
+
+## User access tokens
+
+A user access token acts as you. It can do anything your account can do, in every organization you belong to.
+
+### Create a token
 
 <Tabs>
+  <Tab title="Web interface">
+    <Steps>
+      <Step title="Open your access tokens">
+        Open the user menu and select **Access tokens**.
+      </Step>
+
+      <Step title="Create the token">
+        Click **New token**. Enter a **Note** that says what the token is for, then click **Create access token**.
+      </Step>
+
+      <Step title="Copy it">
+        Copy the token shown under **New Token**. It is not shown again.
+      </Step>
+    </Steps>
+
+    The list shows each token's note and when it was last used. Click **Delete** to revoke a token. Anything using it stops working.
+  </Tab>
+
   <Tab title="CLI">
-    Authenticate with the CLI to generate and store a token locally:
+    Sign in through the browser. `nh` saves the resulting token in its settings file and uses it for later commands.
 
     ```bash
     nh user login
     ```
 
-    This opens a browser flow on your NervesHub instance. After you confirm the session, the CLI stores your token automatically for subsequent commands.
+    Or sign in with your email and password.
+
+    ```bash
+    nh user auth
+    ```
+
+    See [CLI configuration](/cli/configuration#sign-in) for both.
   </Tab>
 
-  <Tab title="NervesCloud UI">
-    Generate a long-lived personal access token from the web dashboard:
+  <Tab title="API">
+    Exchange an email and password for a token. `note` is optional and labels the token in your token list.
 
-    1. Log in at [manage.nervescloud.com](https://manage.nervescloud.com).
-    2. Click your avatar in the top-right corner and select **Account Settings**.
-    3. Navigate to **Access Tokens**.
-    4. Click **New Token**, give it a name, and copy the value immediately — it is only shown once.
+    ```bash
+    curl -X POST https://manage.nervescloud.com/api/users/auth \
+      -H "Content-Type: application/json" \
+      -d '{"email": "jane@example.com", "password": "...", "note": "build server"}'
+    ```
+
+    ```json
+    {
+      "data": {
+        "name": "Jane Doe",
+        "email": "jane@example.com",
+        "token": "nhu_..."
+      }
+    }
+    ```
+
+    This endpoint refuses an account whose email is not confirmed, and an account with [two-factor authentication](/access/two-factor) turned on. Create the token in the web interface or with `nh user login` instead.
   </Tab>
 </Tabs>
 
-## Use the Token
-
-Pass the token as a `Bearer` credential in the `Authorization` header of every API request:
-
-```bash
-curl -H "Authorization: Bearer YOUR_TOKEN" \
-  https://manage.nervescloud.com/api/users/me
-```
-
-Replace `YOUR_TOKEN` with your actual token value.
-
-## Store the Token as an Environment Variable
-
-Rather than embedding your token in every command, export it as an environment variable. Both the CLI and shell scripts can read from it:
-
-```bash
-export NERVES_HUB_TOKEN=your_token_here
-```
-
-The `nh` CLI reads `NERVES_HUB_TOKEN` (or `NH_TOKEN`) automatically, so authenticated commands need no additional flags:
-
-```bash
-nh device list   # CLI uses NERVES_HUB_TOKEN automatically
-```
-
-For `curl` and scripts, reference the variable in the header:
-
-```bash
-curl -H "Authorization: Bearer $NERVES_HUB_TOKEN" \
-  https://manage.nervescloud.com/api/orgs/acme/products
-```
-
-## Verify Authentication
-
-Confirm your token is valid by calling the `/api/users/me` endpoint:
+### Check a token
 
 ```bash
 curl -H "Authorization: Bearer $NERVES_HUB_TOKEN" \
   https://manage.nervescloud.com/api/users/me
 ```
-
-A successful response returns your user profile:
 
 ```json
 {
   "data": {
-    "username": "alice",
-    "email": "alice@example.com"
+    "name": "Jane Doe",
+    "email": "jane@example.com"
   }
 }
 ```
 
-If the token is missing or invalid, the API returns a `401` error:
+## Product API keys
 
-```json
-{ "error": "unauthorized" }
-```
-
-## Error Responses
-
-| Status             | Body                        | Cause                                      |
-| ------------------ | --------------------------- | ------------------------------------------ |
-| `401 Unauthorized` | `{"error": "unauthorized"}` | Token missing, malformed, or expired       |
-| `403 Forbidden`    | `{"error": "forbidden"}`    | Token valid but lacks required permissions |
+A product API key is a credential for automation that has no person's account behind it. It works on one product only, holds a role of its own, and keeps working when the person who created it leaves the organization.
 
 <Note>
-  A `403` usually means your organization role is too low for the operation rather than that the token is bad. Read-only calls need `view`; creating or changing resources needs `manage`; organization settings, member management, and certificate authorities need `admin`.
+  Product API keys are on the NervesHub main branch but in no tagged release as of NervesHub 2.5.4.
 </Note>
 
-<Tip>
-  For CI/CD pipelines, set `NERVES_HUB_NON_INTERACTIVE=true` alongside `NERVES_HUB_TOKEN` to prevent the CLI from prompting for input. The CLI will use the token from the environment and fail fast on auth errors rather than waiting for user interaction.
-</Tip>
+### Create a key
+
+You need permission to edit the product's settings. The built-in **Manage** and **Admin** roles have it.
+
+<Steps>
+  <Step title="Open the product's API keys">
+    In the product, open **Product settings** and select the **API keys** tab.
+  </Step>
+
+  <Step title="Create the key">
+    Click **Create key**. Enter a **Name**, which is shown in the key list and in the [audit log](/access/audit-log). Choose a **Role**, then click **Create key**.
+  </Step>
+
+  <Step title="Copy it">
+    Copy the key from the dialog, then click **I've copied it**. Only a hash of the key is stored, so it cannot be shown again. If you lose it, deactivate it and create another.
+  </Step>
+</Steps>
+
+### Choose a role
+
+A key holds one role, which decides what it may do, the same way a member's role does.
+
+- The built-in roles on offer are **View** and **Manage**. **Admin** is not offered, because what it adds is running the organization, which no key can reach.
+- A key can hold one of the organization's custom roles instead. See [Roles](/access/roles).
+- You can only give a key a role that grants nothing beyond your own role.
+
+Uploading firmware and creating releases both need **Manage**, or a custom role with the **Upload firmware** and **Create, edit and approve releases** permissions.
+
+### What a key can reach
+
+A key works on these routes for its own product:
+
+- Everything under `/api/orgs/{org_name}/products/{product_name}/`, including devices, firmware, [archives](/updates/archives), [deployment groups](/setup/deployments), releases and [support scripts](/management/support-scripts).
+- `GET /api/orgs/{org_name}/products/{product_name}` to read the product.
+- `/api/devices/{identifier}` and its sub-routes, for devices in the product.
+- The [event stream](/outbound/event-stream) socket.
+
+A key cannot reach anything about a user or a whole organization, and it cannot change the product itself. These return `401`:
+
+- `/api/users/me` and `/api/orgs`
+- `/api/orgs/{org_name}/users`, `/keys`, `/ca_certificates`, `/webhooks` and `/iroh_endpoints`
+- Listing, creating, updating or deleting products
+
+A request that names any other organization or product returns `404`.
+
+A key cannot open a [remote console](/management/remote-console) or shell. The console socket accepts user access tokens only.
+
+### Deactivate a key
+
+In the **API keys** tab, click **Deactivate** on the key's row, then **Deactivate key**.
+
+- API requests with the key are refused at once.
+- Any event stream socket opened with the key is disconnected.
+- Deactivation cannot be undone. The key stays in the list, marked deactivated.
+
+The **Last used** column shows when a key last authenticated, to the nearest minute. Check it before you deactivate a key.
+
+## Use a credential with the CLI
+
+`nh` sends whatever is in `--token` or `NERVES_HUB_TOKEN` as the bearer token, so both kinds of credential work.
+
+```bash
+export NERVES_HUB_TOKEN=nhpk_...
+export NERVES_HUB_ORG=acme
+export NERVES_HUB_PRODUCT=thermostat
+nh firmware list
+```
+
+With a product API key, only commands that use the routes listed above work. `nh user whoami`, `nh org`, `nh key`, `nh ca`, `nh webhook` and `nh device console` need a user access token.
+
+See [CI and automation](/outbound/ci-cd) for a complete pipeline setup.
+
+## Failed authentication
+
+| Status | Cause |
+| --- | --- |
+| `401 Unauthorized` | The credential is missing, malformed, deleted or deactivated. Also returned when the credential is valid but its role lacks the permission the action needs. |
+| `403 Forbidden` | The organization requires two-factor authentication and the token's user has not set it up. See [Two-factor authentication](/access/two-factor). |
+| `404 Not Found` | The credential cannot see the organization or product in the URL. |
+
+```json
+{
+  "errors": {
+    "detail": "Resource Not Found or Authorization Insufficient"
+  }
+}
+```
+
+## Related pages
+
+- [HTTP API overview](/api/overview)
+- [Roles and permissions](/access/roles)
+- [Two-factor authentication](/access/two-factor)
+- [CI and automation](/outbound/ci-cd)
+- [Configure the nh CLI](/cli/configuration)

@@ -1,74 +1,101 @@
 ---
-title: "NervesHub: Open-Source IoT Firmware Update Platform"
+title: "NervesHub documentation"
 sidebarTitle: "Home"
-description: "NervesHub is an open-source firmware update and device management platform for Nerves-based IoT devices. Secure OTA updates, remote console access, and fleet monitoring."
+description: "NervesHub is an open-source firmware update and device management platform, available self-hosted or as the hosted NervesCloud service."
 ---
 
-NervesCloud is a hosted, production-grade platform for delivering secure OTA firmware updates and managing fleets of Nerves devices. This documentation covers getting started, common workflows, deeper concepts, and full reference for the CLI and configuration.
+NervesHub delivers signed firmware updates to connected devices and gives you remote access to them. You can run it yourself or use NervesCloud, the hosted service. This documentation covers both. It starts with a first update, then covers each feature, and ends with reference material for the CLI, the HTTP API and the device protocol.
 
 <CardGroup cols={2}>
   <Card title="Quickstart" icon="rocket" href="/quickstart">
-    Connect a device and ship your first OTA update in a few minutes.
+    Connect a Nerves device and send it a firmware update over the air.
   </Card>
 
   <Card title="Introduction" icon="book-open" href="/introduction">
-    What NervesCloud is, what it manages, and how it fits into a Nerves project.
+    What NervesHub does and how it fits into a Nerves project.
   </Card>
 
-  <Card title="How-to Guides" icon="wrench" href="/setup/products">
-    Step-by-step recipes for products, devices, firmware, and deployments.
+  <Card title="Architecture" icon="lightbulb" href="/architecture">
+    The server, the device library, the CLI, and what each one stores.
   </Card>
 
-  <Card title="CLI Reference" icon="terminal" href="/cli/reference">
-    Install the `nh` CLI and manage devices, firmware, and deployment groups from the command line.
-  </Card>
-
-  <Card title="Concepts" icon="lightbulb" href="/architecture">
-    Architecture, authentication, deltas, and the ideas behind the platform.
-  </Card>
-
-  <Card title="Production Setup" icon="shield-check" href="/auth/nerveskey">
-    Move from a hobby project to certificate-based mTLS with NervesKey hardware.
+  <Card title="Terminology" icon="book" href="/terminology">
+    Organizations, products, devices, firmware, deployment groups and releases.
   </Card>
 </CardGroup>
 
-<CardGroup cols={2}>
-  <Card title="Signed OTA Updates" icon="shield-check" href="/concepts/firmware-signing">
-    Every firmware file is cryptographically signed. Devices independently verify signatures before applying any update.
-  </Card>
+## Guides
 
-  <Card title="Delta Updates" icon="compress" href="/management/delta-updates">
-    Ship only binary diffs between firmware versions — a 58 MB release can shrink to ~100 KB.
-  </Card>
+Four guides walk through the features in order and link out to the page for each one.
 
-  <Card title="Remote Console" icon="display" href="/management/remote-console">
-    Open a live IEx or shell session on any connected device directly from your browser.
-  </Card>
+- [Basic Nerves device setup](/guides/basic-device-setup): connect a device, take signed updates, report health, logs and errors.
+- [Complete Nerves device setup](/guides/complete-device-setup): certificate authentication, update control, every extension, connection tuning.
+- [Basic fleet operations](/guides/basic-fleet-operations): build and upload from CI, release to a QA group, manage groups with tags, Slack notifications.
+- [Complete fleet operations](/guides/complete-fleet-operations): a CI/CD pipeline with canary rollouts and approval, webhooks into your own systems.
 
-  <Card title="Fleet Health" icon="heart-pulse" href="/management/health-monitoring">
-    Monitor CPU, memory, load, and custom metrics across your entire fleet with configurable alarms.
-  </Card>
-
-  <Card title="Staged Rollouts" icon="layer-group" href="/concepts/deployment-workflows">
-    Roll a release out in stages — a canary batch, an approval gate, then everything else — with failure limits on each step.
-  </Card>
-
-  <Card title="Flexible Authentication" icon="key" href="/auth/device-certificates">
-    Use Shared Secrets for development, X.509 certificates for production, or NervesKey hardware security modules for maximum security.
-  </Card>
-</CardGroup>
+## Set up a project
 
 <Steps>
   <Step title="Add NervesHubLink to your project">
-    Add `{:nerves_hub_link, "~> 2.7"}` to your Nerves project's `mix.exs` and configure it with your product credentials.
+    Add `{:nerves_hub_link, "~> 2.14"}` to your Nerves project's `mix.exs` and point it at your NervesHub host. See [Add to your project](/setup/add-to-project).
+  </Step>
+  <Step title="Authenticate the device">
+    Use a [shared secret](/auth/shared-secret) to get started, or [device certificates](/auth/device-certificates) for production.
   </Step>
   <Step title="Install the CLI">
-    Install the `nh` CLI via Homebrew or the install script, then authenticate with `nh user auth`.
+    Install the `nh` CLI and sign in with `nh user login`. See [CLI installation](/cli/installation).
   </Step>
-  <Step title="Create a signing key and publish firmware">
-    Run `nh key create my-key`, build your firmware with `mix firmware`, then publish it with `nh firmware upload`.
+  <Step title="Create a signing key and upload firmware">
+    Run `nh key create my_app_key`, build with `mix firmware`, then sign and upload with `nh firmware upload --key my_app_key`. See [Firmware](/setup/firmware).
   </Step>
   <Step title="Create a deployment group">
-    Target devices by tag and version, activate the group, and watch your fleet update automatically.
+    Target devices by tag and version, point the group at your firmware, and turn it on. See [Deployment groups](/setup/deployments).
   </Step>
 </Steps>
+
+## Features
+
+<CardGroup cols={2}>
+  <Card title="Signed updates" icon="shield-check" href="/concepts/firmware-signing">
+    You sign firmware before you upload it. Devices verify the signature before they apply an update.
+  </Card>
+
+  <Card title="Delta updates" icon="compress" href="/management/delta-updates">
+    Send the difference between two firmware versions instead of the full image.
+  </Card>
+
+  <Card title="Remote console" icon="display" href="/management/remote-console">
+    Open an IEx session on a connected device from your browser or the CLI.
+  </Card>
+
+  <Card title="Health monitoring" icon="heart-pulse" href="/management/health-monitoring">
+    Collect metrics and alarms from devices and judge them against health profiles.
+  </Card>
+
+  <Card title="Staged rollouts" icon="layer-group" href="/concepts/deployment-workflows">
+    Roll a release out in steps, with approval gates and failure limits.
+  </Card>
+
+  <Card title="Device authentication" icon="key" href="/auth/device-certificates">
+    Shared secrets, X.509 device certificates, NervesKey and TPM.
+  </Card>
+
+  <Card title="Extensions" icon="puzzle-piece" href="/extensions/overview">
+    Health, location, logging, error reports, local shell and network identity.
+  </Card>
+
+  <Card title="Connect your systems" icon="plug" href="/outbound/webhooks">
+    Webhooks, chat notifications, and uploading firmware from CI.
+  </Card>
+</CardGroup>
+
+## Every area
+
+- **Devices:** [device authentication](/auth/shared-secret), [connection transport](/connection/transport) and [connection lifecycle](/connection/lifecycle).
+- **Updates:** [how firmware updates work](/updates/overview), [applying updates](/updates/applying-updates) and [other firmware formats](/updates/esp-idf).
+- **Deployments:** [releases](/deployments/releases), [rollout controls](/deployments/rollout-controls) and [connecting code](/deployments/connecting-code).
+- **Device management:** [fleet overview](/management/fleet-overview), [finding devices](/management/finding-devices) and [support scripts](/management/support-scripts).
+- **Organization and access:** [roles and permissions](/access/roles), [two-factor authentication](/access/two-factor) and the [audit log](/access/audit-log).
+- **Other device clients:** [choosing a device client](/integrations/overview).
+- **Tools and references:** the [`nh` CLI](/cli/reference), the [HTTP API](/api/overview) and the [device WebSocket protocol](/device-api/websocket-overview).
+- **Self-hosting:** [feature prerequisites](/hosting/feature-prerequisites), [ClickHouse](/hosting/clickhouse) and the [Slack app](/hosting/slack-app).

@@ -1,170 +1,236 @@
 ---
-title: "X.509 Device Certificates"
-sidebarTitle: "Device Certificates"
-description: "Provision each device with a unique X.509 client certificate and register your CA with NervesHub for mutual TLS authentication in production."
+title: "X.509 device certificates"
+sidebarTitle: "Device certificates"
+description: "Give each device its own X.509 certificate, register the CA that signed it, and configure nerves_hub_link to present it."
 ---
 
-Device Certificates use mutual TLS (mTLS) with X.509 client certificates to authenticate every device individually. Each device carries a unique certificate signed by a Device CA that you control. When the device opens its WebSocket connection to NervesHub, both sides present and verify certificates, establishing a cryptographically authenticated channel with no shared secrets. This is the recommended authentication approach for production fleets because every device has an independent identity that can be individually revoked without affecting other devices.
+With certificate authentication, each device presents its own X.509 client certificate when it opens the TLS connection to NervesHub. Each device has its own key, so one leaked device exposes only itself. This is the method to use for production fleets.
 
-<Note>
-  The private key associated with your Device CA Certificate is **never shared with or seen by NervesHub**. You register only the public CA certificate. NervesHub uses it to verify device certificates at connection time — your signing key stays entirely under your control.
-</Note>
+This page covers a certificate and private key stored on the device filesystem. To keep the key in hardware, see [NervesKey](/auth/nerveskey) or [TPM](/auth/tpm).
 
-## How It Works
+## How NervesHub decides
 
-When a device connects, it presents its device certificate along with the CA certificate that signed it. NervesHub checks whether the CA certificate is registered to your organization, verifies the device certificate's signature chain, and — on the device's first-ever connection — automatically creates a device record in your product. Subsequent connections are verified against the registered CA without any manual intervention.
+NervesHub keeps device certificates on file. Authentication depends on whether it has seen the certificate before.
 
-This flow means you can pre-provision device certificates at manufacturing time and ship devices that self-register on first boot.
+- **The certificate is on file.** The device is allowed. NervesHub does not check the expiry of a certificate it has on file.
+- **The certificate is new, and a CA signed it.** NervesHub looks up the signing CA among the registered certificate authorities and validates the certificate against it. The certificate's common name must match the identifier of a device in the CA's organization. NervesHub then records the certificate for that device. If no such device exists, the connection is refused unless the CA has a [just-in-time provisioning](/auth/just-in-time-provisioning) profile.
+- **The certificate is new, and it is self-signed.** The connection is refused. A self-signed certificate is only accepted when it is already on file for the device.
 
-## Create a Device CA Certificate
+So there are three ways to get a certificate accepted:
 
-Use the `nh` CLI to generate a new CA certificate and its associated private key:
+| You do this | Then |
+| --- | --- |
+| Register the CA and add each device before it connects | NervesHub records the certificate on first connection. |
+| Register the CA with a just-in-time provisioning profile | NervesHub creates the device and records the certificate on first connection. |
+| Upload the certificate to the device | The device connects with exactly that certificate. This is the only way for a self-signed certificate. |
+
+A deleted device is refused, whatever certificate it presents.
+
+## Requirements
+
+- The device certificate's common name is the device identifier.
+- A CA-signed device certificate needs an Authority Key Identifier. NervesHub matches it against the Subject Key Identifier of the registered CA, so the CA certificate needs a Subject Key Identifier.
+- Registering, editing and deleting certificate authorities need the **Manage** role or higher from NervesHub 2.5.3. Earlier versions need **Admin** in the web UI.
+
+## Register a certificate authority
+
+You register the CA certificate only. NervesHub never sees the CA private key. To prove you hold the key, you sign a short-lived verification certificate with it.
+
+<Tabs>
+  <Tab title="CLI">
+    Generate a CA on your machine and register it:
+
+    ```bash
+    nh ca generate --upload
+    ```
+
+    `nh ca generate` writes the key and certificate to `<data-dir>/ca/<org>/`, named by the generation time, for example `2026-06-11-16-41-10-cert.pem` and `2026-06-11-16-41-10-key.pem`. The data directory defaults to `~/.nh`. The common name defaults to the organization name. Change it with `--name`, and the validity with `--valid-for`.
+
+    To register a CA you already have, give its certificate and key:
+
+    ```bash
+    nh ca upload --cert rootCA.crt --key rootCA.key --description "Factory CA"
+    ```
+
+    The key is used locally to sign the verification certificate. It is not uploaded.
+
+    ```bash
+    nh ca list
+    nh ca show <serial>
+    nh ca delete <serial>
+    ```
+  </Tab>
+
+  <Tab title="Web UI">
+    <Steps>
+      <Step title="Open the form">
+        Open the organization's **Certificates** page and click **Add certificate authority**.
+      </Step>
+
+      <Step title="Create a CA, if you do not have one">
+        ```bash
+        openssl genrsa -out rootCA.key 4096
+
+        openssl req -new -x509 -key rootCA.key -sha256 -days 3650 \
+            -subj "/CN=Root CA/O=Org Name" \
+            -addext "basicConstraints=critical,CA:TRUE" \
+            -addext "keyUsage=critical,keyCertSign,cRLSign" \
+            -addext "subjectKeyIdentifier=hash" \
+            -out rootCA.crt
+        ```
+      </Step>
+
+      <Step title="Create the verification certificate">
+        The form shows these commands with a registration code filled in. The code is valid for one hour. It goes in the Subject Alternative Name of a CSR, which you then sign with the CA key.
+
+        ```bash
+        openssl genrsa -out verificationCert.key 4096
+
+        openssl req -new -key verificationCert.key -out verificationCert.csr \
+            -subj "/CN=certificate-verification" \
+            -addext "subjectAltName=URI:urn:nerveshub:verify:<registration code>"
+
+        openssl x509 -req -in verificationCert.csr \
+            -CA rootCA.crt -CAkey rootCA.key -CAcreateserial \
+            -days 365 -sha256 \
+            -copy_extensions copy \
+            -out verificationCert.crt
+        ```
+      </Step>
+
+      <Step title="Upload both files">
+        Enter a **Description**. Upload `rootCA.crt` as the certificate authority file and `verificationCert.crt` as the ownership verification certificate. Click **Create Certificate**.
+      </Step>
+    </Steps>
+  </Tab>
+</Tabs>
+
+### Check expiration
+
+By default NervesHub does not check the CA certificate's validity period when it registers a device certificate. Turn on **Check expiration** to stop an expired CA from registering new device certificates. You cannot turn it on while registering a CA that has already expired.
+
+## Create device certificates
+
+`nh device certificates generate` creates a private key (secp256r1) on your machine. What else it creates depends on the flags:
+
+| Flags | Result |
+| --- | --- |
+| none | A key and a certificate signing request. Nothing is uploaded. |
+| `--ca <name>` | A key and a certificate signed by a CA made with `nh ca generate`. `<name>` is the timestamp in the CA's file names. |
+| `--self-signed` | A key and a self-signed certificate. |
 
 ```bash
-nh ca generate
+# Signed by a local CA
+nh device certificates generate my-device-001 --ca 2026-06-11-16-41-10
+
+# Self-signed, and uploaded to the device in NervesHub
+nh device certificates generate my-device-001 --self-signed --upload
 ```
 
-This creates a CA certificate and key pair in your current directory. Store the private key securely — you will use it to sign individual device certificates, and it should never be placed on a device or committed to source control.
+The certificate carries the device identifier as its common name. Files are written to `<data-dir>/certificates/<org>/`, named `<identifier>-<timestamp>-key.pem` and `<identifier>-<timestamp>-cert.pem`. `--valid-for` sets the validity, for example `90d`. The default is `31y`.
 
-<Accordion title="Generate with OpenSSL (existing CA infrastructure)">
-  If you already operate a PKI or want to integrate with an existing CA, you can generate a compatible CA certificate using OpenSSL:
-
-  ```bash
-  # Generate the CA private key
-  openssl ecparam -name prime256v1 -genkey -noout -out ca_key.pem
-  
-  # Generate a self-signed CA certificate (10-year validity)
-  openssl req -new -x509 -key ca_key.pem -out ca_cert.pem \
-    -days 3650 \
-    -subj "/O=My Organization/CN=NervesHub Device CA"
-  ```
-
-  You can use this `ca_cert.pem` with the `nh ca upload` command in the next step.
-</Accordion>
-
-## Register Your CA Certificate with NervesHub
-
-Upload your CA certificate so NervesHub can verify device certificates signed by it:
+`--upload` registers the certificate with the device, so the device must already exist. To upload a certificate from another source:
 
 ```bash
-nh ca upload my-ca-cert.pem
+nh device certificates upload my-device-001 cert.pem
 ```
 
-List all CA certificates registered to your organization at any time:
+In the web UI, open the device's **Settings** tab and click **Upload certificate** in the **Certificates** card. It takes a PEM or DER file.
 
-```bash
-nh ca list
-```
+<Warning>
+  A self-signed certificate must be uploaded before the device connects. NervesHub never registers a self-signed certificate on first connection.
+</Warning>
 
-Each registered CA has a unique identifier you can reference when auditing or revoking certificates.
-
-<Note>
-  Registering and removing certificate authorities requires the `admin` role in the organization.
-</Note>
-
-## Provision Device Certificates
-
-Generate a certificate for a specific device using the `nh` CLI. The device identifier (e.g., a serial number) becomes part of the certificate's common name:
-
-```bash
-nh device certificates generate my-device-001
-```
-
-This produces a certificate and private key pair for the device. Copy these to the device's filesystem during manufacturing or provisioning — typically to a dedicated data partition that survives firmware updates.
-
-<Accordion title="Generate device certificates programmatically">
-  For high-volume provisioning, generate certificates in Elixir using the `x509` library:
-
-  ```elixir
-  # mix.exs deps
-  {:x509, "~> 0.8"}
-  ```
-
-  ```elixir
-  # Read your CA key and cert from secure storage
-  {:ok, ca_key_pem}  = File.read("ca_key.pem")
-  {:ok, ca_cert_pem} = File.read("ca_cert.pem")
-
-  ca_key  = X509.PrivateKey.from_pem!(ca_key_pem)
-  ca_cert = X509.Certificate.from_pem!(ca_cert_pem)
-
-  # Generate a unique key and signed cert for each device
-  device_key  = X509.PrivateKey.new_ec(:prime256v1)
-  device_cert = X509.Certificate.new(
-    X509.PublicKey.derive(device_key),
-    "/CN=my-device-001",
-    ca_cert,
-    ca_key,
-    validity: 365 * 10,
-    extensions: [
-      subject_alt_name: X509.Certificate.Extension.subject_alt_name(["my-device-001"])
-    ]
-  )
-
-  # Export to PEM for writing to the device
-  File.write!("device_cert.pem", X509.Certificate.to_pem(device_cert))
-  File.write!("device_key.pem",  X509.PrivateKey.to_pem(device_key))
-  ```
-</Accordion>
+If you use Microchip Trust&Go secure elements, `nh device import` creates the devices and their certificates from the manifest. See [Devices](/setup/devices).
 
 ## Configure NervesHubLink
 
-Point `nerves_hub_link` at the certificate and key files on the device filesystem. These paths should live on a partition that persists across firmware updates (e.g., `/data`):
-
-```elixir
-# mix.exs
-def deps do
-  [
-    {:nerves_hub_link, "~> 2.7"}
-  ]
-end
-```
+Select the `LocalCertKey` configurator. It is never chosen automatically.
 
 ```elixir
 # config/target.exs
 config :nerves_hub_link,
   host: "devices.nervescloud.com",
-  remote_iex: true,
+  configurator: NervesHubLink.Configurator.LocalCertKey
+```
+
+The configurator looks for the certificate in this order:
+
+1. `cert` or `certfile` in the `ssl` option
+2. `nerves_hub_cert` in the Nerves key-value store, as PEM
+3. `cert.pem` in the `data_path` directory, which defaults to `/data/nerves-hub`
+
+It looks for the key the same way:
+
+1. `key` or `keyfile` in the `ssl` option
+2. `nerves_hub_key` in the Nerves key-value store, as a PEM EC private key
+3. `key.pem` in the `data_path` directory
+
+So with no other configuration, put the files at `/data/nerves-hub/cert.pem` and `/data/nerves-hub/key.pem`.
+
+### Put the files on the device
+
+NervesHub and `nh` do not copy the certificate and key to the device for you. `/data` is the device's application data partition, so files there are not part of the firmware image and you write them once per device. Two ways that need no extra tooling:
+
+- **A device on your bench.** If the firmware includes an SSH server with SFTP, copy the two files over SFTP. `nerves_ssh` starts an SFTP subsystem by default.
+
+  ```bash
+  sftp nerves.local
+  sftp> mkdir /data/nerves-hub
+  sftp> put my-device-001-<timestamp>-cert.pem /data/nerves-hub/cert.pem
+  sftp> put my-device-001-<timestamp>-key.pem /data/nerves-hub/key.pem
+  ```
+
+  Use the host name or address your device answers on in place of `nerves.local`.
+
+- **A device that already connects to NervesHub.** A device that connects another way, for example with a [shared secret](/auth/shared-secret), can be given the files over the [remote console](/management/remote-console). Its firmware needs `remote_iex: true`. Rename your copies of the files to `cert.pem` and `key.pem`, then drop each one on the device's **Console** tab. `nerves_hub_link` saves a dropped file under its own name in the `data_path` directory, which is where `LocalCertKey` looks. This needs `nerves_hub_link` 2.1.0 or later.
+
+  You can also write the files from the console prompt:
+
+  ```elixir
+  File.mkdir_p!("/data/nerves-hub")
+  File.write!("/data/nerves-hub/cert.pem", "<contents of the certificate file>")
+  File.write!("/data/nerves-hub/key.pem", "<contents of the key file>")
+  ```
+
+  Then send the device firmware that selects `LocalCertKey`.
+
+A firmware update over the air leaves `/data` alone. Writing a complete image does not: on the official Nerves systems, such as `nerves_system_rpi4`, the `complete` task that `mix burn` runs invalidates the application data partition so that it is formatted on the next boot. After you burn an SD card again, copy the files again.
+
+To use other paths:
+
+```elixir
+config :nerves_hub_link,
+  host: "devices.nervescloud.com",
+  configurator: NervesHubLink.Configurator.LocalCertKey,
   ssl: [
-    certfile: "/data/certs/device_cert.pem",
-    keyfile:  "/data/certs/device_key.pem"
+    certfile: "/data/certs/device-cert.pem",
+    keyfile: "/data/certs/device-key.pem"
   ]
 ```
 
-<Tip>
-  Keep device certificate files on a dedicated data partition (e.g., `/data/certs/`) rather than the read-only firmware partition. This lets you re-provision certificates in the field without reflashing firmware, and they survive OTA updates.
-</Tip>
+## Check that it works
 
-## First Connection and Auto-Registration
+Open the device's **Settings** tab. The **Certificates** card lists the certificate with its serial, the CA that signed it, its validity and when it was last used. The CA's page shows how many devices use a certificate it signed, by product.
 
-On the device's first connection to NervesHub, the following happens automatically:
+If the device does not connect, check:
 
-<Steps>
-  <Step title="Device presents its certificate chain">
-    `nerves_hub_link` sends the device certificate and the CA certificate during the TLS handshake.
-  </Step>
+- The CA is registered in the same organization as the device.
+- The certificate's common name is exactly the device identifier.
+- The device exists and is not deleted, or the CA has a just-in-time provisioning profile.
+- A self-signed certificate has been uploaded to the device.
 
-  <Step title="NervesHub verifies the CA">
-    NervesHub checks whether the CA certificate is registered to your organization. If it is not recognized, the connection is rejected.
-  </Step>
+## Limits
 
-  <Step title="Device is auto-registered">
-    If the CA is recognized and the device does not yet exist in your product, NervesHub creates a new device record using the certificate's common name as the device identifier.
-  </Step>
+- **One key per device.** A device that has a certificate on file cannot register a certificate with a different public key by connecting with it. Upload the new certificate instead.
+- **Renewing a certificate with the same key is automatic.** When a device presents a new certificate for a public key NervesHub already knows, NervesHub records it if the common name still matches the device and a CA registered in the device's organization signed it.
+- **Deleting a certificate does not block a CA-signed device.** When a device has no certificate on file and its CA is still registered, NervesHub records its certificate again the next time it connects. To keep a device out, delete the device. See [Devices](/setup/devices).
+- Certificates stay with a device when it moves to another product or organization.
 
-  <Step title="Subsequent connections are seamless">
-    On all future connections, NervesHub verifies the certificate against the registered CA. No additional steps are required.
-  </Step>
-</Steps>
+## Related pages
 
-## Revoking a Device
-
-To prevent a specific device from connecting, navigate to the device in the NervesCloud UI and disable or delete it. Because each device has a unique certificate, revoking one device has no effect on the rest of your fleet.
-
-## Next Steps
-
-For the highest level of security — where the private key is physically protected and cannot be extracted even if a device is compromised — consider upgrading to hardware-backed key storage:
-
-<Card title="NervesKey Hardware Security Module" icon="microchip" href="./nerveskey">
-  Store device private keys in an ATECC508A/608A hardware security module. The key never leaves the chip, making it ideal for large production fleets.
-</Card>
+- [Just-in-time provisioning](/auth/just-in-time-provisioning)
+- [NervesKey](/auth/nerveskey)
+- [TPM](/auth/tpm)
+- [Register and manage devices](/setup/devices)
+- [Security: PKI and the chain of trust](/concepts/pki)

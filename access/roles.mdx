@@ -1,0 +1,185 @@
+---
+title: "Roles and permissions"
+sidebarTitle: "Roles"
+description: "Control what each member of an organization can do with the built-in Admin, Manage and View roles, custom roles, and roles limited to tagged devices."
+---
+
+A member's role decides what they can change in an organization. Every organization has three built-in roles. Admins can also define custom roles, each a set of permissions picked from a catalog, and can limit a custom role to devices with certain [tags](/setup/devices).
+
+A member holds one role in each organization: a built-in role or a custom role, never both.
+
+## Requirements
+
+- The built-in roles exist in every organization.
+- Custom roles and tag-scoped roles need NervesHub 2.5.4 or later.
+
+<Warning>
+  If you self-host, do not roll back to NervesHub 2.5.3 once any member holds a custom role. 2.5.3 does not know about custom roles, so that member has no role it understands. Finish a rolling deploy to 2.5.4 before you give anyone a custom role.
+</Warning>
+
+## Built-in roles
+
+| Role | What it can do |
+| --- | --- |
+| **View** | View everything in the organization and run [support scripts](/management/support-scripts). It cannot change anything, and cannot download [firmware](/setup/firmware) or [archives](/updates/archives). |
+| **Manage** | Everything **View** can, plus every change to products, devices, firmware, archives, [deployment groups](/setup/deployments), support scripts, [signing keys](/concepts/firmware-signing), certificate authorities, [network identities](/extensions/network-identity), [webhooks](/outbound/webhooks) and chat channels. |
+| **Admin** | Everything **Manage** can, plus managing the organization, its members, its roles and its Slack workspaces. |
+
+To see exactly what a role grants, open the **Roles** tab of your organization and click the role's name.
+
+### Permission catalog
+
+Each permission first appears at one built-in role. Every role above it has it too.
+
+| Group | Permission | Identifier | Lowest built-in role |
+| --- | --- | --- | --- |
+| Organization | Change the organization's settings | `organization:update` | **Admin** |
+| Organization | Delete the organization | `organization:delete` | **Admin** |
+| Members | Invite people to the organization | `org_user:invite` | **Admin** |
+| Members | Resend invites and copy invite links | `org_user:invite:resend` | **Admin** |
+| Members | Rescind invites | `org_user:invite:rescind` | **Admin** |
+| Members | Change a member's role | `org_user:update` | **Admin** |
+| Members | Remove members | `org_user:delete` | **Admin** |
+| Roles | Create custom roles | `org_role:create` | **Admin** |
+| Roles | Edit custom roles | `org_role:update` | **Admin** |
+| Roles | Delete custom roles | `org_role:delete` | **Admin** |
+| Certificate authorities | Add certificate authorities | `certificate_authority:create` | **Manage** |
+| Certificate authorities | Edit certificate authorities | `certificate_authority:update` | **Manage** |
+| Certificate authorities | Delete certificate authorities | `certificate_authority:delete` | **Manage** |
+| Signing keys | Add firmware signing keys | `signing_key:create` | **Manage** |
+| Signing keys | Delete firmware signing keys | `signing_key:delete` | **Manage** |
+| Network identities | Register network identities | `network_identity:create` | **Manage** |
+| Network identities | Delete network identities | `network_identity:delete` | **Manage** |
+| Products | Create products | `product:create` | **Manage** |
+| Products | Change product settings | `product:update` | **Manage** |
+| Products | Delete products | `product:delete` | **Manage** |
+| Products | Dismiss [product notifications](/management/notifications) | `product:notifications:dismiss` | **Manage** |
+| Products | Resolve and reopen reported errors | `error_group:update` | **Manage** |
+| Integrations | Add webhooks | `webhook:create` | **Manage** |
+| Integrations | Edit webhooks | `webhook:update` | **Manage** |
+| Integrations | Delete webhooks | `webhook:delete` | **Manage** |
+| Integrations | Choose which Slack channels hear which events | `slack_subscription:create` | **Manage** |
+| Integrations | Edit Slack channel subscriptions | `slack_subscription:update` | **Manage** |
+| Integrations | Remove Slack channel subscriptions | `slack_subscription:delete` | **Manage** |
+| Integrations | Add Teams and Discord channels | `chat_webhook:create` | **Manage** |
+| Integrations | Edit Teams and Discord channels | `chat_webhook:update` | **Manage** |
+| Integrations | Remove Teams and Discord channels | `chat_webhook:delete` | **Manage** |
+| Slack workspaces | Connect a Slack workspace | `slack_connection:create` | **Admin** |
+| Slack workspaces | Disconnect a Slack workspace | `slack_connection:delete` | **Admin** |
+| Devices | View devices and stream their events | `device:view` | **View** |
+| Devices | Add devices | `device:create` | **Manage** |
+| Devices | Edit devices and their settings | `device:update` | **Manage** |
+| Devices | Change device tags | `device:tags` | **Manage** |
+| Devices | Delete devices | `device:delete` | **Manage** |
+| Devices | Restore deleted devices | `device:restore` | **Manage** |
+| Devices | Permanently destroy deleted devices | `device:destroy` | **Manage** |
+| Devices | Open a device's [remote console](/management/remote-console) | `device:console` | **Manage** |
+| Devices | Open a device's [local shell](/extensions/local-shell) | `device:extensions:local_shell` | **Manage** |
+| Devices | Ask a device to identify itself | `device:identify` | **Manage** |
+| Devices | Reboot devices | `device:reboot` | **Manage** |
+| Devices | Reconnect devices | `device:reconnect` | **Manage** |
+| Devices | Push firmware to a device | `device:push-update` | **Manage** |
+| Devices | Turn a device's updates on or off | `device:toggle-updates` | **Manage** |
+| Devices | Clear a device's [penalty box](/deployments/rollout-controls) | `device:clear-penalty-box` | **Manage** |
+| Devices | Move a device into a deployment group | `device:set-deployment-group` | **Manage** |
+| Firmware and archives | Download firmware | `firmware:download` | **Manage** |
+| Firmware and archives | Upload firmware | `firmware:upload` | **Manage** |
+| Firmware and archives | Delete firmware | `firmware:delete` | **Manage** |
+| Firmware and archives | Download archives | `archive:download` | **Manage** |
+| Firmware and archives | Upload archives | `archive:upload` | **Manage** |
+| Firmware and archives | Delete archives | `archive:delete` | **Manage** |
+| Deployment groups | Create deployment groups (also needs Create, edit and approve releases) | `deployment_group:create` | **Manage** |
+| Deployment groups | Edit deployment group settings | `deployment_group:update` | **Manage** |
+| Deployment groups | Create, edit and approve [releases](/deployments/releases) | `deployment_group:release:manage` | **Manage** |
+| Deployment groups | Turn deployment groups on or off | `deployment_group:toggle` | **Manage** |
+| Deployment groups | Turn [delta updates](/management/delta-updates) on or off | `deployment_group:toggle_delta_updates` | **Manage** |
+| Deployment groups | Delete deployment groups | `deployment_group:delete` | **Manage** |
+| Support scripts | Run support scripts on devices | `support_script:run` | **View** |
+| Support scripts | Create support scripts | `support_script:create` | **Manage** |
+| Support scripts | Edit support scripts | `support_script:update` | **Manage** |
+| Support scripts | Delete support scripts | `support_script:delete` | **Manage** |
+
+The **Permission** column is the label on the role form. The identifier is the name other pages in these docs use when they say which permission an action needs.
+
+## Custom roles
+
+A custom role is a name, an optional description and a set of permissions.
+
+- Every custom role can view the organization's products, devices and settings. You do not pick that.
+- You pick what the role can change, from the permissions that **Manage** has.
+- Permissions that only **Admin** has cannot be given to a custom role. Managing the organization, its members, its roles and its Slack workspaces stays with the built-in **Admin** role.
+- **Run support scripts on devices** is optional for a custom role, although the built-in **View** role has it.
+- Creating a deployment group also needs **Create, edit and approve releases**, because a group starts with a release.
+
+### Create a custom role
+
+You need the built-in **Admin** role.
+
+<Steps>
+  <Step title="Open the Roles tab">
+    Open your organization and select the **Roles** tab.
+  </Step>
+  <Step title="Add a role">
+    Click **Add role**. Enter a **Name** and, optionally, a **Description**. The name cannot be the name of a built-in role.
+  </Step>
+  <Step title="Pick permissions">
+    Tick what the role can change. To start from an existing set, use **Copy permissions from** and choose **Manage** or another custom role.
+  </Step>
+  <Step title="Save">
+    Click **Create role**.
+  </Step>
+</Steps>
+
+### Give a member a custom role
+
+On the **Users** tab, change the member's role in the **Role** column. Custom roles are listed under **Custom roles**. You can also choose a custom role in the **Role** field when you invite someone.
+
+### Edit or delete a custom role
+
+On the **Roles** tab, click **Edit** or **Delete** beside the role.
+
+An edit applies straight away. Pages the role's members have open reload with the new permissions. Consoles, local shells and device event streams that the role no longer allows close.
+
+You can only delete a role that nobody uses. While a member holds the role or an outstanding invite offers it, move them to another role first.
+
+## Roles limited to tagged devices
+
+A custom role can be limited to devices with certain tags. Its members see only those devices, wherever devices are listed or opened.
+
+To limit a role, fill in **Only devices tagged** on the role form and choose the **Tag matching**:
+
+- **Require all** matches only devices that have every tag.
+- **Allow any** matches devices that have at least one of the tags.
+
+Leave the tags empty for a role that sees every device in the organization.
+
+A tag-scoped role has these limits:
+
+- It can only be given permissions that act on a single device: editing, tagging, deleting, restoring and destroying a device, the remote console, the local shell, identify, reboot, reconnect, pushing firmware, turning updates on or off, clearing the penalty box, moving the device into a deployment group, and running support scripts.
+- Pages built from all of a product's devices are closed to its members. That includes Insights, deployment groups, firmware, archives, errors, product notifications and product settings.
+- When a tag change takes a device out of a member's reach, the console, shell or device page they have open for it closes.
+
+## Roles and the API
+
+The JSON API checks the same permissions as the web UI. A user access token acts with that user's role in each organization.
+
+- Reads need only membership of the organization.
+- Each write needs the same permission the web UI checks for that action.
+- A member of a tag-scoped role sees only the devices its tags match through the API too. Endpoints built from all of a product's devices, such as firmware, archives, deployment groups and releases, refuse them.
+
+The member endpoints handle custom roles as follows:
+
+- `GET /api/orgs/{org_name}/users` and `GET /api/orgs/{org_name}/users/{user_email}` return each member's `role` as `admin`, `manage` or `view`. For a member with a custom role, `role` is `null` and the role's name is in `custom_role`.
+- The API's invite and role update endpoints accept only the built-in roles. Assign custom roles in the web UI. The same applies to `nh org invite` and `nh org set-role`.
+
+<Note>
+  Product API keys, which hold a role of their own, are on the main branch but in no tagged release as of NervesHub 2.5.4. See [CI/CD](/outbound/ci-cd).
+</Note>
+
+## Related pages
+
+- [Two-factor authentication](/access/two-factor)
+- [Audit log](/access/audit-log)
+- [API authentication](/api/authentication)
+- [CI and automation](/outbound/ci-cd)
+- [Slack](/outbound/slack)

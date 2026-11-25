@@ -1,0 +1,137 @@
+---
+title: "Support scripts"
+sidebarTitle: "Support scripts"
+description: "Save scripts on a product and run them on a device from the web UI, the nh CLI, or the API, with the output returned to you."
+---
+
+A support script is text you save on a product and run on any of its devices. NervesHub sends the text to the device, the device runs it, and the output comes back to you. Use scripts for diagnostics you run often, and to let people run a vetted check without giving them a console.
+
+## Requirements
+
+* `nerves_hub_link` 2.5.0 or later. The device runs the script over its device connection, separate from the remote console, so `remote_iex` is not needed.
+* The device is online.
+* NervesHub 2.5.0 or later to show, create, update, and delete scripts through the API and `nh script`, for shell scripts, and for script names that are unique per product.
+* Permissions, from the built-in roles:
+
+  | Permission | What it allows | Lowest built-in role |
+  | --- | --- | --- |
+  | `support_script:run` | Run a script on a device | **View** |
+  | `support_script:create` | Create scripts | **Manage** |
+  | `support_script:update` | Edit scripts | **Manage** |
+  | `support_script:delete` | Delete scripts | **Manage** |
+
+  A custom role has each of these only if it is picked for the role. See [Roles](/access/roles).
+
+Support scripts need nothing extra on the NervesHub instance.
+
+<Warning>
+  A script runs with the same reach as the console: an Elixir script can call any function on the device. Every member with the **View** role can run every script on the product, so review what a script does before you save it.
+</Warning>
+
+## Languages
+
+Each script has a language, which says what the device is expected to do with the text. NervesHub sends the text as written either way.
+
+| Language | Runs on | How |
+| --- | --- | --- |
+| **Elixir** (default) | Devices using `nerves_hub_link` | Evaluated in the running VM |
+| **Shell** | Devices using the [Linux agent](/integrations/linux-agent) | Written to a file and run with the agent's interpreter |
+
+NervesHub checks an Elixir script for syntax errors when you save it. Shell scripts are saved as written.
+
+<Note>
+  A product can hold both kinds of device, and NervesHub offers every script on every device. An Elixir script sent to a Linux agent device comes back as a shell syntax error. Use the language and tags to tell the two sets apart.
+</Note>
+
+## Create a script
+
+<Steps>
+  <Step title="Open the scripts page">
+    In your product, select **Support scripts**, then **Add Support Script**.
+  </Step>
+  <Step title="Fill in the script">
+    Set a **Name**. Names are unique in a product, ignoring case. Optionally add **Tags**, which the scripts page searches along with names. Pick the **Language**, and enter the **Script code**.
+  </Step>
+  <Step title="Save">
+    Select **Save changes**.
+  </Step>
+</Steps>
+
+For an Elixir script, what the script prints and the value of its last expression both come back:
+
+```elixir
+IO.puts("uptime: #{:erlang.statistics(:wall_clock) |> elem(0) |> div(1000)}s")
+:erlang.memory()
+```
+
+To change a script, select it on the **Support scripts** page. The page shows who last updated each script and when. **Delete Script** on the edit page removes it.
+
+## Run a script on a device
+
+<Steps>
+  <Step title="Open the device">
+    In your product, select **Devices**, then the device. Stay on the **Details** tab.
+  </Step>
+  <Step title="Pick the script">
+    In the **Support scripts** card, select a script. Each is listed with its language.
+  </Step>
+  <Step title="Run it">
+    Select **Run script**. The output appears in the card. **Clear** removes it.
+  </Step>
+</Steps>
+
+**Run script** is disabled while the device is offline.
+
+NervesHub waits 30 seconds for the device to answer. If the device does not answer in time, the card shows an error saying so.
+
+## Use the CLI
+
+Manage a product's scripts with `nh script` (alias `nh support-script`):
+
+```bash
+nh script list
+nh script show <id>
+nh script create --name "Memory" --tags info --text-file memory.exs
+nh script create --name "Disk" --language shell --text 'df -h'
+nh script update <id> --text-file memory.exs
+nh script delete <id>
+```
+
+`create` needs `--name` and a body from `--text` or `--text-file` (`-` reads standard input). `--tags` takes comma-separated tags. `--language` is `elixir` or `shell`, and defaults to Elixir on the server.
+
+List the scripts a device can run, then run one by name or ID:
+
+```bash
+nh device scripts my-device-001
+nh device run-script my-device-001 "Memory"
+```
+
+`run-script` prints the script's output. `--timeout` sets how long the server waits for the device, such as `--timeout 2m`. The default is 30 seconds.
+
+## Use the API
+
+| Request | What it does |
+| --- | --- |
+| `GET /api/orgs/{org}/products/{product}/scripts` | List scripts |
+| `GET /api/orgs/{org}/products/{product}/scripts/{id}` | Show a script |
+| `POST /api/orgs/{org}/products/{product}/scripts` | Create a script |
+| `PUT /api/orgs/{org}/products/{product}/scripts/{id}` | Update a script |
+| `DELETE /api/orgs/{org}/products/{product}/scripts/{id}` | Delete a script |
+| `POST /api/orgs/{org}/products/{product}/devices/{identifier}/scripts/{name_or_id}` | Run a script on a device |
+
+Running a script answers with the output as plain text. Pass `timeout` in milliseconds to wait longer than the default 30,000.
+
+See [API overview](/api/overview) for authentication.
+
+## Limits
+
+* Renaming or deleting a script breaks anything that runs it by name. Run by ID from automation if names may change.
+* A script runs on one device per request. To run one across several devices, loop over them with the CLI or API.
+
+## Related pages
+
+- [Remote console](/management/remote-console)
+- [Connecting code](/deployments/connecting-code)
+- [Slack](/outbound/slack)
+- [Linux agent](/integrations/linux-agent)
+- [Roles and permissions](/access/roles)

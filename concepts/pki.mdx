@@ -1,96 +1,88 @@
 ---
-title: "Security: PKI and the Chain of Trust"
-sidebarTitle: "Security Overview"
-description: "How NervesHub uses asymmetric cryptography to authenticate device connections with mTLS and to validate firmware integrity with signed firmware images."
+title: "Security: PKI and the chain of trust"
+sidebarTitle: "Security overview"
+description: "How NervesHub authenticates device connections and how devices verify the firmware they are sent."
 ---
 
-NervesHub uses asymmetric cryptography for two distinct and complementary purposes: authenticating device connections to the server, and validating the integrity of firmware before a device applies an update. These two mechanisms use different key types and operate independently, so a compromise of one does not affect the other.
+NervesHub uses cryptography for two separate jobs. One proves which device is connecting. The other lets a device check that firmware came from you. They use different keys and work independently.
 
-## Device Authentication with mTLS
+## Device authentication
 
-Every device that connects to NervesHub opens a WebSocket connection secured by mutual TLS (mTLS). Unlike ordinary TLS — where only the server presents a certificate — mTLS requires both sides to authenticate. This means NervesHub verifies the device, and the device verifies NervesHub, before any data is exchanged.
+A device connects to NervesHub over TLS and verifies the server's certificate. The device then proves its own identity in one of two ways.
 
-### How device certificates are structured
+| | Certificate | Shared secret |
+| --- | --- | --- |
+| The device holds | An X.509 certificate and its private key | A key and a secret |
+| The device proves itself by | Presenting the certificate in the TLS handshake | Signing its identifier with the secret (HMAC) |
+| Identity is per | Device | Device (`nhd_` key) or product (`nhp_` key) |
+| Instance prerequisite | None | Shared secrets turned on. See [Feature prerequisites](/hosting/feature-prerequisites#shared-secret-authentication). |
+| Page | [Device certificates](/auth/device-certificates) | [Shared secret](/auth/shared-secret) |
 
-Each device is provisioned with two pieces of cryptographic material:
+### Device certificates and signer certificates
 
-* **A Device Certificate** — an X.509 certificate bound to the device's unique serial number.
-* **A Device Private Key** — the corresponding private key, stored on the device and never transmitted.
+Each device has two pieces of material:
 
-The Device Certificate must be signed by a **Device CA Certificate** that you own and have registered with NervesHub. You upload only the CA certificate (the public portion) to NervesHub. The CA private key is never shared with NervesHub, never uploaded, and ideally never touches a production server at all — it exists solely in your secure provisioning environment.
+- **A device certificate.** Its common name is the device identifier.
+- **A private key.** It stays on the device. It can live on the filesystem, in a [NervesKey](/auth/nerveskey) or in a [TPM](/auth/tpm).
 
-### First-connection registration
+A device certificate is normally signed by a signer certificate, also called a CA certificate. This is a certificate you create and register with your organization. It is not a certificate from a public certificate authority. You register only the certificate. NervesHub never sees the CA private key. To register a CA you prove that you hold its key by signing a verification certificate with it.
 
-On a device's first connection to NervesHub, it presents both its Device Certificate and its Device CA Certificate. NervesHub checks that the Device Certificate is validly signed by a registered CA, then creates a device record associated with your product. Subsequent connections need only the Device Certificate — the CA cert is no longer required after the device is registered.
+Keep the CA private key secret. NervesHub trusts device certificates it signs.
 
-### Compatibility with other services
+### Certificates are pinned
 
-Because NervesHub's Device CA model follows standard X.509 conventions, the same CA infrastructure is compatible with **AWS IoT**, Azure IoT Hub, and other services that accept custom CA certificates. You can provision a device once with a single CA and use the same certificate across multiple backends without any changes to the hardware provisioning process.
+NervesHub keeps each device's certificates on file and looks up a connecting certificate by its fingerprint. The registered CA only matters the first time a certificate is seen.
 
-<Note>
-  NervesHub's PKI design is intentionally compatible with AWS IoT Just-in-Time Registration (JITR). If you already operate an AWS IoT fleet, you can reuse your existing Device CA Certificates and device certificates with NervesHub without re-provisioning your hardware.
-</Note>
+1. If the certificate is on file, the device is allowed. Its expiry is not checked.
+2. If the certificate is new and self-signed, the device is refused. A self-signed certificate is only accepted when it was uploaded for the device.
+3. If the certificate is new but its public key belongs to a known device, the device has renewed its certificate. NervesHub checks that the common name matches the device, that a CA registered in the device's organization signed it, and that the certificate validates. It then records the new certificate.
+4. If neither the certificate nor the key is known, NervesHub checks that the certificate has a common name, that a registered CA signed it, and that it validates. It then looks for a device with that identifier in the CA's organization.
+5. If the device does not exist, the connection is refused, unless the CA has a [just-in-time provisioning](/auth/just-in-time-provisioning) profile. In that case NervesHub creates the device.
+6. If the device already has a certificate on file with a different key, the connection is refused. A device is expected to use one public key.
+7. Otherwise NervesHub records the certificate and allows the device.
 
-### Options for generating device certificates
+A deleted device is refused at every step until it is restored.
 
-You have several options for creating device certificates depending on your provisioning environment and security requirements:
+Because certificates are pinned, removing a CA does not disconnect devices whose certificates are already on file.
 
-* **OpenSSL** — standard toolchain for generating CA and device certificates in a provisioning script.
-* **Elixir `x509` library** — programmatic certificate generation from an Elixir-based provisioning tool.
-* **NervesKey hardware** — the ATECC508A/608A chip generates the private key on-chip; the key never exists in software. See [NervesKey authentication](/auth/nerveskey) for provisioning details.
+### Shared secrets
 
-## Firmware Signatures
+With a shared secret the device sends its key and a signature over its identifier, made with the secret. The secret is not sent. NervesHub accepts a signature for 90 seconds, so the device clock matters.
 
-NervesHub requires a cryptographic signature on every firmware binary before it can be uploaded or shipped. This signature lets a device verify independently — without trusting any network infrastructure — that the firmware it is about to apply was produced by a party you authorized.
+A product key is shared by every device in a product. A device holding one can connect as any identifier in that product, so one leaked device exposes the whole product. A device key authenticates one device only. See [Shared secret](/auth/shared-secret).
 
-### Signing keys are not certificates
+## Firmware signatures
 
-Firmware signing is implemented inside the `fwup` tool that Nerves uses to build and apply firmware archives. This is a separate mechanism from X.509: firmware signing keys are raw key pairs, not certificates, and they are not part of the TLS trust chain.
+Firmware signing is separate from device authentication. For fwup firmware, signing is built into `fwup`. Signing keys are Ed25519 key pairs, not certificates, and they are not part of the TLS chain. Other firmware formats use their own key types. See [Firmware signing](/concepts/firmware-signing).
 
-### How the public key is distributed
+The signature is checked in two places:
 
-For signature verification to work end-to-end, the device must know the public key before it applies an update. NervesHub achieves this through a two-pronged distribution:
+1. **On upload.** NervesHub checks the firmware against the signing keys registered with your organization, on its **Signing keys** page.
+2. **On the device.** Before applying an update, the device checks the signature against the public keys it holds.
 
-1. **Uploaded to NervesHub** — the public key is registered with your product so the server can reject unsigned or improperly signed firmware at upload time.
-2. **Embedded in device firmware at build time** — the public key is compiled into the firmware image via the `fwup_public_keys` configuration in your Nerves project.
+### Where the device gets its public keys
 
-This means a device verifies the signature of an incoming update locally, using a key that was baked in at manufacture time. Even if an attacker were to compromise the NervesHub server or intercept the download, the device would reject any firmware not signed by your private key.
+A device takes its public keys from one of two places:
 
-```elixir
-# config/target.exs
-config :nerves_hub_link,
-  fwup_public_keys: ["base64_encoded_public_key_here"]
-```
+- **Firmware configuration.** Keys listed in `fwup_public_keys` are compiled into the firmware.
 
-### Multiple signing keys
+  ```elixir
+  # config/target.exs
+  config :nerves_hub_link,
+    fwup_public_keys: ["<base64 public key>"]
+  ```
 
-You can register more than one signing key per product. A common pattern is to maintain a **production key** with tightly restricted access and a **development key** for internal testing. Device firmware built for production embeds only the production public key; development builds embed both keys so they accept firmware signed by either.
+- **NervesHub, when the device connects.** A device with no `fwup_public_keys`, or with `request_fwup_public_keys: true`, asks NervesHub for the organization's keys on connect.
 
-<Note>
-  A device is only offered the signing keys its update tool can actually use, so a fleet that mixes update tools will not be handed a key it cannot verify against.
-</Note>
+Which you choose decides who the device trusts. With keys compiled in and `nerves_hub_link` 2.14.0 or later, the device rejects firmware that your key did not sign, even if it came from NervesHub. With keys requested on connect, the device trusts whichever server it connected to.
 
-### Independent verification
+From `nerves_hub_link` 2.13.0, a device refuses firmware and [archives](/updates/archives) it cannot signature-check. A device with no keys configured that receives none from NervesHub stops taking updates until it has some. From 2.14.0, a device ignores keys NervesHub sends unless it asked for them. Earlier versions let keys sent by NervesHub replace the configured ones. The details are in [Firmware signing](/concepts/firmware-signing).
 
-Because the signature is embedded in the firmware and the public key is embedded in the device, the verification chain does not pass through NervesHub at runtime:
+## Related pages
 
-```text
-[Build system]
-  signs .fw with the private signing key
-        ↓
-[NervesHub]
-  validates signature at upload time
-        ↓
-[Device]
-  downloads .fw over WebSocket
-  verifies signature locally using embedded public key
-  applies update only if signature is valid
-```
-
-This architecture ensures that firmware integrity holds even if the NervesHub server is replaced with a hostile one — the device is the final enforcer.
-
-## NervesKey Hardware Security
-
-For production fleets where software-based key storage is insufficient, NervesHub supports the **NervesKey** hardware security module (Microchip ATECC508A/608A). NervesKey stores the device private key in tamper-resistant hardware so that it cannot be extracted even with physical access to the board.
-
-NervesKey integrates directly with `NervesHubLink` and handles TLS handshakes transparently — no changes are required to the NervesHub server or to your workflow. See the [NervesKey authentication guide](/auth/nerveskey) for full provisioning instructions.
+- [X.509 device certificates](/auth/device-certificates)
+- [Shared secret authentication](/auth/shared-secret)
+- [NervesKey](/auth/nerveskey)
+- [TPM](/auth/tpm)
+- [Just-in-time provisioning](/auth/just-in-time-provisioning)
+- [Firmware signing](/concepts/firmware-signing)

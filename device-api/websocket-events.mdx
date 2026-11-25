@@ -1,193 +1,379 @@
 ---
-title: "WebSocket Channel Events"
+title: "WebSocket channel events"
 sidebarTitle: "Events"
-description: "Complete reference for server-to-device and device-to-server events on the NervesHub device WebSocket channel, with full payload schemas and field details."
+description: "Every event on the device and console topics of the NervesHub device WebSocket, with payload fields and the device API version each needs."
 ---
 
-The NervesHub device WebSocket channel sends and receives events for firmware updates, health reporting, and device control. Events flow in both directions: the server pushes update notifications and control commands to the device, and the device reports progress, status, and lifecycle signals back to the server. This page documents every event on the `device` topic.
+This page lists the events exchanged on the `device` and `console` topics. For the connection, the join and the version numbers, see the [protocol overview](/device-api/websocket-overview). Extension events are on the [Extensions protocol](/device-api/extensions) page.
 
 <Note>
-  `nerves_hub_link` sends and handles all of these events automatically on standard Nerves devices. This reference is for custom client implementations, alternative runtimes, or debugging unexpected channel behaviour.
+  `nerves_hub_link` sends and handles these events for you. This reference is for custom clients and for debugging.
 </Note>
 
-## Server → Device Events
+The **Version** given for an event is the `device_api_version` that introduced it. The server ignores an event it does not know, so a client can send a newer event to an older server safely.
 
-These events are pushed by NervesHub to a connected device. Your client must handle each event and respond appropriately.
+## Device topic: server to device
+
+| Event | Version | Purpose |
+| --- | --- | --- |
+| [`update`](#update) | `1.0.0` | Firmware to install |
+| [`reboot`](#reboot) | `1.0.0` | Reboot the device |
+| [`identify`](#identify) | `2.0.0` | Make the device identify itself physically |
+| [`archive`](#archive) | `2.0.0` | An archive to download |
+| [`fwup_public_keys`](#fwup_public_keys-and-archive_public_keys) | `2.1.0` | Firmware [signing keys](/concepts/firmware-signing) |
+| [`archive_public_keys`](#fwup_public_keys-and-archive_public_keys) | `2.1.0` | Archive signing keys |
+| `scripts/run` | `2.1.0` | Code to run |
+| `extensions:get` | `2.2.0` | Which [extensions](/extensions/overview) the instance offers |
+| [`update_mode`](#update_mode) | `2.4.0` | The device's update mode |
+| [`update_available`](#update_available) | `2.4.0` | Answer to `check_update` |
+| [`update_rejected`](#update_rejected) | `2.4.0` | Refusal of `request_update` |
 
 ### `update`
 
-The server has determined that a firmware update is available for this device. The payload contains the firmware download URL and metadata needed to validate and apply the update.
+Firmware for the device to install. Sent when the [deployment group](/setup/deployments) schedules the device, when someone pushes firmware to it, or in answer to `request_update`.
 
 ```json
 {
   "update_available": true,
-  "deployment_id": "abc123",
-  "firmware_url": "https://firmware.nervescloud.com/signed/path/to/firmware.fw",
+  "firmware_url": "https://...",
   "firmware_meta": {
-    "uuid": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+    "uuid": "d9f8c63a-1234-5678-abcd-ef0123456789",
+    "product": "my_app",
+    "version": "1.5.0",
     "architecture": "arm",
     "platform": "rpi4",
-    "product": "my_project",
-    "version": "2.0.0",
-    "author": "alice",
-    "description": "Bug fixes and improvements",
-    "vcs_identifier": "abc1234",
-    "misc": ""
-  }
+    "author": null,
+    "description": null,
+    "fwup_version": "1.13.0",
+    "vcs_identifier": null,
+    "misc": null
+  },
+  "size": 41234567,
+  "checksum": "...",
+  "partials_checksums": [],
+  "deployment_id": 12
 }
 ```
 
-<Warning>
-  The `firmware_url` is a signed, time-limited URL with a **10-minute TTL**. Your device must begin downloading the firmware immediately after receiving the `update` event. If the URL expires before the download completes, request a new URL by reconnecting or re-joining the channel.
-</Warning>
+| Field | Type | Description |
+| --- | --- | --- |
+| `update_available` | boolean | `true` when there is firmware to install. When `false`, the other fields are null and there is nothing to do. |
+| `firmware_url` | string | URL to download the firmware from. It can be a delta rather than the full firmware. See [Delta updates](/management/delta-updates). |
+| `firmware_meta` | object | Metadata of the firmware the device will be running after the update. |
+| `firmware_meta.uuid` | string | Firmware UUID |
+| `firmware_meta.product` | string | Product name |
+| `firmware_meta.version` | string | Firmware version |
+| `firmware_meta.architecture` | string | Target architecture |
+| `firmware_meta.platform` | string | Target platform |
+| `firmware_meta.author`, `description`, `fwup_version`, `vcs_identifier`, `misc` | string or null | Optional metadata |
+| `size` | integer | Size in bytes of the file at `firmware_url` |
+| `checksum` | string | Checksum of the file at `firmware_url` |
+| `partials_checksums` | array of strings | Checksums of the file's parts, for clients that download in parts. See [Download strategies](/updates/download-strategies). |
+| `deployment_id` | integer | Id of the deployment group the update came from |
 
-**Payload fields:**
+<Note>
+  `firmware_url` is signed and expires. Start the download when the event arrives. If the instance uses a firmware proxy, the URL points at the proxy. See [Rollout controls](/deployments/rollout-controls).
+</Note>
 
-| Field                          | Type    | Description                                                |
-| ------------------------------ | ------- | ---------------------------------------------------------- |
-| `update_available`             | boolean | Always `true` when an update is being pushed               |
-| `deployment_id`                | string  | Identifier of the deployment group that sent this update   |
-| `firmware_url`                 | string  | Signed URL to download the `.fw` firmware file             |
-| `firmware_meta.uuid`           | string  | Unique identifier for this firmware build                  |
-| `firmware_meta.architecture`   | string  | Target CPU architecture (e.g., `arm`, `aarch64`, `x86_64`) |
-| `firmware_meta.platform`       | string  | Target board or platform (e.g., `rpi4`, `bbb`)             |
-| `firmware_meta.product`        | string  | Product name as defined in the Nerves project              |
-| `firmware_meta.version`        | string  | Firmware version string                                    |
-| `firmware_meta.author`         | string  | Author or builder of the firmware                          |
-| `firmware_meta.description`    | string  | Human-readable description of the firmware release         |
-| `firmware_meta.vcs_identifier` | string  | Git SHA or other VCS reference for the build               |
-| `firmware_meta.misc`           | string  | Arbitrary metadata field, may be empty                     |
-
-***
+Report how the update goes with [`status_update`](#status_update) and [`fwup_progress`](#fwup_progress-and-update_progress).
 
 ### `reboot`
 
-The server is requesting that the device perform a graceful reboot. The payload is an empty object.
+Reboot the device. The payload is empty. Send [`rebooting`](#rebooting) before you reboot.
+
+### `identify`
+
+Make the device identify itself to someone standing next to it, for example by blinking an LED. The payload is empty.
+
+### `archive`
+
+An archive the device's deployment group has for it. Sent after the join, and when the group's archive changes. It is not sent to a device whose updates are off or that is in the penalty box. See [Archives](/updates/archives).
 
 ```json
-{}
+{
+  "uuid": "6f1c2b9e-1234-5678-abcd-ef0123456789",
+  "version": "1.0.0",
+  "description": "Certificates",
+  "platform": "rpi4",
+  "architecture": "arm",
+  "size": 10240,
+  "uploaded_at": "2026-11-02T10:15:00",
+  "url": "https://..."
+}
 ```
 
-Upon receiving this event, the device should send a [`rebooting`](#rebooting) event back to the server, then initiate a system reboot. This event is typically triggered from the NervesHub web console or via the management API.
+| Field | Type | Description |
+| --- | --- | --- |
+| `uuid` | string | Archive UUID |
+| `version` | string | Archive version |
+| `description` | string or null | Archive description |
+| `platform` | string | Target platform |
+| `architecture` | string | Target architecture |
+| `size` | integer | Size in bytes |
+| `uploaded_at` | string | When the archive was uploaded, as ISO 8601 with no offset |
+| `url` | string | URL to download the archive from |
 
-***
+### `fwup_public_keys` and `archive_public_keys`
 
-### `phx_err`
-
-The Phoenix channel encountered an error, such as a duplicate join attempt or an unexpected channel crash. The server pushes this event before the channel is terminated.
+The organization's public signing keys. Each is sent after the join, and only when the join set the parameter of the same name to `"on_connect"`.
 
 ```json
-{ "reason": "duplicate_join" }
+{ "keys": ["<public key>", "<public key>"] }
 ```
 
-**Payload fields:**
+`fwup_public_keys` holds the keys of the scheme the device's firmware format uses: Ed25519 keys for an fwup device, Secure Boot RSA keys for an ESP-IDF device, certificates for a RAUC device. `archive_public_keys` always holds Ed25519 keys, because archives are fwup files.
 
-| Field    | Type   | Description                                       |
-| -------- | ------ | ------------------------------------------------- |
-| `reason` | string | Human-readable description of the error condition |
+### `scripts/run`
 
-When your client receives `phx_err`, tear down the current channel state and reconnect with exponential backoff.
-
-***
-
-### `phx_close`
-
-The Phoenix channel was gracefully closed by the server. The payload is an empty object.
+Code for the device to run. Used for [support scripts](/management/support-scripts) and for [connecting code](/deployments/connecting-code).
 
 ```json
-{}
+{ "text": "NervesMOTD.print()", "ref": "kJ3x9A" }
 ```
 
-This event signals a clean server-initiated shutdown of the channel — for example, during a planned server maintenance window. Reconnect using your standard backoff strategy after receiving this event.
+| Field | Type | Description |
+| --- | --- | --- |
+| `text` | string | The code to run |
+| `ref` | string | Reference to send back with the result. Connecting code uses the ref `connecting_code`. |
 
-***
+Answer with a `scripts/run` event of your own carrying the same `ref`. See [the result payload](#script-results).
 
-## Device → Server Events
+A device that declares a version below `2.1.0` is not sent this event. Its connecting code is typed into its console instead.
 
-These events are sent from the device to the NervesHub server. Send them in response to server events or to report ongoing status.
+### `extensions:get`
 
-### `rebooting`
-
-The device notifies the server that it is about to reboot. Send this event after receiving a `reboot` command from the server, before initiating the system reboot.
+Sent after the join. Lists every extension the instance offers, with the versions it implements. Answer by joining the `extensions` topic. See [Extensions protocol](/device-api/extensions).
 
 ```json
-{}
+{ "extensions": { "health": ["0.0.1"], "logging": ["0.1.0", "0.0.1"] } }
 ```
 
-NervesHub uses this signal to update device status in the management console and to correctly attribute the upcoming disconnection to an intentional reboot rather than a fault.
+### `update_mode`
 
-***
-
-### `fwup_progress`
-
-The device reports its current firmware update download and write progress. Send this event periodically during a firmware update so the server and management console can display real-time progress.
+The device's update mode, and whether it may change the mode itself. Sent after the join, whenever either value changes, and as the answer to [`set_update_mode`](#set_update_mode). See [Device-managed updates](/updates/device-managed-updates).
 
 ```json
-{ "value": 45 }
+{ "mode": "automatic", "managed_updates_allowed": false }
 ```
 
-**Payload fields:**
+| Field | Type | Description |
+| --- | --- | --- |
+| `mode` | string | `automatic`, `device_managed` or `off` |
+| `managed_updates_allowed` | boolean | Whether the device may put itself into `device_managed` mode |
+| `error` | string | Only in a refused answer to `set_update_mode`: `not_permitted`, `unknown_mode` or `error`. `mode` then holds the mode the device still has. |
 
-| Field   | Type    | Description                              |
-| ------- | ------- | ---------------------------------------- |
-| `value` | integer | Progress percentage, `0`–`100` inclusive |
+The server only sends this unasked to a device that declares `2.4.0` or later. The answer to `set_update_mode` is always sent.
 
-<Tip>
-  Report progress at a reasonable cadence — every 5–10 percentage points is sufficient. Sending a progress event on every fwup callback at high frequency can create unnecessary channel traffic on large fleets.
-</Tip>
+### `update_available`
 
-***
+The answer to [`check_update`](#check_update). It carries no download URL.
+
+```json
+{
+  "available": true,
+  "firmware_meta": { "uuid": "...", "version": "1.5.0", "product": "my_app", "architecture": "arm", "platform": "rpi4" }
+}
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `available` | boolean | Whether the device's deployment group has firmware for it |
+| `firmware_meta` | object or null | Metadata of that firmware, or null when `available` is `false` |
+
+### `update_rejected`
+
+Sent when [`request_update`](#request_update) is refused.
+
+```json
+{ "reason": "no_update" }
+```
+
+| `reason` | Meaning |
+| --- | --- |
+| `no_deployment_group` | The device is not in a deployment group. |
+| `no_update` | There is no firmware for the device right now. |
+| `already_updating` | The device already has an update in progress. |
+
+Treat a rejection as "not now". The device can ask again later.
+
+## Device topic: device to server
+
+| Event | Version | Purpose |
+| --- | --- | --- |
+| [`status_update`](#status_update) | `1.0.0` | How an update is going |
+| [`fwup_progress`](#fwup_progress-and-update_progress) | `1.0.0` | Update progress |
+| [`update_progress`](#fwup_progress-and-update_progress) | | Update progress, for clients that do not use fwup |
+| [`rebooting`](#rebooting) | `1.0.0` | The device is about to reboot |
+| [`scripts/run`](#script-results) | `2.1.0` | Result of a script |
+| [`firmware_validated`](#firmware_validated) | `2.3.0` | The running firmware has been validated |
+| [`check_update`](#check_update) | `2.4.0` | Ask whether firmware is waiting |
+| [`request_update`](#request_update) | `2.4.0` | Ask for the firmware |
+| [`set_update_mode`](#set_update_mode) | `2.4.0` | Change the device's update mode |
+| [`sleeping`](#sleeping) | | The device is about to sleep |
+| [`connection_types`](#connection_types) | | The kinds of network the device is connected over |
+| [`report_network_interface`](#report_network_interface) | | The network interface the device is connected over |
+
+None of these events gets a reply unless stated.
 
 ### `status_update`
 
-The device reports its current operational status. Send this event when the device's state changes — for example, when a firmware update fails or is deferred.
+Report a stage or an outcome of the update the server sent.
 
 ```json
-{ "status": "idle" }
+{ "status": "rescheduled", "delay_for": 60000, "reason": "busy" }
 ```
 
-**Payload fields:**
+| `status` | Other fields | Meaning |
+| --- | --- | --- |
+| `received` | | The device received the `update` event. |
+| `started` | `downloader_network_interface` (optional) | The device started the update. |
+| `completed` | | The update was applied. |
+| `ignored` | `reason` | The device decided not to take the update. Ends the update and puts the device in the [penalty box](/deployments/rollout-controls). |
+| `rescheduled` | `delay_for` (milliseconds), `reason` (optional) | The device deferred the update. Ends the update, and the device is not offered another until `delay_for` has passed. |
+| `failed` | `reason` | The update failed. Ends the update and puts the device in the penalty box. |
 
-| Field    | Type   | Description                           |
-| -------- | ------ | ------------------------------------- |
-| `status` | string | One of the status values listed below |
+A `status` that contains the text `fwup error` is recorded as `failed`.
 
-**Accepted `status` values:**
+See [Applying updates](/updates/applying-updates) for how `nerves_hub_link` decides between these.
 
-| Value                | Meaning                                                        |
-| -------------------- | -------------------------------------------------------------- |
-| `idle`               | Device is connected, healthy, and waiting for instructions     |
-| `fwup_error`         | The `fwup` tool encountered an error during the update process |
-| `update_failed`      | The firmware update could not be applied                       |
-| `update_rescheduled` | The device deferred the update and will retry later            |
-| `unknown`            | The device cannot determine its current status                 |
+### `fwup_progress` and `update_progress`
 
-***
+Report progress while downloading and applying an update. The two events are the same message. `fwup_progress` is what `nerves_hub_link` sends. `update_progress` is the name for clients that do not use fwup.
 
-## Channel Lifecycle Summary
+```json
+{ "stage": "downloading", "value": 45 }
+```
 
-The sequence of events for a typical firmware update flow looks like this:
+| Field | Type | Description |
+| --- | --- | --- |
+| `value` | integer | Progress as a percentage |
+| `stage` | string | Optional. `downloading` or `updating`. |
+
+Without a `stage`, the update is recorded as `updating`, and a `value` of `100` records it as `completed`.
+
+### `rebooting`
+
+The device is about to reboot. The payload is empty. The connection that closes next is then recorded as a reboot, not as a failure.
+
+### Script results
+
+The device sends `scripts/run` back with the result of a script the server sent under the same event name.
+
+```json
+{ "ref": "kJ3x9A", "result": "completed", "output": "...", "return": ":ok" }
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `ref` | string | The `ref` from the request |
+| `output` | string | What the script printed |
+| `return` | string | The script's return value, as text |
+| `result` | string | `completed` or `error` |
+| `reason` | string | Only with `error`: why the script failed, for example `timeout` |
+
+For connecting code, a `result` of `error` raises a notification on the product. See [Connecting code](/deployments/connecting-code).
+
+### `firmware_validated`
+
+The device has confirmed that the firmware it is running is good. The payload is empty. A device also reports its validation status when it joins, in `meta.firmware_validated`. See [Applying updates](/updates/applying-updates).
+
+### `check_update`
+
+Ask whether the deployment group has firmware waiting for this device. The payload is empty. The server answers with [`update_available`](#update_available). Allowed in every update mode.
+
+### `request_update`
+
+Ask for the firmware. The payload is empty. On success the server sends the usual [`update`](#update) event. On refusal it sends [`update_rejected`](#update_rejected).
+
+### `set_update_mode`
+
+Ask to change the device's own update mode.
+
+```json
+{ "mode": "device_managed" }
+```
+
+`mode` is `automatic` or `device_managed`. A device needs the managed updates grant to choose `device_managed`, and it cannot set or leave `off`. The server always answers with [`update_mode`](#update_mode), carrying the mode the device has now.
+
+### `sleeping`
+
+The device is about to go to sleep. Send it, then close the socket. See [Devices that sleep](/management/sleeping-devices).
+
+<Note>
+  This message is on the NervesHub and `nerves_hub_link` main branches but in no tagged release as of NervesHub 2.5.4 and `nerves_hub_link` 2.14.0. An older server ignores it.
+</Note>
+
+```json
+{ "mode": "deep", "duration_ms": 300000 }
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `mode` | string | Optional. `deep` or `light`. Anything else, or nothing, is taken as `deep`. |
+| `duration_ms` | integer | Optional. How long the device will sleep, in milliseconds. Leave it out for a device that waits for something else to wake it. A value of zero or less, or more than 366 days, is recorded as a sleep with no wake time. |
+
+Send a duration, not a wake time. A device that has just woken may not have its clock set.
+
+### `connection_types`
+
+The kinds of network the device is connected over. Recorded with the device's connection.
+
+```json
+{ "values": ["wifi"] }
+```
+
+### `report_network_interface`
+
+The network interface the device is connected over.
+
+```json
+{ "interface": "wlan0" }
+```
+
+## Console topic
+
+The `console` topic carries the remote IEx console. See [Remote console](/management/remote-console).
+
+| Direction | Event | Payload | Purpose |
+| --- | --- | --- | --- |
+| Server to device | `dn` | `{"data": "..."}` | Input typed by the user |
+| Device to server | `up` | `{"data": "..."}` | Output from the console |
+| Server to device | `restart` | | Restart the console session |
+| Both | `file-data/start`, `file-data`, `file-data/stop` | | A file transfer: the start, its chunks, and the end. Needs `console_version` `2.0.0`. |
+| Device to server | `file-data/ack`, `file-data/saved`, `file-data/error` | | How saving a file sent to the device is going. Needs `console_version` `2.1.0`. |
+
+A device that joined with `console_version` `2.1.0` or later receives `file-data/start` with `"ack": true`. It then answers each chunk it saves with `file-data/ack`, and finishes with `file-data/saved` or `file-data/error`.
+
+## A firmware update, start to finish
 
 <Steps>
-  <Step title="Device connects and joins the channel">
-    The device establishes a WebSocket connection and sends `phx_join` with `device_api_version`.
+  <Step title="The device joins">
+    The device connects and joins the `device` topic with its firmware metadata and `device_api_version`.
   </Step>
 
-  <Step title="Server pushes an update event">
-    NervesHub sends an `update` event with `firmware_url` and `firmware_meta`.
+  <Step title="The server sends the update">
+    The server pushes `update` with `firmware_url` and `firmware_meta`.
   </Step>
 
-  <Step title="Device downloads and applies the firmware">
-    The device streams progress via `fwup_progress` events (value 0 → 100).
+  <Step title="The device reports progress">
+    The device sends `status_update` with `received`, then `started`, then `fwup_progress` events as it downloads and applies the firmware.
   </Step>
 
-  <Step title="Device signals reboot">
-    On successful application, the device sends a `rebooting` event, then reboots.
+  <Step title="The device finishes and reboots">
+    The device sends `status_update` with `completed`, then `rebooting`, and reboots.
   </Step>
 
-  <Step title="Device reconnects on new firmware">
-    After rebooting into the new firmware version, the device reconnects and rejoins the channel. NervesHub records the updated firmware version.
+  <Step title="The device rejoins on the new firmware">
+    The device joins again and reports the new firmware's UUID. NervesHub records the update as successful.
   </Step>
 </Steps>
 
-If the update fails at any point, the device sends a `status_update` event with `status: "fwup_error"` or `status: "update_failed"` so NervesHub can record the failure. Repeated failures put the device in the **penalty box**, and once a group's fleet-wide failure threshold is crossed the group is flagged unhealthy.
+If the device instead rejoins on its old firmware without `currently_downloading_uuid`, NervesHub ends the update as not taken.
+
+## Related pages
+
+- [Device WebSocket protocol](/device-api/websocket-overview)
+- [Extensions protocol](/device-api/extensions)
+- [Applying updates on the device](/updates/applying-updates)
+- [Device-managed updates](/updates/device-managed-updates)
+- [Devices that sleep](/management/sleeping-devices)

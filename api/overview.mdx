@@ -1,98 +1,154 @@
 ---
-title: "REST API Overview"
+title: "HTTP API overview"
 sidebarTitle: "Overview"
-description: "Explore the NervesHub HTTP REST API: base URL, OpenAPI spec location, JSON response format, URL structure, and full HTTP status code reference."
+description: "Base URL, OpenAPI document, URL structure, response and error format, pagination, and rate limits of the NervesHub HTTP API."
 ---
 
-NervesHub provides a REST API covering devices, firmware, deployment groups, products, organizations, signing keys, support scripts and more. Whether you are automating firmware releases in CI or building a custom dashboard, the API lets you integrate NervesHub into any workflow.
+NervesHub has a JSON API for devices, firmware, [archives](/updates/archives), [deployment groups](/setup/deployments) and their [releases](/deployments/releases), products, organizations, [signing keys](/concepts/firmware-signing), CA certificates, webhooks and [support scripts](/management/support-scripts). The `nh` CLI is built on it, and you can call it from CI or your own tooling.
 
-The **Endpoints** section in the sidebar is generated directly from the server's OpenAPI specification, so it always matches what the API actually accepts. This page covers what the specification does not: base URLs, how responses are shaped, and what each status code means.
+The **Endpoints** section in the sidebar is generated from the server's OpenAPI document. This page covers what applies to every endpoint.
 
 ## Base URL
 
-All API requests are made over HTTPS. The base URL depends on how you host NervesHub:
+Every path starts with `/api` on the host that serves the NervesHub web interface.
 
-| Environment           | Base URL                                              |
-| --------------------- | ----------------------------------------------------- |
-| NervesCloud (managed) | `https://manage.nervescloud.com`                      |
-| Self-hosted           | Your server URL, e.g. `https://nerveshub.example.com` |
-
-Every endpoint path is appended directly to the base URL:
+| Environment | Base URL |
+| --- | --- |
+| NervesCloud | `https://manage.nervescloud.com` |
+| Self-hosted | Your web host, for example `https://your.nerveshub.host` |
 
 ```
 https://manage.nervescloud.com/api/orgs/{org_name}/products/{product_name}/devices
 ```
 
-## OpenAPI Specification
-
-The server generates its own OpenAPI document and serves it, so it is never out of step with the running code:
-
-* **Spec document:** `https://manage.nervescloud.com/api/openapi`
-* **Interactive docs:** `https://manage.nervescloud.com/api/docs`
-
-Both paths are relative to your base URL, so a self-hosted instance serves its own spec at `https://nerveshub.example.com/api/openapi`. Import it into Postman, Insomnia, a code generator, or anything else that reads OpenAPI.
-
 <Note>
-  The endpoint reference in this section is built from NervesCloud's specification. A self-hosted deployment exposes the same API, but if you are running an older version, fetch the spec from your own instance to see exactly what it offers.
+  This is not the host devices connect to. Devices use the device endpoint described in the [device WebSocket protocol](/device-api/websocket-overview).
 </Note>
 
-## URL Structure
+## OpenAPI document
 
-All resource paths follow a consistent hierarchy anchored to an organization and, for most resources, a product:
+Each instance serves its own OpenAPI 3.0 document, generated from the running code.
+
+| Path | What it serves |
+| --- | --- |
+| `/api/openapi` | The OpenAPI document as JSON. No authentication needed. |
+| `/api/docs` | Interactive documentation for the same document. |
+
+The endpoint reference on this site is built from `https://manage.nervescloud.com/api/openapi`. If you self-host, fetch the document from your own instance to see what your version offers.
+
+## Authentication
+
+Send a user access token or a product API key as a bearer token.
+
+```bash
+curl -H "Authorization: Bearer $NERVES_HUB_TOKEN" \
+  https://manage.nervescloud.com/api/users/me
+```
+
+See [Authentication](/api/authentication) for how to get each credential and what each can reach.
+
+## URL structure
+
+Most resources belong to a product, which belongs to an organization.
 
 ```
 /api/orgs/{org_name}/products/{product_name}/{resource}
 ```
 
-For example:
+| Resource | Path under the product |
+| --- | --- |
+| Devices | `/devices`, `/devices/{identifier}` |
+| Device actions | `/devices/{identifier}/reboot`, `/reconnect`, `/code`, `/upgrade`, `/move`, `/penalty` |
+| Device data | `/devices/{identifier}/logs`, `/metrics`, `/network_identities`, `/certificates`, `/shared_secrets` |
+| Firmware | `/firmwares`, `/firmwares/{uuid}`, `/firmwares/{uuid}/download` |
+| Archives | `/archives`, `/archives/{uuid}`, `/archives/{uuid}/download` |
+| Deployment groups | `/deployments`, `/deployments/{name}` |
+| Releases | `/deployments/{name}/releases`, `/deployments/{name}/releases/{number}` |
+| Support scripts | `/scripts`, `/scripts/{id}` |
+
+Organization resources leave out the product.
 
 ```
-GET /api/orgs/acme/products/smart-lock/devices
-GET /api/orgs/acme/products/smart-lock/firmwares/{uuid}
-GET /api/orgs/acme/products/smart-lock/deployments/{name}
+/api/orgs/{org_name}/products
+/api/orgs/{org_name}/users
+/api/orgs/{org_name}/keys
+/api/orgs/{org_name}/ca_certificates
+/api/orgs/{org_name}/webhooks
+/api/orgs/{org_name}/iroh_endpoints
 ```
 
-Org-level resources (CA certificates, signing keys, products) omit the product segment:
+A device can also be addressed by identifier alone, without naming its organization or product.
 
 ```
-GET /api/orgs/acme/products
-GET /api/orgs/acme/ca_certificates
-GET /api/orgs/acme/keys
+GET  /api/devices/{identifier}
+POST /api/devices/{identifier}/reboot
+GET  /api/devices/{identifier}/scripts
+POST /api/devices/{identifier}/scripts/{name_or_id}
 ```
 
 <Note>
-  The `deployments` path manages what the web console calls **deployment groups**. The path name is kept for backwards compatibility.
+  The `deployments` path manages what the web interface calls **deployment groups**.
 </Note>
 
-## Response Format
+## Response format
 
-All responses are JSON. Successful responses wrap the payload in a `data` key:
+Responses are JSON. A successful response wraps its payload in `data`.
 
 ```json
 {
   "data": {
-    "identifier": "device-001",
-    "status": "online"
+    "name": "Jane Doe",
+    "email": "jane@example.com"
   }
 }
 ```
 
-List responses return an array under `data`:
+A list returns an array under `data`. A successful delete returns `204` with no body.
+
+## Pagination
+
+Two lists are paginated: a product's devices and its support scripts (including the scripts listed for one device). Every other list returns all of its entries.
+
+Pass the page and page size in a `pagination` query parameter.
+
+```bash
+curl -G -H "Authorization: Bearer $NERVES_HUB_TOKEN" \
+  --data-urlencode "pagination[page]=2" \
+  --data-urlencode "pagination[page_size]=50" \
+  https://manage.nervescloud.com/api/orgs/acme/products/my_app/devices
+```
+
+A paginated response carries a `pagination` object beside `data`.
 
 ```json
 {
-  "data": [
-    { "identifier": "device-001", "status": "online" },
-    { "identifier": "device-002", "status": "offline" }
-  ]
+  "data": [],
+  "pagination": {
+    "page_number": 2,
+    "page_size": 50,
+    "total_entries": 137,
+    "total_pages": 3
+  }
 }
 ```
 
-Error responses return an `error` or `errors` key:
+The device list also takes `sort` (a column name), `sort_direction` (`asc` or `desc`, default `asc`) and `filters`. See the endpoint reference for the filter keys.
+
+Device logs and device metrics are not paged. They take `limit` (1 to 1000, default 100), `since`, `before` and `order`.
+
+## Errors
+
+An error response has an `errors` object. Most errors carry one message in `detail`.
 
 ```json
-{ "error": "unauthorized" }
+{
+  "errors": {
+    "detail": "Resource Not Found or Authorization Insufficient"
+  }
+}
 ```
+
+A validation error lists messages by field instead.
 
 ```json
 {
@@ -102,20 +158,44 @@ Error responses return an `error` or `errors` key:
 }
 ```
 
-## HTTP Status Codes
+## Status codes
 
-| Code                        | Meaning                    | When it occurs                                    |
-| --------------------------- | -------------------------- | ------------------------------------------------- |
-| `200 OK`                    | Success                    | Request succeeded; body contains result           |
-| `201 Created`               | Resource created           | POST succeeded; body contains new resource        |
-| `204 No Content`            | Deleted successfully       | DELETE succeeded; no response body                |
-| `400 Bad Request`           | Invalid request parameters | Malformed JSON, missing required fields           |
-| `401 Unauthorized`          | Invalid or missing token   | No `Authorization` header or expired token        |
-| `403 Forbidden`             | Insufficient permissions   | Token is valid but lacks the required role        |
-| `404 Not Found`             | Resource not found         | Org, product, device, or firmware does not exist  |
-| `422 Unprocessable Entity`  | Validation errors          | Fields present but fail business-logic validation |
-| `500 Internal Server Error` | Server error               | Unexpected server-side failure                    |
+| Code | When it occurs |
+| --- | --- |
+| `200 OK` | The request succeeded. |
+| `201 Created` | The resource was created. Firmware uploads also return a `Location` header. |
+| `204 No Content` | The resource was deleted. |
+| `400 Bad Request` | The request could not be processed as sent. |
+| `401 Unauthorized` | The credential is missing or invalid, or its role does not hold the permission the action needs. |
+| `403 Forbidden` | The organization requires [two-factor authentication](/access/two-factor) and the token's user has not set it up. |
+| `404 Not Found` | The organization, product or resource does not exist, or the credential cannot see it. A product API key gets `404` for any organization or product other than its own. |
+| `409 Conflict` | The request conflicts with current state, for example sending firmware to a device that is already updating. |
+| `422 Unprocessable Entity` | Validation failed, or the uploaded file was refused (wrong format, bad signature, wrong product). |
+| `429 Too Many Requests` | Too many CLI sign-in requests from one address. See [Rate limits](#rate-limits). |
+| `501 Not Implemented` | Device logs or metrics were requested from an instance with no analytics database. See [Feature prerequisites](/hosting/feature-prerequisites#clickhouse). |
+| `500 Internal Server Error` | Unexpected server failure. |
 
 <Note>
-  Before making API calls, you need a Bearer token. See [Authentication](/api/authentication) for instructions on generating and using API tokens.
+  A role that lacks a permission gets `401`, not `403`. If a token works on `/api/users/me` but an action returns `401`, check the role. See [Roles](/access/roles).
 </Note>
+
+## Rate limits
+
+Only the two endpoints the CLI uses to sign in through the browser are rate limited. Both are limited per client address.
+
+| Endpoint | Limit |
+| --- | --- |
+| `POST /api/auth/cli_session` | 10 requests every 10 minutes |
+| `GET /api/auth/cli_session/{token}` | 120 requests a minute |
+
+A request over the limit gets `429` with a `Retry-After` header giving the seconds to wait.
+
+No other API endpoint is rate limited by NervesHub itself.
+
+## Related pages
+
+- [API authentication](/api/authentication)
+- [CI and automation](/outbound/ci-cd)
+- [Event stream](/outbound/event-stream)
+- [Webhooks](/outbound/webhooks)
+- [nh command reference](/cli/reference)

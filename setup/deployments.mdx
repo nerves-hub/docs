@@ -1,170 +1,220 @@
 ---
-title: "Create and Activate Deployment Groups"
-sidebarTitle: "Deployment Groups"
-description: "Create deployment groups, target devices by tag and version, ship releases, and set the concurrency and failure limits that keep a bad update contained."
+title: "Create and activate deployment groups"
+sidebarTitle: "Deployment groups"
+description: "Create a deployment group, choose which devices join it by tag and firmware version, turn it on, and ship releases to it."
 ---
 
-A deployment group connects firmware to the devices that should run it. It holds the targeting rules — which devices are in scope — and a sequence of **releases**, each shipping one firmware build. When a device checks in, NervesHub evaluates every active group against that device's tags and firmware version, and a match earns an update notification.
+A deployment group connects firmware to the devices that should run it. It holds matching conditions, which decide the devices that join it, and a sequence of **releases**, each sending one firmware. A device belongs to at most one deployment group.
 
 <Note>
-  The web console calls these **deployment groups**, while the REST API and the `nh` CLI still use `deployment` / `deployments` in their paths and command names. They are the same object.
+  The web UI calls these **deployment groups**. The REST API and the `nh` CLI use `deployment` and `deployments` in their paths and command names. They are the same object.
 </Note>
+
+## Create a group and turn it on
 
 <Steps>
   <Step title="Upload firmware">
-    Before creating a group, you need a firmware UUID. If you have not yet uploaded your firmware, do so now:
+    A group is created with its first firmware. Upload one if you have not already. `--key` names the [signing key](/concepts/firmware-signing) to sign it with:
 
     ```bash
-    nh firmware upload ./_build/rpi4_dev/nerves/images/my_project.fw
+    nh firmware upload ./_build/rpi4_dev/nerves/images/my_app.fw --key my_app_key
     ```
 
-    The command prints the UUID of the uploaded firmware. Copy it — you will use it in the next step. If you are working with firmware that is already uploaded, retrieve its UUID with:
+    Without `--key`, `--key-file` or `--skip-signing`, the upload fails. See [Firmware](/setup/firmware).
+
+    The command prints the version and UUID of the uploaded firmware. To find the UUID of firmware that is already uploaded, run:
 
     ```bash
     nh firmware list
     ```
   </Step>
 
-  <Step title="Create a deployment group">
-    Create a group that targets devices carrying a specific tag and running a qualifying firmware version:
-
+  <Step title="Create the deployment group">
     ```bash
-    nh deployment create \
-      --name "v2.0-production" \
+    nh deployment create "production" \
       --firmware <UUID> \
       --version "~> 1.0" \
-      --tag "main"
+      --tag main
     ```
 
-    | Flag         | Description                                                                                                                                          |
-    | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-    | `--name`     | A human-readable name for the group. Must be unique within the product.                                                                              |
-    | `--firmware` | The UUID of the firmware to deliver.                                                                                                                 |
-    | `--version`  | A version requirement (using Elixir's `Version` syntax) that the device's **current** firmware must satisfy. Use `">= 0.0.0"` to match all versions. |
-    | `--tag`      | The device tag that qualifies a device for this group. Pass it more than once to list several tags.                                                  |
+    | Flag                | Description                                                                                                       |
+    | ------------------- | ----------------------------------------------------------------------------------------------------------------- |
+    | `<name>`            | The group's name, as the argument. Must be unique within the product.                                              |
+    | `--firmware`        | UUID of the firmware for the group's first release. Required.                                                      |
+    | `--version`         | An Elixir version requirement that a device's current firmware version must meet. Leave it out to match any version. |
+    | `--tag`             | A [tag](/setup/devices) condition. Repeat the flag to list several tags.                                                             |
+    | `--tag-operator`    | `and` (a device needs every tag, the default) or `or` (a device needs any one of them).                            |
+    | `--delta-updatable` | Whether the group uses [delta updates](/management/delta-updates). A new group has them on. Pass `--delta-updatable=false` to create it with them off. |
+    | `--notes`           | Notes describing the group, up to 1,000 characters.                                                                |
+    | `--state`           | `on` turns the group on once it exists. Without it the group starts off.                                           |
 
-    Newly created groups are **inactive** by default. No devices will receive the update until you explicitly activate the group in the next step.
+    In the web UI, open **Deployment groups** and select **New deployment group**. The form asks for **Name**, **Delta updates**, **Notes**, **Platform**, **Architecture**, **Firmware**, **Tag(s) distributed to**, **Tag matching** and **Version requirement**.
+
+    A new group is off. No device receives firmware from it until you turn it on.
   </Step>
 
-  <Step title="Activate the group">
-    Turn the group on to begin delivering firmware to matching devices:
-
+  <Step title="Turn the group on">
     ```bash
-    nh deployment update "v2.0-production" state on
+    nh deployment update "production" --state on
     ```
 
-    Once active, NervesHub notifies eligible devices the next time they check in. Devices that are already online receive the notification within seconds.
+    In the web UI, open the group and select **Resume**. The same button reads **Pause** while the group is on.
   </Step>
 
-  <Step title="Monitor the rollout">
-    Track progress using the list and show commands:
-
+  <Step title="Check the group">
     ```bash
     nh deployment list
-    nh deployment show "v2.0-production"
+    nh deployment show "production"
     ```
 
-    `nh deployment show` reports how many devices have been notified, how many have successfully applied the update, and how many are pending or have failed.
+    `nh deployment list` shows each group's name, state, device count, version condition and firmware UUID. `nh deployment show` adds the release count, tag conditions, tag operator, [archive](/updates/archives), current release number and notes.
+
+    In the web UI the group page has **Overview**, **Releases**, **Stats**, **Activity** and **Settings** tabs. The badge beside the group's name shows its status: **Paused**, **No devices**, **Rolling out**, **Up to date**, **Awaiting approval** or **Stopped**. The last two only appear when the group has a [workflow](/concepts/deployment-workflows).
   </Step>
 </Steps>
 
-## Targeting devices
+## Read the group page
 
-A group targets on two conditions, and a device must satisfy both.
+### Overview tab
+
+The **Overview** tab shows how the current release is going:
+
+- **Rollout.** How many of the group's devices are on the release's firmware, with a bar and a legend: **On the release**, **Updating**, **Failed**, and **Waiting**. A group with a [workflow](/concepts/deployment-workflows) lists its steps below the bar. A group without one reads "No steps. Every device that matches gets the release the next time it connects."
+- **Devices this release didn't reach.** The devices that do not have the release and are not getting it or waiting for their step, each with what happened.
+- **Current release.** The release's **Firmware**, **Archive**, **Delta updates** state, and who released it and when.
+- **Device matching.** The group's tags and version condition. If devices outside the group match its conditions, or devices in the group no longer match, this section says how many and offers to move them in or remove them. See [Put a device in a group by hand](#put-a-device-in-a-group-by-hand).
+
+When the group is paused, or a workflow step is waiting for approval or has stopped, a notice at the top of the tab says so and carries the buttons to act on it.
+
+### Stats tab
+
+The **Stats** tab shows how the group's releases went. It opens on the current release. A select switches to another release or to all of them. With all releases selected, the tab shows the same four figures across every release and a **Releases** table.
+
+| Section | What it shows | Needs ClickHouse |
+| --- | --- | --- |
+| **Succeeded**, **Failed attempts**, **Typical update** | The share of updates that succeeded, how many attempts failed, and the median update time | Yes |
+| **Downloaded** | How much devices downloaded, and how much delta updates saved | No |
+| **Attempts over time** | Update attempts over the release's life | Yes |
+| **How long updates took** | Updates grouped by duration | Yes |
+| **Downloads** | What the successful updates downloaded, compared with every device taking the full firmware | No |
+| **Why updates failed** | Failed attempts grouped by reason | Yes |
+| **By the version devices came from** | One row per source version, with a **Download** column that reads **Delta** or **Full** | Yes |
+
+On an instance without ClickHouse, the sections that need it read "This server doesn't keep update outcomes." See [ClickHouse](/hosting/clickhouse).
+
+## How devices join a group
+
+A device that is in no deployment group joins one when it connects. NervesHub looks for groups in the device's product that:
+
+- are turned on,
+- do not have **Lock membership** on,
+- have a current release whose firmware platform and architecture match the firmware the device is running,
+- have tag conditions the device's tags meet, and
+- have a version condition the device's firmware version meets.
+
+If several groups match, the device joins the one whose current release has the highest firmware version. If those are equal, it joins the group that shares the most tags with it, and then the oldest group.
+
+### Put a device in a group by hand
+
+The CLI and the API cannot set a device's group. In the web UI you can, with a role that holds the `device:set-deployment-group` permission:
+
+- **One device.** Open the device. In the **Firmware updates** card on the **Details** tab, the **Deployment group** row has a select that lists the groups whose platform and architecture match the device. Choose one and click **Assign**. When the device is in a group, the row shows the group's name and **Remove…** instead.
+- **Many devices.** On the product's **Devices** page, select the devices and use the **Deployment group** bulk action. See [Bulk actions](/management/finding-devices#bulk-actions).
+- **Every device that matches a group.** When devices outside a group match its conditions, the **Device matching** section of the group's **Overview** tab says how many and offers **Move them in**.
+
+A device you place by hand does not have to meet the group's tag conditions. It is still checked each time it connects. See [When devices leave a group](#when-devices-leave-a-group).
 
 ### Tags
 
-Tags are arbitrary strings you assign to devices — `main`, `qa`, `beta`, `region-us-east`. A group lists one or more, plus a **tag operator** deciding how they combine:
+Tags are strings you assign to devices, such as `main`, `qa` or `region-us-east`. A group lists zero or more tags and a tag operator:
 
-| Tag operator              | Behaviour                                                |
-| ------------------------- | -------------------------------------------------------- |
-| `Require all` *(default)* | A device matches only if it carries **every** listed tag |
-| `Allow any`               | A device matches if it carries **any** listed tag        |
+| Web UI label            | CLI value | A device matches when                 |
+| ----------------------- | --------- | ------------------------------------- |
+| **Require all** (default) | `and`   | it has every tag the group lists      |
+| **Allow any**           | `or`      | it has at least one tag the group lists |
 
-So a group listing `beta` and `region-us-east` targets only devices carrying both under `Require all`, and every device carrying either under `Allow any`.
+A group with no tags matches devices whatever their tags.
+
+Tags are only compared when a device connects. If you tag a device that is connected and in no group, it joins a matching group the next time it connects. To make that happen now, run `nh device reconnect <identifier>`. A device that is already in a group stays in it whatever tags you give it.
 
 ### Version condition
 
-The group also filters on the firmware version a device is currently running — a semver expression such as `>= 1.0.0`, `~> 1.2`, or `< 2.0.0`. Only devices satisfying it are eligible. Leave it empty to match on tags alone.
+The version condition is an Elixir version requirement, such as `>= 1.0.0`, `~> 1.2` or `< 2.0.0`, checked against the firmware version the device is running. Leave it empty to match any version.
 
-Version conditions let you stage a migration: require devices to be on `~> 1.x` before they can receive `2.0`, so devices on unsupported older versions never pick up a breaking update.
+### Platform and architecture
 
-<Note>
-  A group also records the **platform** and **architecture** of the firmware it was created with, and every later release must match them. This stops firmware for one board being rolled out to a group full of another, so create a separate group per board rather than reusing one.
-</Note>
+A group records the platform and architecture of the firmware it was created with. The group's **Settings** tab shows them as **Firmware for**. Create one group per platform and architecture.
 
-## Releases
+### When devices leave a group
 
-Firmware reaches a group through a release. Releases are numbered in the order they are created, each carries the firmware (and optional archive) being shipped plus an optional description and notes, and the group points at whichever is current.
+A device that is already in a group is checked each time it connects. It leaves the group if its firmware no longer meets the group's version condition, platform or architecture. Changing a group's tags does not remove devices that are already in it.
 
-Because the history is kept, you can see exactly which firmware a group shipped and when.
+**Lock membership**, on the group's **Settings** tab, stops both: devices only join or leave a locked group when someone moves them. See [Rollout controls](/deployments/rollout-controls#lock-membership).
+
+## Change a group's conditions
+
+```bash
+nh deployment update "production" --tag stable --tag eu
+nh deployment update "production" --version ">= 2.0.0"
+nh deployment update "production" --tag-operator or
+```
+
+`--tag` replaces the whole tag list. `--tag ""` or `--version ""` clears the condition. Only the fields you pass are changed.
+
+In the web UI, edit the **Device matching** card on the group's **Settings** tab.
+
+## Ship a new release
+
+Firmware reaches a group through a release. To send new firmware to an existing group, create a release:
+
+```bash
+nh deployment update "production" --firmware <NEW_UUID>
+```
+
+The new release becomes the group's current release. In the web UI, select **New release** on the group page.
+
+Releases can also carry an archive, a description, notes and connecting code, and can be marked required. See [Releases](/deployments/releases).
 
 <Tip>
-  A deployment group does not "finish". It stays active indefinitely, waiting for devices that match its conditions — including devices you register months later.
+  A deployment group does not finish. It stays on and keeps sending its current release to devices that join later.
 </Tip>
 
-## Rollout safety controls
+## Upload and release in one command
 
-Each group carries limits that contain a bad release:
-
-| Setting                       | Default | What it controls                                                        |
-| ----------------------------- | ------- | ----------------------------------------------------------------------- |
-| `concurrent_updates`          | `10`    | How many devices update at the same time                                |
-| `device_failure_threshold`    | `3`     | Failures on a single device before it is put in the penalty box         |
-| `device_failure_rate_amount`  | `5`     | Failures on a single device within the rate window before penalising it |
-| `device_failure_rate_seconds` | `180`   | The rate window, in seconds                                             |
-| `failure_threshold`           | `50`    | Fleet-wide failures before the group is flagged unhealthy               |
-| `penalty_timeout_minutes`     | `1440`  | How long a penalised device waits before it may try again               |
-| `queue_management`            | `FIFO`  | Whether the update queue is drained oldest-first or newest-first        |
-
-A device that trips its failure thresholds goes into the **penalty box** and stops receiving update notifications until the timeout expires, which keeps one device stuck in a reboot loop from consuming rollout capacity. Clear it manually from the device page once you have addressed the cause.
-
-<Note>
-  Attaching a [workflow](/concepts/deployment-workflows) supersedes two of these: each step paces itself with its own `concurrent_updates`, and the step order replaces the priority queue.
-</Note>
-
-## Shipping a new release
-
-To deliver a new firmware version through an existing group, update its firmware reference — this creates a new release:
+`nh firmware upload` can create a release in an existing group as soon as the upload succeeds:
 
 ```bash
-nh deployment update "v2.0-production" firmware <NEW_UUID>
+nh firmware upload my_app.fw --deploy "production"
 ```
 
-Devices are evaluated against the new release on their next check-in. You can update the version condition or target tag the same way:
+Repeat `--deploy` to update several groups. When the flag is not given, `nh` uses the `NERVES_HUB_DEPLOYMENT_NAME` environment variable if it is set.
+
+`--deploy` does not create a group and does not turn one on. If creating the release fails, the firmware stays uploaded and the error names the group that was not updated. See [CI/CD](/outbound/ci-cd).
+
+## Pause a group
 
 ```bash
-nh deployment update "v2.0-production" tag "stable"
+nh deployment update "production" --state off
 ```
 
-## Deactivating a group
+In the web UI, select **Pause** on the group page. A paused group stops sending its release, even to devices that connect, until you resume it. Devices that are already taking the update finish it.
 
-Stop delivering updates to new devices without deleting the group:
+Pausing does not roll back devices that already have the firmware.
+
+## Delete a group
 
 ```bash
-nh deployment update "v2.0-production" state off
+nh deployment delete "production"
 ```
 
-<Tip>
-  This is the fastest lever during an incident. Devices that have already applied the update are unaffected, but no further devices receive it until you reactivate.
-</Tip>
+`nh` asks you to confirm. Pass `--yes` to skip the prompt. In the web UI, use **Delete group** at the bottom of the **Settings** tab.
 
-Deactivating does not roll back devices that already applied the firmware.
+Deleting a group deletes its releases. Its devices leave it and join another group they match when they next connect.
 
-## One-step upload and ship
+## Related pages
 
-For CI/CD pipelines where the latest firmware should go out immediately, use `--deploy` on the upload command:
-
-```bash
-nh firmware upload my_project.fw --deploy "v2.0-production"
-```
-
-This uploads the firmware, creates a release on the named group, and activates it in one command. The group must already exist; `--deploy` does not create one.
-
-## Staging a rollout
-
-Everything above updates every matching device at the same pace. To roll out in stages instead — a small canary batch, a sign-off, then the rest — attach a workflow.
-
-<Card title="Deployment Group Workflows" icon="diagram-project" href="/concepts/deployment-workflows">
-  Define the stages of a rollout in a JSON file, with per-step targeting, concurrency, failure tolerance, and approval gates.
-</Card>
+- [Releases](/deployments/releases)
+- [Rollout controls](/deployments/rollout-controls)
+- [Deployment workflows](/concepts/deployment-workflows)
+- [Connecting code](/deployments/connecting-code)
+- [Delta updates](/management/delta-updates)

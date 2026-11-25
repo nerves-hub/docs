@@ -1,50 +1,145 @@
 ---
 title: "NervesHubLink for Nerves"
 sidebarTitle: "NervesHubLink"
-description: "The reference NervesHub client for Nerves devices: an Elixir library that maintains the device connection, applies firmware updates, and carries the extensions."
+description: "The NervesHub client for Nerves devices: what it does, how to add it, and every top-level configuration key with its default."
 ---
 
-[NervesHubLink](https://github.com/nerves-hub/nerves_hub_link) is the client for devices running [Nerves](https://nerves-project.org/). It is the reference implementation of the device protocol — the one the server is developed against, and the one the other clients are measured by.
+[NervesHubLink](https://github.com/nerves-hub/nerves_hub_link) is the client for devices running [Nerves](https://nerves-project.org/). It is an Elixir library that you add to your firmware. It is the reference implementation of the device protocol, and the one the server is developed against.
 
-Added to your project as an Elixir dependency, it maintains the WebSocket connection, reports the firmware the device is running, downloads and applies updates through `fwup`, serves the remote console, and carries the [extensions](/management/health-monitoring) that report health, metrics, geo and logs.
+It keeps the WebSocket connection to NervesHub, reports the firmware the device is running, downloads updates and applies them with `fwup`, serves the remote console and [support scripts](/management/support-scripts), and runs the [extensions](/extensions/overview).
 
-```elixir
-# mix.exs
-{:nerves_hub_link, "~> 2.7"}
+This page describes NervesHubLink 2.14.0.
+
+## Add it to your project
+
+```elixir mix.exs
+{:nerves_hub_link, "~> 2.14"}
 ```
+
+A minimal configuration with a [shared secret](/auth/shared-secret):
+
+```elixir config/target.exs
+config :nerves_hub_link,
+  host: "devices.nervescloud.com",
+  shared_secret: [
+    product_key: "<product_key>",
+    product_secret: "<product_secret>"
+  ]
+```
+
+Replace `host` with your own instance's device endpoint if you do not use NervesCloud. Shared secrets must be enabled on the instance. See [feature prerequisites](/hosting/feature-prerequisites#shared-secret-authentication).
+
+[Add to project](/setup/add-to-project) and [Connecting](/setup/connecting) walk through the full setup, and the [device authentication](/auth/device-certificates) pages cover certificates, NervesKey and TPM.
+
+## How it picks an authentication method
+
+NervesHubLink builds its connection settings with a configurator module. It picks one in this order:
+
+1. The module in `config :nerves_hub_link, configurator: MyConfigurator`, if set.
+2. `NervesHubLink.Configurator.NervesKey`, if the `nerves_key` library is in your project.
+3. `NervesHubLink.Configurator.TPM`, if the `tpm` library is in your project.
+4. `NervesHubLink.Configurator.SharedSecret`.
+
+See [Connection lifecycle](/connection/lifecycle) for writing your own configurator.
+
+## Configuration keys
+
+Set these under `config :nerves_hub_link`. Defaults are from `NervesHubLink.Configurator.Config`.
+
+### Connection
+
+| Key | Default | Purpose |
+| --- | --- | --- |
+| `host` | `"localhost"` | The device endpoint. A bare host is connected to with `wss://`. A value that contains `://` is used as given. |
+| `sni` | `nil` | Server Name Indication to send, when it differs from `host` |
+| `ssl` | `[]` | TLS client options. `verify: :verify_peer` and `versions: [:"tlsv1.2"]` are added unless you set them. |
+| `socket` | `[]` | Options for the WebSocket client, such as `headers` and `http_opts` |
+| `serializer` | `:json` | `:msgpack` uses Msgpack. See [Transport](/connection/transport). |
+| `compress` | `true` | Offer per-message deflate compression on the WebSocket |
+| `connect` | `true` | `false` stops the application from starting the connection processes, for example in tests |
+| `connect_wait_for_network` | `true` | Check that the network is available before connecting. `false` connects straight away. |
+| `heartbeat_interval_msec` | `30_000` | Interval between heartbeats |
+| `rejoin_after` | `[5_000]` | Delays, in milliseconds, between attempts to rejoin a channel |
+| `start` | `:auto` | `:manual` leaves starting `NervesHubLink.Supervisor` to your supervision tree |
+
+The socket reconnects with a delay that starts at 1 second and doubles up to 60 seconds, with up to 50% jitter. Override it with `reconnect_after_msec` in `socket`.
+
+`device_api_host`, `device_api_port` and `device_api_sni` are deprecated. Use `host` and `sni`.
+
+See [Transport](/connection/transport) and [Connection lifecycle](/connection/lifecycle).
+
+### Authentication
+
+| Key | Default | Purpose |
+| --- | --- | --- |
+| `configurator` | Chosen as described above | The module that builds the connection settings |
+| `shared_secret` | `[]` | `product_key` and `product_secret` for a product secret, or `key` and `secret` for a device secret. See [Shared secret](/auth/shared-secret). |
+| `nerves_key` | `[]` | Options for [NervesKey](/auth/nerveskey) |
+| `tpm` | `[]` | Options for a [TPM](/auth/tpm) |
+| `data_path` | `"/data/nerves-hub"` | Directory for files written to the device, such as files sent through the console and locally stored certificates |
+
+### Updates
+
+| Key | Default | Purpose |
+| --- | --- | --- |
+| `client` | `NervesHubLink.Client.Default` | The module that decides when updates apply. See [Applying updates](/updates/applying-updates). |
+| `updater` | `NervesHubLink.UpdateManager.StreamingUpdater` | How firmware is downloaded and applied. See [Download strategies](/updates/download-strategies). |
+| `fwup_public_keys` | `[]` | Public keys firmware is verified against |
+| `request_fwup_public_keys` | `false` | Ask NervesHub for the organization's firmware keys on connect. This also happens when `fwup_public_keys` is empty. |
+| `archive_public_keys` | `[]` | Public keys [archives](/updates/archives) are verified against |
+| `request_archive_public_keys` | `false` | Ask NervesHub for the organization's archive keys on connect |
+| `fwup_devpath` | Read from the device | The device `fwup` writes to. The library reads `nerves_fw_devpath` from the Nerves key-value store. |
+| `fwup_task` | `"upgrade"` | The `fwup` task to run |
+| `fwup_env` | `[]` | Environment variables for `fwup`, as `{name, value}` pairs |
+| `fwup_extra_options` | `[]` | Extra command-line arguments for `fwup` |
+
+From 2.13.0, firmware and archives that cannot be signature verified are refused. A device with no keys configured that receives none from NervesHub stops taking updates.
+
+### Console and extensions
+
+| Key | Default | Purpose |
+| --- | --- | --- |
+| `remote_iex` | `false` | Allow the [remote console](/management/remote-console) |
+| `remote_iex_timeout` | `300` | Seconds of inactivity before the remote IEx process stops |
+| `extension_modules` | Geo, Health, NetworkIdentity, and LocalShell when `ExPTY` is available | The extensions the device offers. See [Extensions](/extensions/overview). |
+
+<Warning>
+  `extension_modules` replaces the default list. Name every extension you want, not only the one you are adding.
+</Warning>
+
+## Client identification
+
+From 2.14.0, NervesHubLink sends `NHL/<version>` as the `User-Agent` of its WebSocket connection, as it already did for firmware downloads. NervesHub 2.5.2 and later record it for each connection. A `User-Agent` you set in the socket headers is kept. See [Choosing a device client](/integrations/overview#how-nerveshub-identifies-a-client).
 
 ## Library documentation
 
-The library documents itself on HexDocs, and that is the authoritative reference — it ships with the library, so it is always current for the version you are running.
+The library's own documentation is on HexDocs and matches the version you install.
 
-<Card title="nerves_hub_link on HexDocs" icon="book" href="https://nerves-hub-link.hexdocs.pm/">
-  Full documentation for the library: every configuration key, the client behaviour, the extensions, and the module reference.
+<Card title="nerves_hub_link on HexDocs" icon="book" href="https://hexdocs.pm/nerves_hub_link/">
+  The guides and the module reference.
 </Card>
-
-Worth knowing where things are:
 
 | Guide | Covers |
 | --- | --- |
-| [Configuration](https://nerves-hub-link.hexdocs.pm/configuration.html) | Every option: connection, authentication, signing keys, update behaviour, sockets |
-| [Extensions](https://nerves-hub-link.hexdocs.pm/extensions.html) | Configuring health, metrics, geo and the local shell on the device |
-| [Debugging](https://nerves-hub-link.hexdocs.pm/debugging.html) | Working out why a device is not connecting or not updating |
-| [`NervesHubLink.Client`](https://nerves-hub-link.hexdocs.pm/NervesHubLink.Client.html) | Deciding when an update is applied, deferred or refused |
-| [`NervesHubLink.Configurator`](https://nerves-hub-link.hexdocs.pm/NervesHubLink.Configurator.html) | Supplying credentials at runtime rather than compile time |
+| [Configuration](https://hexdocs.pm/nerves_hub_link/configuration.html) | Supervision, runtime configuration, download strategies, applying updates, TLS, proxies, serialization |
+| [Extensions](https://hexdocs.pm/nerves_hub_link/extensions.html) | Configuring each extension on the device |
+| [Device-Managed Updates](https://hexdocs.pm/nerves_hub_link/device_managed_updates.html) | Letting a device choose when it takes firmware |
+| [Devices That Sleep](https://hexdocs.pm/nerves_hub_link/device_sleep.html) | Telling NervesHub a device is going to sleep |
+| [Debugging](https://hexdocs.pm/nerves_hub_link/debugging.html) | Working out why a device does not connect or update |
 
-## Getting a device connected
-
-These pages cover the NervesHub side — creating the product, getting credentials, and pointing a device at them:
-
-<CardGroup cols={2}>
-  <Card title="Add to Project" icon="plus" href="/setup/add-to-project">
-    Add the dependency, pick an authentication method, and configure `config/target.exs`.
-  </Card>
-
-  <Card title="Connecting" icon="plug" href="/setup/connecting">
-    Point a device at NervesCloud or your own instance, and configure runtime credentials.
-  </Card>
-</CardGroup>
+<Note>
+  The Devices That Sleep guide describes a feature that is on the `main` branch but in no tagged release as of nerves_hub_link 2.14.0 and NervesHub 2.5.4. See [Sleeping devices](/management/sleeping-devices).
+</Note>
 
 ## Not running Nerves?
 
-If your device runs Linux without Nerves, or an ESP32 under AtomVM, see [Choosing a Device Client](/integrations/overview) for the other options.
+See [Choosing a device client](/integrations/overview) for Linux without Nerves, AtomVM, and ESP-IDF.
+
+## Related pages
+
+- [Add NervesHubLink to a project](/setup/add-to-project)
+- [Applying updates on the device](/updates/applying-updates)
+- [Build, sign, and upload firmware](/setup/firmware)
+- [Extensions overview](/extensions/overview)
+- [Connection lifecycle](/connection/lifecycle)
+- [Choosing a device client](/integrations/overview)

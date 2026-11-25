@@ -34,9 +34,27 @@ Four frames, in this order.
 
 An extension left out here is not attached. Worth reporting locally, because from the outside it is indistinguishable from a feature quietly not working.
 
+The device setting for every extension defaults to on. The product setting depends on how the product was created: a product created in the web UI starts with every extension on, and a product created through the API or `nh` starts with every extension off and attaches nothing until someone turns an extension on in its settings. The platform reads both settings when the device connects.
+
 **4. The device confirms each one.** Only after `<key>:attached` does the platform start asking that extension for anything.
 
 Everything after the handshake is scoped `<key>:<event>` in both directions.
+
+### After the handshake
+
+The platform can change what is attached while the device stays connected. These frames are not scoped to one extension:
+
+```text
+server -> device   attach    {"extensions": ["health"]}
+server -> device   detach    {"extensions": ["health"]}
+device -> server   health:attached   {}
+device -> server   health:detached   {}
+device -> server   health:error      {"reason": "start_failure"}
+```
+
+A device answers `attach` and `detach` with `<key>:attached` and `<key>:detached`. A device that cannot start an extension sends `<key>:error`, and the platform raises a [product notification](/management/notifications) naming the device, the extension and the reason.
+
+If a device sends a scoped event for an extension it was not given in the attach list, the platform replies with the error `"detach"`.
 
 ## Choosing a version
 
@@ -51,6 +69,8 @@ For each extension it implements, a client walks **its own** versions, most pref
   **Do not wait indefinitely for frame 1.** A platform predating the advertisement never sends it, and a client that waits forever loses every extension against those platforms. Join anyway **five seconds** after the `device` topic's join reply, using the fallback above.
 </Note>
 
+`nerves_hub_link` 2.14.0 does not use that timer. It joins the `extensions` topic only when `extensions:get` arrives. When the message names no versions, it offers the lowest version of every extension it is configured with.
+
 ## Versions
 
 Every extension and the versions the platform implements, newest first. Old and new versions run side by side indefinitely — devices in the field do not upgrade in step with the platform, and some never upgrade at all.
@@ -59,6 +79,7 @@ Every extension and the versions the platform implements, newest first. Old and 
 | --- | --- | --- |
 | `health` | `0.0.1` | Metrics, metadata and alarms, on a pace the platform sets |
 | `metrics` | `0.1.0` | Numbers a device measures about itself, batched |
+| `alarms` | `0.1.0` | Alarms, sent by the device as they are raised and cleared |
 | `geo` | `0.0.1` | Device location |
 | `logging` | `0.1.0`, `0.0.1` | Log lines; batched from `0.1.0` |
 | `local_shell` | `0.0.1` | A shell on the device |
@@ -66,6 +87,25 @@ Every extension and the versions the platform implements, newest first. Old and 
 | `error_reports` | `0.1.0` | Exceptions and explicit error reports, grouped into issues |
 
 `logging` is the only extension with more than one version in service, which makes it the one worth testing a client's negotiation against.
+
+A deployment without ClickHouse leaves `logging`, `error_reports` and `metrics` out of the advertisement and never attaches them. See [Feature prerequisites](/hosting/feature-prerequisites#clickhouse).
+
+A device may declare any version that satisfies the platform's requirement for a row, which is `~> 0.0.1` for the `0.0.1` rows and `~> 0.1.0` for the `0.1.0` rows.
+
+### Which clients implement what
+
+| Extension | `nerves_hub_link` 2.14.0 | `nerves-hub-link-agent` | `nerves_hub_link_atomvm_esp32` | `nerves-hub-link-esp32` |
+| --- | --- | --- | --- | --- |
+| `health` | Yes | Yes | Yes | Yes |
+| `metrics` | No | No | No | No |
+| `alarms` | No | No | Main branch only | No |
+| `geo` | Yes | Yes | Yes | Yes |
+| `logging` | `0.1.0`, `0.0.1` | `0.1.0` | `0.1.0`, `0.0.1` | `0.1.0`, `0.0.1` |
+| `local_shell` | Yes, with `ExPTY` | Yes | No | No |
+| `network_identity` | Yes | Yes | No | No |
+| `error_reports` | Yes | No | No | No |
+
+Devices on `nerves_hub_link` send metrics and alarms inside `health:report`. Configuration for that library is in the [extension guides](/extensions/overview).
 
 ---
 
@@ -86,6 +126,16 @@ A `check` goes out on one timer per connection, so however many people have the 
 | Watched | At least one device page is open | 60 seconds |
 
 The first idle interval is offset randomly so a fleet that connected together does not answer together. Opening a page announces itself and switches to the watched pace immediately; closing one cannot announce itself, so the pace is reconsidered on each check and the last person leaving costs the device one extra report.
+
+A device is also asked once soon after it attaches, ahead of the timer: straight away if somebody has its page open, and otherwise at a random point in the first 60 seconds.
+
+The platform reads three keys from `value`:
+
+| Key | Notes |
+| --- | --- |
+| `metrics` | `{name: number}`. Stored like a `metrics` report stamped with the arrival time, under the same name limits. |
+| `alarms` | `{name: description}`, the complete set raised right now. Anything stored that is missing from the map is cleared. An empty map clears everything. Leave the key out to say nothing about alarms. |
+| `metadata` | A map merged into the metadata of the device's current connection. |
 
 ## metrics
 
@@ -113,9 +163,45 @@ device -> server   metrics:report   {"reports": [{...}, {...}]}
 
 Defaults are **15 minutes** idle and **60 seconds** watched. A device may also report without being asked.
 
+Limits:
+
+- At most **60 reports** per message. The rest are dropped.
+- `timestamp` is ISO 8601 with an offset. A report more than **24 hours** from the platform's clock is skipped.
+- A name longer than **64 bytes** is dropped. At most **20 names** per report are kept, in sorted order. A value that is not a number is dropped.
+- One message per second per device, with a burst of five.
+
+History is kept for 30 days.
+
 Each reading carries **its own timestamp**, unlike almost everything else in the protocol, which the server stamps because it saw it happen. These it did not see. That is what lets a device sample every ten seconds and report every ten minutes without losing readings, and lets a device that lost its connection keep what it measured while it was gone.
 
 Full contract: [`docs/metrics.md`](https://github.com/nerves-hub/nerves_hub_web/blob/main/docs/metrics.md).
+
+## alarms
+
+Alarms, sent by the device as they are raised and cleared. The platform does not poll.
+
+```text
+server -> device   alarms:sync      {}
+device -> server   alarms:snapshot  {"alarms": [{"alarm": "MyApp.HighTemp", ...}, ...]}
+device -> server   alarms:raised    {"alarm": "MyApp.HighTemp", "description": "too hot", "raised_at": "..."}
+device -> server   alarms:cleared   {"alarm": "MyApp.HighTemp", "cleared_at": "..."}
+```
+
+The platform sends `alarms:sync` as soon as the extension is attached. The device answers with `alarms:snapshot`, which lists **every** alarm it has raised. The platform replaces what it has stored with that set. A device must answer every `alarms:sync` the same way and may send a snapshot without being asked.
+
+| Field | Required | Notes |
+| --- | --- | --- |
+| `alarm` | yes | The alarm's name, a string. A leading `Elixir.` is stripped. A name that is empty or longer than 255 characters is ignored. |
+| `description` | no | Shown next to the name. |
+| `raised_at`, `cleared_at` | no | ISO 8601 with an offset. Used when no more than 1 hour ahead of the platform's clock and no more than 72 hours in the past. Otherwise the arrival time is used. |
+
+A snapshot with any entry that is not an object with a string `alarm` is rejected whole. Raising an alarm that is already raised updates its description and keeps its original time. Clearing an alarm that is not raised does nothing.
+
+The rate limit is one message per second per device, with a burst of ten. When the platform drops a message, it sends `alarms:sync` ten seconds later.
+
+A device that attaches `alarms` should leave the `alarms` key out of its `health:report`.
+
+Full contract: [`docs/alarms.md`](https://github.com/nerves-hub/nerves_hub_web/blob/main/docs/alarms.md).
 
 ## geo
 
@@ -138,7 +224,7 @@ Log lines from the device. This is the one extension with two versions in servic
     device -> server   logging:send   {"lines": [{"level": "info", "message": "..."}, ...]}
     ```
 
-    One message carries a second's worth of lines. NervesHub limits how *often* a device may send, not how much it may say, and a batch costs the same single token as one line — so a device in a crash loop can report everything it wrote in the last second instead of losing all but the first few.
+    One message carries many lines. NervesHub limits how *often* a device may send, not how much it may say, and a batch costs the same single token as one line — so a device in a crash loop can report everything it wrote instead of losing all but the first few. How long a client collects before sending is its own choice: `nerves_hub_link` sends a minute of lines at a time, and `nerves-hub-link-agent` a second.
 
     At most **100 lines per message**. Anything beyond is dropped and the count is stored as a log line of its own, on the same bargain a device's own buffer makes: a gap someone can see beats a gap they cannot.
   </Tab>
@@ -152,7 +238,7 @@ Log lines from the device. This is the one extension with two versions in servic
   </Tab>
 </Tabs>
 
-Log lines are kept for 3 days by default.
+Log lines are kept for 3 days.
 
 ## local_shell
 
@@ -160,8 +246,13 @@ A shell on the device, relayed to whoever is watching.
 
 ```text
 server -> device   local_shell:request_shell   {}
+server -> device   local_shell:shell_input     {"data": "..."}
+server -> device   local_shell:window_size     {"rows": 24, "cols": 80}
 device -> server   local_shell:shell_output    {"data": "..."}
+device -> server   local_shell:request_status  {"status": "started"}
 ```
+
+`request_status` carries `"started"`, or `"failed"` with a `reason`.
 
 Nothing here touches the database. Output is relayed live, and a bounded scrollback is kept on the connection so someone opening the tab can see what they missed.
 
@@ -173,6 +264,8 @@ Identities the device holds on networks NervesHub does not run — an iroh endpo
 server -> device   network_identity:request   {}
 device -> server   network_identity:report    {"identities": [...]}
 ```
+
+Each identity is an object with `service`, `identifier`, and optionally `instance` and `details`. The platform records `iroh`, `netbird`, `tailscale` and `wireguard`, discards any other service, and reads at most 10 identities from one report.
 
 The server asks once on attach and the device answers with everything it knows about itself. There is no interval, unlike `geo` and `health`: an identity is long-lived by construction, so polling for it would be noise. A device whose details have moved — it switched relay, it was assigned a new overlay IP — can push `report` again at any time.
 
@@ -204,6 +297,8 @@ Nothing goes the other way. The platform does not poll for errors and does not a
 
 `timestamp`, `kind` and `reason` are **required**; a report missing any of them is dropped and its neighbours in the batch are kept.
 
+A message carries at most 25 reports. The rate limit is one message per second per device, with a burst of five, and a message over the limit is dropped. `reason` is capped at 2 KB, `message` at 8 KB, `frames` at 30, and `context` at 32 keys of 512 bytes each. Occurrences are kept for 30 days.
+
 Device vitals go in `context` rather than being fields of their own, so a device with free heap and signal strength to report sends those under its own names and nothing on the server changes. `uptime_ms`, `free_memory_bytes` and `reboot_count` get friendly labels and units in the UI; everything else renders as it arrived.
 
 `firmware_uuid` is the exception and is a field — it answers "which release broke this", is carried on the issue as well as the occurrence, and the platform fills it in from the device's connection when a report omits it.
@@ -219,3 +314,10 @@ Full contract: [`docs/error_reports.md`](https://github.com/nerves-hub/nerves_hu
 **A device sends a list of versions instead of a string.** The extensions join fails entirely, taking every other extension with it. The advertisement exists so that no client needs to try.
 
 **An extension raises while handling a message.** It is logged and swallowed, so one misbehaving extension cannot take a device's connection with it. Attach and detach are deliberately not protected this way.
+
+## Related pages
+
+- [Extensions overview](/extensions/overview)
+- [Device WebSocket protocol](/device-api/websocket-overview)
+- [WebSocket channel events](/device-api/websocket-events)
+- [Choosing a device client](/integrations/overview)

@@ -1,0 +1,77 @@
+---
+title: "Audit log"
+sidebarTitle: "Audit log"
+description: "See what NervesHub records about changes to devices, deployment groups, products and organizations, where to read it, and how long it is kept."
+---
+
+NervesHub writes an audit log entry when a person, a device or a [deployment group](/setup/deployments) does something worth tracing later: a reboot, a firmware push, a [release](/deployments/releases) approval, a webhook change. Use it to answer who did what to a device or a deployment group, and when.
+
+## What an entry holds
+
+Each entry records:
+
+- the actor: a user, a device, or a deployment group acting on its own,
+- the resource it acted on,
+- a description, cut at 500 characters,
+- when it happened.
+
+Actions taken from Slack are recorded as the linked NervesHub user, with "from Slack" in the description. See [Slack](/outbound/slack).
+
+<Note>
+  Product API keys can also be the actor of an entry. They are on the main branch but in no tagged release as of NervesHub 2.5.4. See [CI/CD](/outbound/ci-cd).
+</Note>
+
+## What is recorded
+
+| About | Entries |
+| --- | --- |
+| A device | Reboot, identify and reconnect requests. [Support script](/management/support-scripts) runs. Firmware pushed to the device, updates sent by a deployment group, updates the device asked for, and [archives](/updates/archives) sent. Update attempts and their outcome: updated, failed, ignored, rescheduled or blocked. Firmware validated. Firmware metadata changes. Tag changes. Moves between products and into deployment groups. Updates turned on or off, the [update mode](/updates/device-managed-updates), and the [penalty box](/deployments/rollout-controls) being cleared. Shared secrets created and deactivated. |
+| A deployment group | The group being created, changed, turned on or off, or deleted. New releases, and changes to a release's [connecting code](/deployments/connecting-code) or required setting. A [workflow step](/concepts/deployment-workflows) waiting for approval, failing, or being approved, retried or skipped. Devices that no longer match the group. |
+| A product | Support scripts created, updated and deleted. Firmware deleted. Reported errors resolved, muted and reopened. An [extension](/extensions/overview) set for every device. |
+| An organization | Webhooks created, updated and deleted, and their signing secret regenerated. Slack workspaces connected, disconnected or removed. Slack, Teams and Discord channels added, changed and removed. The two-factor authentication requirement turned on or off. |
+
+## Where to see it
+
+### A device
+
+Open the device and select the **Activity** tab. Entries are listed newest first, grouped by day. The tab shows entries where the device is the actor or the resource.
+
+Click **Download CSV** to export the device's entries.
+
+### A deployment group
+
+Open the deployment group and select the **Activity** tab. Click **Download CSV** to export the group's entries.
+
+Members of a [role limited to tagged devices](/access/roles#roles-limited-to-tagged-devices) cannot open deployment groups, so they cannot see this tab.
+
+### Products and organizations
+
+Entries about a product or an organization are recorded, but as of NervesHub 2.5.4 no page in the web UI and no API endpoint lists them.
+
+### The CSV export
+
+The export has one row per entry, with these columns: `id`, `org_id`, `actor_id`, `actor_type`, `description`, `kind`, `params`, `resource_id`, `resource_type`, `reference_id` and `inserted_at`.
+
+`kind` classifies the entries a device's **Activity** tab shows. Entries written before kinds existed, and entries about other resources, have none.
+
+## Retention
+
+How long entries are kept is decided by the instance.
+
+| Instance setting | Default | Effect |
+| --- | --- | --- |
+| `TRUNCATE_AUDIT_LOGS_ENABLED` | `false` | When `false`, audit log entries are kept forever. When `true`, NervesHub deletes old entries every hour. |
+| `TRUNCATE_AUDIT_LOGS_DEFAULT_DAYS_KEPT` | `30` | Days of audit log kept for an organization that has no retention of its own. |
+
+Each organization can have its own number of days, which takes the place of the instance default. Neither the web UI nor the API sets it. It is a value on the organization's record (`audit_log_days_to_keep`), so ask whoever runs your instance.
+
+Truncation deletes entries for good. If you need them for longer, export them first.
+
+See [Feature prerequisites](/hosting/feature-prerequisites#retention) for the instance side.
+
+## Related pages
+
+- [Roles and permissions](/access/roles)
+- [Two-factor authentication](/access/two-factor)
+- [Webhooks](/outbound/webhooks)
+- [Feature prerequisites](/hosting/feature-prerequisites)

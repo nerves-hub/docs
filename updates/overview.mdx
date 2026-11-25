@@ -1,0 +1,103 @@
+---
+title: "How firmware updates work"
+sidebarTitle: "Overview"
+description: "The firmware formats NervesHub accepts, and the path an update takes from upload to a rebooted device."
+---
+
+A firmware update starts with a file you upload and ends with a device that has rebooted into it and reported back. This page describes the formats NervesHub accepts and the steps in between, with links to the page for each step.
+
+## Firmware formats
+
+NervesHub picks an update tool for each file from the file's contents, not its name.
+
+| Tool | File | Device side | Delta updates | Status |
+| --- | --- | --- | --- | --- |
+| fwup | `.fw` | `nerves_hub_link` on Nerves, or the [Linux agent](/integrations/linux-agent) | [Yes](/management/delta-updates) | Default. Products accept it without any setup. |
+| ESP-IDF | `.bin` | [ESP32 with ESP-IDF](/updates/esp-idf) | Yes | Experimental, off by default |
+| AtomVM | `.avm` | [ESP32 with AtomVM](/updates/atomvm) | No | Experimental, off by default |
+| RAUC | `.raucb` | [Linux with RAUC](/updates/rauc) | No | Experimental, off by default |
+
+The three experimental formats need NervesHub 2.5.0 or later. Each has to be enabled for the instance and then allowed for the product. See [feature prerequisites](/hosting/feature-prerequisites#firmware-formats).
+
+The rest of this section of the docs describes fwup firmware on a Nerves device running `nerves_hub_link`.
+
+## The path of an update
+
+<Steps>
+  <Step title="You upload signed firmware">
+    You build a `.fw` file, sign it, and [upload it](/setup/firmware) to a product. NervesHub verifies the signature against your organization's [signing keys](/concepts/firmware-signing). It reads the firmware's metadata: product, version, platform, architecture and UUID. NervesHub 2.5.0 and later also store a SHA-256 checksum of the file and one of each 1 MiB part.
+  </Step>
+
+  <Step title="A release makes it the target">
+    You [create a release](/deployments/releases) in a [deployment group](/setup/deployments). Devices in the group that are not on that firmware become due for it. You can also send one device a specific version from its page in the web UI.
+
+    If the group has [delta updates](/management/delta-updates) on, NervesHub first builds deltas from the firmware its devices are running.
+  </Step>
+
+  <Step title="NervesHub offers the update">
+    NervesHub offers the update to connected devices at the pace the group's [rollout controls](/deployments/rollout-controls) allow. A device that connects later is offered it then.
+
+    The offer is an `update` message on the device's WebSocket. It carries a signed, time-limited URL for the file, the target firmware's metadata, and, from NervesHub 2.5.0, the file's size and checksums. The URL points at the delta when the device qualifies for one, and at the full file otherwise.
+
+    A device in [device-managed mode](/updates/device-managed-updates) is not sent the offer. It asks for it instead.
+  </Step>
+
+  <Step title="The device decides">
+    `nerves_hub_link` first checks that it holds a public key to verify the firmware with. If it has none, it [refuses the update](/concepts/firmware-signing#unverifiable-firmware-is-refused).
+
+    It then calls [`update_available/1`](/updates/applying-updates) on your Client module. Your code returns `:apply`, `:ignore`, or a request to be asked again later. The default applies every update.
+  </Step>
+
+  <Step title="The device downloads and applies">
+    The configured [updater](/updates/download-strategies) downloads the file over HTTPS and hands it to `fwup`, which verifies the signature and writes the firmware to the inactive slot. The default updater streams the download straight into `fwup`.
+
+    The device reports download and install progress to NervesHub as it goes, and passes each `fwup` message to your Client.
+  </Step>
+
+  <Step title="The device reboots and reports back">
+    When `fwup` finishes, the device reports the update as completed and reboots. After it reconnects, it reports the firmware it is now running and whether that firmware has been [validated](/updates/applying-updates#validation-and-auto-revert).
+
+    If the device reverted to the previous firmware, it reports that too.
+  </Step>
+</Steps>
+
+## What you configure on the device
+
+All of these are optional. A device with only connection settings takes every update it is offered.
+
+| To | Set | Page |
+| --- | --- | --- |
+| Decide when an update is applied | `client: MyApp.NervesHubLinkClient` | [Applying updates](/updates/applying-updates) |
+| Build verification keys into the firmware | `fwup_public_keys: [...]` | [Firmware signing](/concepts/firmware-signing) |
+| Resume or verify downloads | `updater: ...` | [Download strategies](/updates/download-strategies) |
+| Let the device ask for updates | `NervesHubLink.check_for_update/0` and friends | [Device-managed updates](/updates/device-managed-updates) |
+| Receive files that are not firmware | `archive_available/1`, `archive_ready/2` | [Archives](/updates/archives) |
+
+## How fwup is invoked
+
+`nerves_hub_link` runs `fwup` with the `upgrade` task against the device's firmware block device. These settings change that:
+
+```elixir
+# config/target.exs
+config :nerves_hub_link,
+  fwup_task: "upgrade",
+  fwup_env: [{"MY_VAR", "value"}],
+  fwup_extra_options: ["--unsafe"]
+```
+
+| Key | Default | Description |
+| --- | --- | --- |
+| `fwup_task` | `"upgrade"` | The task in `fwup.conf` to run. |
+| `fwup_env` | `[]` | Environment variables for the `fwup` process, as `{name, value}` tuples. |
+| `fwup_extra_options` | `[]` | Extra command line arguments for `fwup`. |
+
+The block device is read from the `nerves_fw_devpath` key in the device's Nerves key-value store when `nerves_hub_link` starts.
+
+## Related pages
+
+- [Applying updates on the device](/updates/applying-updates)
+- [Download strategies](/updates/download-strategies)
+- [Device-managed updates](/updates/device-managed-updates)
+- [Archives](/updates/archives)
+- [Delta updates](/management/delta-updates)
+- [Releases](/deployments/releases)

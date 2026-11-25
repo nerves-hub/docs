@@ -1,0 +1,748 @@
+---
+title: "Complete Nerves device setup"
+sidebarTitle: "Complete device setup"
+description: "Take the device from the basic guide to production: per-device certificates, control over when updates are applied, every extension, and connection tuning."
+---
+
+This guide continues from the end state of [Basic Nerves device setup](/guides/basic-device-setup). Work through that guide first. At the end of this one you have a production-ready device that:
+
+- authenticates with its own certificate, signed by a CA you control,
+- decides when to apply an update, downloads it in verified parts, and validates the new firmware,
+- reports its own location, metrics, alarms and network identities, and
+- uses the connection options and extras that fit your product.
+
+Each part does the minimum and links to the feature page that covers the rest.
+
+## Before you start
+
+You need the basic guide's end state:
+
+- The `my_app` product in the `acme` organization, and a device that connects with a shared secret or a local certificate.
+- The `config :nerves_hub_link` block from [the basic guide's closing section](/guides/basic-device-setup#the-complete-configuration) in `config/target.exs`, with `fwup_public_keys`, `remote_iex: true` and five extensions.
+- The signing key `my_app_key`.
+- The `bench` deployment group, turned on, with your device in it. This guide releases through `bench`. If you have already replaced it with the groups from [Basic fleet operations](/guides/basic-fleet-operations), use `qa` wherever this guide says `bench`.
+
+The version numbering continues. The basic guide ended at `1.4.0`, and each part here ships one version, `1.5.0` to `1.8.0`. If you skipped the delta part of the basic guide your device is on a lower version, and these numbers still work.
+
+Build and release every version the same way, from the project directory with `MIX_TARGET=rpi4` exported. The examples keep using a Raspberry Pi 4; any of the Nerves [supported targets](https://hexdocs.pm/nerves/supported-targets.html) works, with its name in place of `rpi4`:
+
+```bash
+mix firmware
+nh firmware upload _build/rpi4_dev/nerves/images/my_app.fw --key my_app_key --deploy bench
+```
+
+Every config snippet adds to the one `config :nerves_hub_link` block in `config/target.exs`. The [closing section](#the-complete-configuration) shows the whole block.
+
+## The parts
+
+1. [Move to certificate authentication](#part-1-move-to-certificate-authentication)
+2. [Control when and how updates are applied](#part-2-control-when-and-how-updates-are-applied)
+3. [Turn on the rest of the extensions](#part-3-turn-on-the-rest-of-the-extensions)
+4. [Tune the connection and add the extras](#part-4-tune-the-connection-and-add-the-extras)
+5. [Where you are now](#where-you-are-now): the complete configuration and what to do next
+
+## Part 1: Move to certificate authentication
+
+A product's shared secret is compiled into every firmware image, and whoever holds it can connect as any device in the product. For production, give each device its own X.509 certificate. One leaked device then exposes only itself. [Security: PKI and the chain of trust](/concepts/pki) explains the model.
+
+You sign device certificates with a certificate authority (CA) that you control and register with the `acme` organization. A [just-in-time provisioning](/auth/just-in-time-provisioning) profile on the CA lets new devices create themselves in `my_app`, tagged `prod`, the first time they connect. Registering a CA needs the `manage` role or higher.
+
+If you chose the **Local certificate** tab in the basic guide, your firmware already uses `LocalCertKey` with a self-signed certificate. Do the first three steps of the Local certificate tab below to replace that certificate with one your CA signed. You have no shared secret to retire.
+
+Choose where the device keeps its private key.
+
+<Tabs>
+  <Tab title="Local certificate">
+    The certificate and key are files on the device. See [Device certificates](/auth/device-certificates).
+
+    <Steps>
+      <Step title="Create and register the CA">
+        ```bash
+        nh ca generate --upload --jitp-product my_app --jitp-tag prod
+        ```
+
+        This writes the CA key and certificate to `~/.nh/ca/acme/`, named by the generation time, for example `2026-06-11-16-41-10-cert.pem`. That timestamp is the CA's name in the next step. Only the certificate is uploaded. Keep the key secret.
+
+        To bring a CA you already have:
+
+        ```bash
+        nh ca upload --cert rootCA.crt --key rootCA.key \
+          --jitp-product my_app --jitp-tag prod
+        ```
+
+        The `--jitp-*` flags give the CA its JITP profile, and need NervesHub 2.5.0 or later. `nh` sets the profile only when it registers the CA. To add or change it later, open the organization's **Certificates** page, click the certificate authority, and click **Edit**. Check **Enable Just In Time Provisioning**, choose `my_app` as the **JITP Product**, enter `prod` in **JITP Tags**, and click **Update Certificate**.
+      </Step>
+
+      <Step title="Sign a device certificate">
+        The certificate's common name must be the device identifier, which is the device's serial number.
+
+        ```bash
+        nh device certificates generate <identifier> --ca 2026-06-11-16-41-10
+        ```
+
+        The key and certificate are written to `~/.nh/certificates/acme/` as `<identifier>-<timestamp>-key.pem` and `<identifier>-<timestamp>-cert.pem`.
+      </Step>
+
+      <Step title="Put the files on the device">
+        The files go to `/data/nerves-hub/cert.pem` and `/data/nerves-hub/key.pem`. How you get them there depends on where the device is:
+
+        - **A device on your bench with SSH access.** Use `sftp`, as in [part 1 of the basic guide](/guides/basic-device-setup#choose-how-the-device-authenticates).
+        - **A device in the field that is connected to NervesHub.** Write the files from the [remote console](/management/remote-console), which needs no network path to the device:
+
+          ```elixir
+          File.mkdir_p!("/data/nerves-hub")
+          cert = "<contents of the -cert.pem file>"
+          File.write!("/data/nerves-hub/cert.pem", cert)
+          key = "<contents of the -key.pem file>"
+          File.write!("/data/nerves-hub/key.pem", key)
+          ```
+
+          Bind each file's contents to a variable first, as shown. A `File.write!` call with the multi-line contents pasted between its parentheses can end the console session before the file is written.
+      </Step>
+
+      <Step title="Switch the firmware to LocalCertKey">
+        In the `config :nerves_hub_link` block, replace the `shared_secret` option with the configurator:
+
+        ```elixir
+        # config/target.exs
+        config :nerves_hub_link,
+          host: "your.nerveshub.host",
+          configurator: NervesHubLink.Configurator.LocalCertKey,
+          # ...the other settings from the basic guide, unchanged...
+        ```
+
+        `LocalCertKey` is never chosen automatically. For other file paths, see [Configure NervesHubLink](/auth/device-certificates#configure-nerveshublink).
+      </Step>
+    </Steps>
+  </Tab>
+
+  <Tab title="NervesKey">
+    A [NervesKey](/auth/nerveskey) secure element holds the certificate and key, so the key is never on the filesystem.
+
+    Two things must already be done, with the `nerves_key` library and not with NervesHub: each chip is provisioned with its device certificate and the signer certificate, and you hold the signer's certificate and private key.
+
+    <Steps>
+      <Step title="Register the signer certificate">
+        ```bash
+        nh ca upload --cert signer.crt --key signer.key \
+          --jitp-product my_app --jitp-tag prod
+        ```
+
+        The key signs a verification certificate locally. It is not uploaded. The `--jitp-*` flags give the CA its JITP profile, and need NervesHub 2.5.0 or later. To add or change the profile later, edit the certificate authority on the organization's **Certificates** page.
+      </Step>
+
+      <Step title="Add the dependency">
+        ```elixir
+        # mix.exs, in deps
+        {:nerves_key, "~> 1.2"}
+        ```
+      </Step>
+
+      <Step title="Remove the shared secret from the config">
+        In the `config :nerves_hub_link` block, delete the `shared_secret` option, and `configurator` if you set one. Keep the rest:
+
+        ```elixir
+        # config/target.exs
+        config :nerves_hub_link,
+          host: "your.nerveshub.host",
+          # ...the other settings from the basic guide, unchanged...
+        ```
+
+        With `nerves_key` in the project and no `configurator` set, NervesHubLink uses the NervesKey configurator. If the chip is not on I2C bus 1, see [Options](/auth/nerveskey#options).
+      </Step>
+    </Steps>
+
+    If your hardware has a Trusted Platform Module instead, the steps are the same with the `tpm` library. See [TPM](/auth/tpm).
+  </Tab>
+</Tabs>
+
+### Release 1.5.0
+
+Set the version to `1.5.0`, then build and release it to `bench`.
+
+<Warning>
+  Send this firmware over the air. Do not burn it. Burning the card erases `/data`, and the certificate files with it.
+</Warning>
+
+The shared secret and certificates work side by side, so you move devices that are already in the field with this ordinary update:
+
+1. Leave the product key active.
+2. Make sure each device has its certificate before it updates. A device running the new firmware has no other way to connect.
+3. Release the firmware. Each device reconnects with its certificate after it updates. Devices still on the old firmware keep connecting with the shared secret.
+
+An existing device keeps its product, tags and history. NervesHub records the certificate for the device whose identifier matches the common name. The profile's product and tags apply only to devices that do not exist yet.
+
+### Retire the shared secret
+
+When every device has a certificate on file, open **Product settings**, and in the **Shared secrets** card click **Deactivate** next to the key, then **Deactivate secret** to confirm. New connections that use the key are refused. Connections that are already open stay open until the device reconnects. See [Deactivate a key](/auth/shared-secret#deactivate-a-key).
+
+<Warning>
+  A device that still depends on the product key drops off the next time it reconnects. Check each device's certificates before you deactivate the key.
+</Warning>
+
+### Check it works
+
+1. Run `nh ca show <serial>`, with the serial from `nh ca list`. It prints the JITP product `my_app` and the tag `prod`. The organization's **Certificates** page lists the CA with **Adds new devices to my_app**.
+2. Wait for your device to update to `1.5.0`. It comes back **Online**. A device NervesHub has not seen before, booted with this firmware and a certificate from the CA, appears under **Devices** in `my_app` with the tag `prod`.
+3. Confirm the certificate is on file. It is also listed in the **Certificates** card on the device's **Settings** tab. See [Devices](/setup/devices).
+
+   ```bash
+   nh device certificates list <identifier>
+   ```
+
+4. After you deactivate the product key, force a fresh connection. The device comes back **Online**.
+
+   ```bash
+   nh device reconnect <identifier>
+   ```
+
+**Go deeper:** [Device certificates](/auth/device-certificates), [Just-in-time provisioning](/auth/just-in-time-provisioning), [NervesKey](/auth/nerveskey), [TPM](/auth/tpm), [Shared secret](/auth/shared-secret), [Devices](/setup/devices), [Security: PKI and the chain of trust](/concepts/pki).
+
+## Part 2: Control when and how updates are applied
+
+Until now the device applies every update it is offered and reboots when the update finishes. In this part you add a client module that decides the moment, switch to a download strategy that survives bad links, and optionally let the device ask for its updates itself. [How firmware updates work](/updates/overview) shows where each of these sits in the path of an update.
+
+### Add the client module
+
+`NervesHubLink.Client` is the behaviour through which `nerves_hub_link` asks your application what to do with an update. Create `lib/my_app/nerves_hub_link_client.ex`:
+
+```elixir
+defmodule MyApp.NervesHubLinkClient do
+  use NervesHubLink.Client
+
+  require Logger
+
+  # Decide when to apply.
+  @impl NervesHubLink.Client
+  def update_available(_update_info) do
+    if MyApp.busy?() do
+      {:reschedule, 15, "device is busy"}
+    else
+      :apply
+    end
+  rescue
+    error ->
+      {:reschedule, 15, "update check failed: #{Exception.message(error)}"}
+  end
+
+  # Show progress to whoever is standing at the device.
+  @impl NervesHubLink.Client
+  def handle_fwup_message({:progress, percent}) do
+    MyApp.Display.show_progress(percent)
+    :ok
+  end
+
+  def handle_fwup_message({:error, _code, message}) do
+    Logger.error("Firmware update failed: #{message}")
+    :ok
+  end
+
+  def handle_fwup_message(_message), do: :ok
+
+  # Stop work cleanly, then reboot into the new firmware.
+  @impl NervesHubLink.Client
+  def reboot() do
+    MyApp.shutdown_gracefully()
+    Nerves.Runtime.reboot()
+  end
+
+  # Reaching NervesHub means this firmware can be updated again: mark it valid.
+  @impl NervesHubLink.Client
+  def connected() do
+    if not Nerves.Runtime.firmware_valid?() do
+      Nerves.Runtime.validate_firmware()
+    end
+
+    :ok
+  end
+end
+```
+
+`MyApp.busy?/0`, `MyApp.Display` and `MyApp.shutdown_gracefully/0` stand for your own code.
+
+- `{:reschedule, 15, reason}` turns the update down for now and reports the reason. Do not count on the 15 minutes. `nerves_hub_link` 2.14.0 sends the delay in minutes and NervesHub reads it in milliseconds, so the update is offered again within about a minute. A device that keeps answering with a reschedule meets its group's [penalty box](/deployments/rollout-controls#penalty-box) rules after a few offers, and is then offered nothing for the penalty time, which is 1,440 minutes by default. To let it out early, click the button beside **Blocked** in the device page header, whose tooltip reads **Clear the penalty box**, or run `nh device clear-penalty <identifier>`. The other return values are in [Applying updates](/updates/applying-updates).
+- `reboot/0` must end in a reboot, or the new firmware never runs.
+- `nerves_hub_link` reports whether the running firmware is validated, but it does not validate it. Your application has to, and a device that reports unvalidated firmware is not offered updates by its deployment group. The [`connected/0`](/connection/lifecycle#react-to-the-connection-state) callback is one reasonable place to validate, and [Applying updates](/updates/applying-updates#validation-and-auto-revert) covers the alternatives. If your application already validates somewhere else, leave `connected/0` out. A project generated by `mix nerves.new` can already do so through the `nerves_runtime` startup guard: check `config/target.exs` for `config :nerves_runtime, startup_guard_enabled: true`.
+
+<Warning>
+  An exception in `update_available/1` results in the update being applied, and so does any return value that `nerves_hub_link` does not recognise. That is why the callback above has a `rescue`.
+</Warning>
+
+### Select the client and the download strategy
+
+Add two keys to the `config :nerves_hub_link` block:
+
+```elixir
+# config/target.exs
+config :nerves_hub_link,
+  # ...settings from part 1 and the basic guide...
+  client: MyApp.NervesHubLinkClient,
+  updater: NervesHubLink.UpdateManager.PartsUpdater
+```
+
+`PartsUpdater` downloads the firmware in parts and verifies each one. On an unreliable link a corrupt part is fetched again on its own, and a restart resumes from the last verified part, where the default strategy starts over. It keeps the parts in `/data/nerves_hub_link/firmware`, so the device needs room for the firmware file there. It needs NervesHub 2.5.0 or later. The other strategies and the retry settings are in [Download strategies](/updates/download-strategies).
+
+Set the version to `1.6.0`, then build and release it to `bench`.
+
+### Optional: let the device ask for its updates
+
+With the client module, NervesHub still picks the moment to offer an update and your code answers. For a device whose owner or state decides the moment, use [device-managed updates](/updates/device-managed-updates): the deployment group stops pushing, and the device fetches the group's firmware when it chooses.
+
+<Warning>
+  Roll out firmware that supports device-managed updates before you set the mode. A device in `device_managed` mode that connects with older firmware is returned to `automatic` and receives pushes again.
+</Warning>
+
+<Steps>
+  <Step title="Ship the three calls">
+    Call this from your own code, for example when the owner presses "Update now" or a machine cycle ends:
+
+    ```elixir
+    defmodule MyApp.Updates do
+      require Logger
+
+      # Run once the device is connected. Needs the operator grant from step 3.
+      def take_control() do
+        NervesHubLink.set_update_mode(:device_managed)
+      end
+
+      def update_now() do
+        with {:ok, %{available?: true}} <- NervesHubLink.check_for_update(),
+             :ok <- NervesHubLink.start_update() do
+          :ok
+        else
+          {:ok, %{available?: false}} ->
+            :no_update
+
+          {:error, reason} = error ->
+            Logger.warning("update refused: #{inspect(reason)}")
+            error
+        end
+      end
+    end
+    ```
+
+    `update_now/0` returns `:ok` once NervesHub has sent the update, and the error when it is refused. The reasons are listed in [Ask for an update from firmware](/updates/device-managed-updates#ask-for-an-update-from-firmware).
+
+    An update started this way still goes through `MyApp.NervesHubLinkClient`, so `update_available/1` can still turn it down.
+  </Step>
+
+  <Step title="Roll that firmware out">
+    Include the module in `1.6.0`. Release it through `bench` while the device is still in `automatic` mode, and wait until the device runs it.
+  </Step>
+
+  <Step title="Grant the permission and set the mode">
+    An operator has to allow a device to choose its mode. On the device's **Settings** tab, in the **Firmware updates** card, switch on **Let the device choose its update mode**, or run:
+
+    ```bash
+    nh device update <identifier> --managed-updates-allowed
+    ```
+
+    Then call `MyApp.Updates.take_control()` on the device. To skip the grant, set the mode yourself with `nh device update <identifier> --update-mode device_managed`, or in the device page header, select the update mode and choose **Device managed**.
+  </Step>
+</Steps>
+
+<Note>
+  NervesHub does not pace device-requested updates. The group's [rollout controls](/deployments/rollout-controls) do not apply to them, so if many devices could ask at the same moment, spread the requests in your firmware.
+</Note>
+
+### Check it works
+
+1. The device takes `1.6.0` at once, because the firmware it was running had no client module. The client and `PartsUpdater` act from the next update on.
+2. In the remote console on the updated device:
+
+   ```elixir
+   iex> Application.get_env(:nerves_hub_link, :client)
+   MyApp.NervesHubLinkClient
+   iex> Nerves.Runtime.firmware_valid?()
+   true
+   iex> NervesHubLink.update_mode()
+   :device_managed
+   ```
+
+   The last line applies only if you set up device-managed updates. Otherwise it returns `:automatic`.
+3. Part 3 releases `1.7.0`, the first update the client decides on. While `MyApp.busy?/0` returns `true`, the device stays on `1.6.0`. When it returns `false` and the update is offered again, the device's **Details** tab shows download and install progress, and the device reboots into `1.7.0`. If you set up device-managed updates, the group offers nothing: call `MyApp.Updates.update_now()` on the device instead. If the device stays on `1.6.0` and its page header shows **Blocked**, it is in the penalty box. Clear it as described under [Add the client module](#add-the-client-module).
+
+**Go deeper:** [How firmware updates work](/updates/overview), [Applying updates](/updates/applying-updates), [Download strategies](/updates/download-strategies), [Device-managed updates](/updates/device-managed-updates), [Connection lifecycle](/connection/lifecycle), [Rollout controls](/deployments/rollout-controls).
+
+## Part 3: Turn on the rest of the extensions
+
+The basic guide left `my_app` reporting default health, a GeoIP location, logs and errors. This part makes those reports say something about your device and adds network identities. It ends with the optional system shell. Each section is independent, so skip what your device does not need. The config for all of them is in one snippet, in [Configure the extensions](#configure-the-extensions).
+
+Every extension also has to be on for the product, in **Product settings** on the **General** tab, in the **Device extensions** card. A product created through the API or `nh` starts with them all off. See the [extensions overview](/extensions/overview).
+
+### Report your own location
+
+Skip this unless the device has a better location source than its public IP address, such as GPS or a modem. If it does, write a resolver module. [Use your own resolver](/extensions/geo#use-your-own-resolver) has a complete one, which the config below names `MyApp.GPSGeoResolver`.
+
+Return errors from it as `{:error, code, description}`. That three-element shape is the one the extension matches on.
+
+Load the module when your application starts, because `nerves_hub_link` 2.14.0 uses the GeoIP resolver instead, without a warning, when your resolver's module is not loaded yet:
+
+```elixir
+# lib/my_app/application.ex, at the top of start/2
+Code.ensure_loaded(MyApp.GPSGeoResolver)
+```
+
+### Add your own metrics and metadata
+
+A metric set is a module with one callback that returns a map of names to numbers. See [Health](/extensions/health#add-your-own-metrics).
+
+```elixir
+# lib/my_app/health_metrics.ex
+defmodule MyApp.HealthMetrics do
+  @behaviour NervesHubLink.Extensions.Health.MetricSet
+
+  @impl true
+  def sample() do
+    %{
+      "battery_percent" => MyApp.Battery.percent(),
+      "queue_depth" => MyApp.Queue.depth()
+    }
+  end
+end
+```
+
+The config below adds it after `:defaults`, which keeps the default metric sets. [Metadata](/extensions/health#add-metadata) is a map of strings beside the metrics, set under `metadata` in the same config.
+
+### Raise alarms
+
+Alarms have no extension of their own in `nerves_hub_link`. The [Health report carries every alarm currently raised](/extensions/health#alarms), so NervesHub learns of a change at the next report. An alarm raised and cleared between two reports is never seen.
+
+Add [`alarmist`](https://hex.pm/packages/alarmist), which the `nerves_hub_link` guide recommends, and the report reads alarms from it:
+
+```elixir
+# mix.exs, in deps
+{:alarmist, "~> 0.3"}
+```
+
+Raise and clear alarms through Erlang's `:alarm_handler`:
+
+```elixir
+:alarm_handler.set_alarm({MyApp.SensorOffline, "no reading for 60 seconds"})
+:alarm_handler.clear_alarm(MyApp.SensorOffline)
+```
+
+### Add context to error reports
+
+Point `context` at a function that returns a map, and every [error report](/extensions/error-reports#attach-device-state) carries it:
+
+```elixir
+# lib/my_app/telemetry.ex
+defmodule MyApp.Telemetry do
+  def error_context() do
+    %{"reboot_count" => MyApp.reboot_count(), "site" => "depot-4"}
+  end
+end
+```
+
+### Report network identities
+
+If the device is on iroh, NetBird, Tailscale or WireGuard, the [Network identity](/extensions/network-identity) extension shows its key on the device page. The extension has been in your firmware since the basic guide, but it reports nothing without a provider. Write one provider module per network. [Enable it](/extensions/network-identity#enable-it) has a complete NetBird provider, which the config below names `MyApp.NetBirdIdentity`.
+
+Never put a secret in a provider's `details`. Anyone who can view the device can read it.
+
+### Configure the extensions
+
+In the `config :nerves_hub_link` block, replace `extension_modules` and `logging` from the basic guide with these keys. Drop the lines for any section you skipped.
+
+```elixir
+# config/target.exs
+config :nerves_hub_link,
+  # ...settings from parts 1 and 2 and the basic guide...
+  extension_modules: [
+    NervesHubLink.Extensions.Health,
+    NervesHubLink.Extensions.Geo,
+    NervesHubLink.Extensions.NetworkIdentity,
+    NervesHubLink.Extensions.Logging,
+    NervesHubLink.Extensions.ErrorReports
+  ],
+  geo: [
+    resolver: MyApp.GPSGeoResolver
+  ],
+  health: [
+    metric_sets: [
+      :defaults,
+      MyApp.HealthMetrics
+    ],
+    metadata: %{
+      "placement" => {MyApp.Site, :placement, []}
+    }
+  ],
+  network_identity: [
+    providers: [MyApp.NetBirdIdentity],
+    interval_minutes: 5
+  ],
+  logging: [level: :info],
+  error_reports: [context: {MyApp.Telemetry, :error_context, []}]
+```
+
+`extension_modules` replaces the default list, so it names all five from the basic guide. Set the version to `1.7.0`, then build and release it to `bench`.
+
+### Set a health profile
+
+Custom metrics are charted, but they only affect a device's health status once they are in a [health profile](/management/health-monitoring#health-profiles). Profiles need ClickHouse on the instance. See [Feature prerequisites](/hosting/feature-prerequisites#clickhouse).
+
+Open **Product settings** and select the **Device health** tab. Pick **Default** under **Profiles**, use **Add a metric…** to add `battery_percent`, and set **Warning at** and **Unhealthy at**. The metric is listed once a device has reported it. Click the `≥` button to flip it to `≤`, because a low battery is the problem. Click the star in the **Featured** column to give the metric a tile on the device page, then click **Save profile**. [Edit a profile](/management/health-monitoring#edit-a-profile) covers each control, and [How a threshold engages](/management/health-monitoring#how-a-threshold-engages) explains how to choose the period.
+
+### Check it works
+
+On the device, after it has updated to `1.7.0` and reconnected:
+
+```elixir
+iex> :sys.get_state(NervesHubLink.Extensions).extensions |> Map.new(fn {name, ext} -> {name, ext.attached?} end)
+iex> NervesHubLink.Extensions.Health.check_health()
+iex> NervesHubLink.Extensions.NetworkIdentity.identities()
+```
+
+Each extension has the value `true`, the health report holds `battery_percent`, and your provider returns an identity. `NervesHubLink.Extensions.list()` does not show this: in `nerves_hub_link` 2.14.0 its `attached?` field reads `false` even for an attached extension.
+
+If you wrote a resolver, the device log has the `:debug` line `Location resolution completed successfully using MyApp.GPSGeoResolver`.
+
+On the device page in NervesHub:
+
+- **Details** tab: the **Location** card names your source (the card needs a [map token on the instance](/hosting/feature-prerequisites#device-location-map)), the **Health** card has a **Battery percent** tile and an **Alarms** row, and the **Network identities** card lists the NetBird key. The **Metadata** list has a **Placement** row. Without a map token it also has a **Location** row, which shows the coordinates and the source.
+
+### Optional: add a system shell
+
+The [Local shell](/extensions/local-shell) extension opens `sh` on the device's operating system. It is optional, and mostly recommended for devices that are not Nerves devices, such as ones running the [Linux agent](/integrations/linux-agent).
+
+<Warning>
+  A local shell lets a NervesHub user with the `device:extensions:local_shell` permission run commands on the device. Check who holds it in [Roles](/access/roles).
+</Warning>
+
+To add it, add the `expty` library:
+
+```elixir
+# mix.exs, in deps
+{:expty, "~> 0.3.0"}
+```
+
+Then add the module to `extension_modules`:
+
+```elixir
+    NervesHubLink.Extensions.ErrorReports,
+    NervesHubLink.Extensions.LocalShell
+  ],
+```
+
+Switch on **Local shell** for the product, release the firmware, and open the device's **System Shell** tab. A terminal opens.
+
+<Note>
+  NervesHub also has standalone Metrics and Alarms extensions. `nerves_hub_link` 2.14.0 implements neither, so turning them on for the product does nothing for a Nerves device. See [Metrics and Alarms extensions](/extensions/metrics-and-alarms).
+</Note>
+
+**Go deeper:** [Extensions overview](/extensions/overview), [Geo](/extensions/geo), [Health](/extensions/health), [Health monitoring](/management/health-monitoring), [Error reports](/extensions/error-reports), [Logging](/extensions/logging), [Local shell](/extensions/local-shell), [Remote console](/management/remote-console), [Network identity](/extensions/network-identity), [Metrics and Alarms extensions](/extensions/metrics-and-alarms).
+
+## Part 4: Tune the connection and add the extras
+
+Nothing in this part is required. Each section says who it is for, so skip what does not apply. The first four change firmware, which you release as `1.8.0`. Support scripts and connecting code need no firmware change.
+
+### TLS 1.3 session resumption
+
+For devices on slow or metered links, such as LTE-M. A reconnect resumes the TLS session instead of repeating the full handshake, so it sends and verifies no certificates.
+
+The instance must accept TLS 1.3 on its device endpoint, which is off by default. See [Feature prerequisites](/hosting/feature-prerequisites#tls-session-resumption). You need NervesHub 2.5.0 or later, and OTP 25.1 or later on the device.
+
+Add `ssl` to the `config :nerves_hub_link` block:
+
+```elixir
+# config/target.exs
+config :nerves_hub_link,
+  # ...settings from parts 1 to 3...
+  ssl: [
+    versions: [:"tlsv1.3", :"tlsv1.2"],
+    session_tickets: :auto
+  ]
+```
+
+Keep `:"tlsv1.2"` in the list so the device still connects to a server without TLS 1.3. If you already set `ssl:` for certificate file paths, add these two keys to that list. Tickets, firmware downloads and the server side are covered in [Connection transport](/connection/transport#tls-13-and-session-resumption).
+
+### Msgpack
+
+For the same metered or low bandwidth devices. Msgpack encodes the device's messages in fewer bytes than JSON. It needs `nerves_hub_link` 2.13.0 or later and NervesHub 2.5.0 or later.
+
+<Warning>
+  A device configured for Msgpack cannot connect to a server that does not support it. A device that cannot connect cannot receive the firmware that would change the setting back. Confirm your server is NervesHub 2.5.0 or later before you build this into firmware.
+</Warning>
+
+Add the dependency to `mix.exs`, then `serializer` to the `config :nerves_hub_link` block:
+
+```elixir
+# mix.exs, in deps
+{:msgpax, "~> 2.0"}
+```
+
+```elixir
+# config/target.exs
+config :nerves_hub_link,
+  # ...settings from parts 1 to 3...
+  serializer: :msgpack
+```
+
+NervesHub needs no setting. See [Msgpack serialization](/connection/transport#msgpack-serialization).
+
+### HTTP proxy
+
+For devices that can only reach NervesHub through an HTTP proxy. You configure the proxy twice, once for the WebSocket and once for the firmware downloader. The snippet is in [HTTP proxy](/connection/transport#http-proxy).
+
+### Archives
+
+For data that changes on a different schedule from firmware, such as calibration data or a model. An [archive](/updates/archives) is a signed fwup file that travels with a release. `nerves_hub_link` downloads and verifies it, then hands your code the path.
+
+The default client ignores archives. Add both callbacks to `MyApp.NervesHubLinkClient`:
+
+```elixir
+@impl NervesHubLink.Client
+def archive_available(archive_info) do
+  if MyApp.Archives.applied?(archive_info.uuid), do: :ignore, else: :download
+end
+
+@impl NervesHubLink.Client
+def archive_ready(archive_info, file_path) do
+  :ok = MyApp.Archives.apply(archive_info, file_path)
+  File.rm(file_path)
+  :ok
+end
+```
+
+`MyApp.Archives` stands for your own code. It must remember the UUID, because NervesHub offers the archive again on every connect.
+
+Archives are verified with the keys in `archive_public_keys`. When that is not set, the device uses `fwup_public_keys`, which your firmware already has, so there is nothing to add. Build the archive as [Set it up](/updates/archives#set-it-up) shows, sign and upload it with the key you use for firmware, and attach it to the group once the device runs firmware with the callbacks:
+
+```bash
+nh archive upload archive.fw --key my_app_key
+nh deployment update bench --archive <archive-uuid>
+```
+
+[Set it up](/updates/archives#set-it-up) also shows the web UI path.
+
+The second command creates a release, and the archive travels with that release only. A release made with `nh firmware upload --deploy` has no archive, so attach the archive again after your next firmware release if devices still need it.
+
+If you set up device-managed updates, `NervesHubLink.start_update/0` is refused after the device has downloaded an archive, until the device reconnects. Run `nh device reconnect <identifier>`, or call `NervesHubLink.reconnect()` on the device, before the next update.
+
+### Support scripts and connecting code
+
+For anyone who supports devices in the field. Neither needs a firmware change.
+
+A [support script](/management/support-scripts) is Elixir saved on the product that you run on one online device, with the output returned to you. It does not need `remote_iex`. Managing scripts with `nh` needs NervesHub 2.5.0 or later.
+
+```bash
+nh script create --name "Memory" --text ':erlang.memory()'
+nh device run-script <identifier> "Memory"
+```
+
+[Connecting code](/deployments/connecting-code) is Elixir that NervesHub sends to a device when it connects. Set it on a device, a deployment group or a release. For the `bench` group, open the group, select the **Settings** tab, type the code into the **Connecting code** card and select **Save**.
+
+<Warning>
+  Connecting code runs on every connect, including each reconnect after a network drop. Write code that is safe to run repeatedly. `nerves_hub_link` stops it after 10 seconds.
+</Warning>
+
+### Devices that sleep
+
+For battery devices that wake, connect, work and sleep again. A device that says it is going to sleep shows as asleep with a wake time instead of offline, and the sleep does not count as a disconnect.
+
+<Note>
+  This feature is on the main branch of `nerves_hub_link` and NervesHub but is in no tagged release as of `nerves_hub_link` 2.14.0 and NervesHub 2.5.4. You need a build from main of both to use it.
+</Note>
+
+Call this just before the device sleeps:
+
+```elixir
+:ok = NervesHubLink.going_to_sleep(mode: :deep, duration_ms: :timer.minutes(5))
+```
+
+The call closes the connection. A device that restarts on waking connects at boot as usual. One that keeps running calls `NervesHubLink.reconnect()` when it wakes. See [Devices that sleep](/management/sleeping-devices) and, for reconnecting in general, [Connection lifecycle](/connection/lifecycle#reconnect-on-demand).
+
+### Check it works
+
+<Steps>
+  <Step title="Release 1.8.0 to a device you can reach">
+    Set the version to `1.8.0`, then build and release it to `bench` only, so the first device to take it is one you can reach physically. A transport setting the server does not accept leaves a device unable to connect, and so unable to take a fix.
+  </Step>
+  <Step title="Confirm it connects">
+    ```elixir
+    iex> NervesHubLink.connected?()
+    true
+    ```
+
+    If you turned on Msgpack, check the device log does not contain `using JSON instead`. That line means the setting was not applied.
+  </Step>
+  <Step title="Run the support script">
+    Run `nh device run-script <identifier> "Memory"` for that device. Output coming back shows the device is connected and can run scripts.
+  </Step>
+  <Step title="Trigger the connecting code">
+    Run `nh device reconnect <identifier>`. If the code fails, NervesHub raises a [product notification](/management/notifications).
+  </Step>
+</Steps>
+
+**Go deeper:** [Connection transport](/connection/transport), [Connection lifecycle](/connection/lifecycle), [Archives](/updates/archives), [Support scripts](/management/support-scripts), [Connecting code](/deployments/connecting-code), [Devices that sleep](/management/sleeping-devices), [Feature prerequisites](/hosting/feature-prerequisites).
+
+## Where you are now
+
+Your device authenticates with its own certificate, decides when to apply updates and validates them, reports through five extensions, or six with the optional system shell, and runs `1.8.0`.
+
+### The complete configuration
+
+This is the one `config :nerves_hub_link` block the two guides arrive at. It holds everything from the [basic guide's block](/guides/basic-device-setup#the-complete-configuration), with `shared_secret` replaced by certificate authentication in part 1, and everything this guide added. Lines for sections you skipped are not in yours.
+
+```elixir
+# config/target.exs
+config :nerves_hub_link,
+  host: "your.nerveshub.host",
+  # Part 1, Local certificate tab. With NervesKey, leave this line out.
+  configurator: NervesHubLink.Configurator.LocalCertKey,
+  # Basic guide
+  fwup_public_keys: ["<my_app_key public key>"],
+  remote_iex: true,
+  # Part 2
+  client: MyApp.NervesHubLinkClient,
+  updater: NervesHubLink.UpdateManager.PartsUpdater,
+  # Part 3
+  extension_modules: [
+    NervesHubLink.Extensions.Health,
+    NervesHubLink.Extensions.Geo,
+    NervesHubLink.Extensions.NetworkIdentity,
+    NervesHubLink.Extensions.Logging,
+    NervesHubLink.Extensions.ErrorReports
+  ],
+  geo: [
+    resolver: MyApp.GPSGeoResolver
+  ],
+  health: [
+    metric_sets: [
+      :defaults,
+      MyApp.HealthMetrics
+    ],
+    metadata: %{
+      "placement" => {MyApp.Site, :placement, []}
+    }
+  ],
+  network_identity: [
+    providers: [MyApp.NetBirdIdentity],
+    interval_minutes: 5
+  ],
+  logging: [level: :info],
+  error_reports: [context: {MyApp.Telemetry, :error_context, []}],
+  # Part 4, both optional
+  ssl: [
+    versions: [:"tlsv1.3", :"tlsv1.2"],
+    session_tickets: :auto
+  ],
+  serializer: :msgpack
+```
+
+The guide also added dependencies to `mix.exs`: `nerves_key` (NervesKey tab only), `alarmist` and `msgpax`, plus `expty` if you added the optional system shell.
+
+### Where to go next
+
+Your device is ready. The next step is the fleet it belongs to. If you still have the `bench` group, delete it with `nh deployment delete bench` before you start, because a device belongs to one group and tag changes never remove it.
+
+- [Basic fleet operations](/guides/basic-fleet-operations): firmware built and signed in CI, `qa` and `production` groups, and Slack notifications.
+- [Complete fleet operations](/guides/complete-fleet-operations): a pipeline that rolls out through canaries with approval, webhooks into your own backend, and rollout guardrails.
+
+For everything the guides did not cover, start from the page that maps each area:
+
+- [How firmware updates work](/updates/overview) for every update tool, format and setting.
+- [Extensions overview](/extensions/overview) for what each extension reports and needs.
+- [Fleet overview](/management/fleet-overview) for managing devices once they are deployed.
+- [Integrations overview](/integrations/overview) for device clients other than `nerves_hub_link`.

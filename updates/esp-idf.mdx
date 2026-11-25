@@ -1,0 +1,215 @@
+---
+title: "ESP-IDF application images"
+sidebarTitle: "ESP-IDF"
+description: "Enable ESP-IDF image support, set the version and project name NervesHub reads, sign with Secure Boot v2, and use delta updates."
+---
+
+NervesHub can store and deploy ESP-IDF application images (`.bin`) alongside fwup archives. Use it for ESP32 devices that update through ESP-IDF's `esp_ota` A/B slots.
+
+<Warning>
+  ESP-IDF support is experimental and off by default. It must be turned on for the instance and then for each product.
+</Warning>
+
+## Requirements
+
+| What | Needed |
+| --- | --- |
+| NervesHub | 2.5.0 or later |
+| Instance | `ESP_IDF_FIRMWARE_ENABLED=true`. Delta updates also need `detools` on the server. See [feature prerequisites](/hosting/feature-prerequisites#firmware-formats). |
+| Image | An ESP-IDF application image with a SemVer `PROJECT_VER` and a project name that matches your product |
+| Signature | Secure Boot v2 with an RSA-3072 key, unless the product allows unsigned images |
+| Device client | [nerves-hub-link-esp32](https://github.com/nerves-hub/nerves-hub-link-esp32), a Rust crate. See [Device client](#device-client). |
+
+## Enable ESP-IDF
+
+<Steps>
+  <Step title="Enable it on the instance">
+    Whoever hosts the instance sets `ESP_IDF_FIRMWARE_ENABLED=true`. Until then no `.bin` file is recognised and the product setting below is not shown. See [feature prerequisites](/hosting/feature-prerequisites#firmware-formats).
+  </Step>
+
+  <Step title="Enable it on the product">
+    Open **Product settings**. On the **General** tab, in the **Firmware** card, turn on **ESP-IDF application images**.
+
+    With the CLI:
+
+    ```bash
+    nh product update my_app --allow-tool esp-idf
+    ```
+
+    With the API, set `allowed_update_tools` on the product:
+
+    ```bash
+    curl -X PATCH \
+      -H "Authorization: token $NERVES_HUB_TOKEN" \
+      -H "Content-Type: application/json" \
+      -d '{"allowed_update_tools": ["fwup", "esp-idf"]}' \
+      https://<host>/api/orgs/<org>/products/<product>
+    ```
+
+    Listing a format the instance has not enabled returns a 422.
+  </Step>
+
+  <Step title="Decide on signing">
+    Register a Secure Boot v2 key, or allow unsigned images on the product while you bring a board up. See [Signing](#signing).
+  </Step>
+</Steps>
+
+A product accepts only the formats in `allowed_update_tools`. The default is `["fwup"]`, and fwup cannot be removed. Uploading a `.bin` to a product that has not opted in is rejected with a message naming the product.
+
+## Metadata
+
+You add no metadata file to the build. Every ESP-IDF application image carries an `esp_app_desc_t` structure at offset `0x20`, and NervesHub reads it together with the image header:
+
+| NervesHub field | Source |
+| --- | --- |
+| Product | `esp_app_desc_t.project_name` (`PROJECT_NAME`) |
+| Version | `esp_app_desc_t.version` (`PROJECT_VER`), normalised as below |
+| UUID | First 16 bytes of `esp_app_desc_t.app_elf_sha256` |
+| Platform | `esp_image_header_t.chip_id`, for example `esp32s3` |
+| Architecture | `esp_image_header_t.chip_id`, as `xtensa` or `riscv` |
+| Description | `ESP-IDF ` followed by `esp_app_desc_t.idf_ver` |
+
+The project name must match the name of the NervesHub product you upload to.
+
+### Set a SemVer version
+
+`PROJECT_VER` defaults to `git describe` output, which is usually not a semantic version. Set it explicitly in `CMakeLists.txt`:
+
+```cmake
+set(PROJECT_VER "1.2.3")
+```
+
+NervesHub accepts these shapes and stores them as shown. Anything else is rejected at upload.
+
+| `PROJECT_VER` | Stored as |
+| --- | --- |
+| `1.2.3` | `1.2.3` |
+| `v1.2.3` | `1.2.3` |
+| `1.2` | `1.2.0` |
+| `1` | `1.0.0` |
+| `1.2.3.4` | `1.2.3+4` |
+| `1.2.3-rc.1` | `1.2.3-rc.1` |
+
+A device reports the same `esp_app_desc_t` when it connects, and NervesHub applies the same rules. A device that reports a version NervesHub cannot read has no usable firmware version on the server.
+
+### Supported chips
+
+`esp32`, `esp32s2`, `esp32s3`, `esp32c2`, `esp32c3`, `esp32c5`, `esp32c6`, `esp32h2` and `esp32p4`. An image for a chip ID NervesHub does not know still uploads. It is recorded with platform `esp32-<id>` and architecture `unknown`.
+
+## Signing
+
+ESP-IDF images are verified against Secure Boot v2 RSA-3072 keys registered to your organization.
+
+Generate a key and sign an image with `espsecure.py`:
+
+```bash
+espsecure.py generate_signing_key --version 2 --scheme rsa3072 signing_key.pem
+openssl rsa -in signing_key.pem -pubout -out signing_key_public.pem
+espsecure.py sign_data --version 2 --keyfile signing_key.pem --output signed.bin app.bin
+```
+
+Register the public key with your organization:
+
+<Tabs>
+  <Tab title="Web">
+    In your organization's settings, under **Signing keys**, select **Add signing key**. Choose the **ESP-IDF Secure Boot v2 (RSA-3072)** scheme and paste the PEM public key.
+  </Tab>
+
+  <Tab title="CLI">
+    Register an existing key:
+
+    ```bash
+    nh key add esp-signing --public-key signing_key_public.pem
+    ```
+
+    Or generate a new one locally and register its public half:
+
+    ```bash
+    nh key create esp-signing --scheme secure_boot_v2_rsa
+    ```
+  </Tab>
+</Tabs>
+
+How verification works:
+
+- A signed image must verify against a key registered to the organization. The public key embedded in the image's signature block is ignored.
+- Only keys of the ESP-IDF scheme are tried. fwup Ed25519 keys and RAUC certificates are ignored.
+- ECDSA Secure Boot v2 signatures are not supported. Such an image is refused.
+- `nh key list` and `nh key show` print an RSA key's Secure Boot v2 eFuse digest. You can compare it with the digest burned into your chips.
+
+NervesHub's check does not replace the device's. With Secure Boot enabled, the ESP32 bootloader verifies the image against the key digest in eFuse.
+
+### Allow unsigned images
+
+During board bring-up, before Secure Boot is provisioned, a product can accept images with no signature block.
+
+In **Product settings**, turn on **ESP-IDF application images**, then tick **Allow unsigned ESP-IDF images**. With the CLI:
+
+```bash
+nh product update my_app --allow-unsigned-esp-idf
+```
+
+The setting is `allow_unsigned_esp_idf_firmware` on the product in the API. It defaults to `false`.
+
+The setting covers only images with no signature. An image that carries a signature is always verified, and a bad signature is always refused.
+
+## Upload an image
+
+Upload a `.bin` the same way as any other firmware. NervesHub identifies the format from the file's contents, not from its extension.
+
+<Tabs>
+  <Tab title="Web">
+    Open the product's **Firmware** page and select **Upload firmware**.
+  </Tab>
+
+  <Tab title="CLI">
+    ```bash
+    nh firmware upload app.bin --key esp-signing
+    ```
+
+    `nh` signs an unsigned image by running `espsecure.py sign_data --version 2`, so `esptool` must be installed. `--key <name>` uses a key created with `nh key create`, and `--key-file <pem>` uses a key file. An image that is already signed is uploaded as it is. Pass `--skip-signing` to upload an unsigned image to a product that allows them.
+  </Tab>
+</Tabs>
+
+Then create or update a [deployment group](/setup/deployments) as you would for fwup firmware.
+
+## Delta updates
+
+NervesHub can send ESP-IDF devices a patch in place of the whole image.
+
+- Deltas are generated on the server with [`detools`](https://github.com/eerimoq/detools), in the format Espressif's `esp_delta_ota` component applies. They are not fwup deltas and do not use `xdelta3`.
+- Any two ESP-IDF images of a product can be patched. Nothing has to be added to the build.
+- A device is sent a delta when its deployment group has **Delta updates** turned on and a delta from its current firmware has finished generating. With **Delta updates** off it is sent the full image. While the delta is generating, or after it failed, the device is not offered the update. See [Releases wait for their deltas](/management/delta-updates#releases-wait-for-their-deltas).
+- The device needs the `esp_delta_ota` component. The Rust client detects a patch from the first byte of the download and applies it with `esp_delta_ota`.
+- A patch rebuilds the target image byte for byte, so the signature block is unchanged and Secure Boot verifies the same bytes.
+
+See [Delta updates](/management/delta-updates) for the deployment group setting.
+
+## Device client
+
+The client for this format is [nerves-hub-link-esp32](https://github.com/nerves-hub/nerves-hub-link-esp32), a Rust crate for ESP-IDF targets built on `esp-idf-svc`. Its README describes it as in early development. See [Choosing a device client](/integrations/overview) for its state.
+
+Two things in a Rust build affect what NervesHub sees:
+
+- **Version.** Set `CONFIG_APP_PROJECT_VER_FROM_CONFIG=y` and `CONFIG_APP_PROJECT_VER="1.0.0"` in `sdkconfig.defaults`.
+- **Project name.** `esp-idf-sys` sets the CMake project name to `libespidf`, so every Rust image claims that product name. The crate ships `scripts/set_app_desc.py` to patch the name in the ELF before the image is generated:
+
+  ```bash
+  scripts/set_app_desc.py --project-name MyProduct target/<target>/release/my-app
+  ```
+
+The device also needs two app partitions plus `otadata`, and `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y`. The crate's README covers partitions, authentication and the update policy.
+
+## Limits
+
+- **Application partition only.** The bootloader and partition table are not updated.
+- **RSA-3072 only.** ECDSA Secure Boot v2 signatures are refused.
+- **Archives are separate.** [Archives](/updates/archives) are fwup files regardless of the firmware format.
+
+## Related pages
+
+- [How firmware updates work](/updates/overview)
+- [Delta updates](/management/delta-updates)
+- [Firmware signing](/concepts/firmware-signing)
+- [Choosing a device client](/integrations/overview)
+- [Firmware format prerequisites](/hosting/feature-prerequisites#firmware-formats)

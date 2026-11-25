@@ -1,62 +1,121 @@
 ---
-title: "Yocto Layer"
+title: "Yocto layer"
 sidebarTitle: "Yocto"
-description: "Package the NervesHub Linux agent into a Yocto image with meta-nerveshub, including the layers it depends on and the DISTRO_FEATURES it needs."
+description: "Package the NervesHub Linux agent into a Yocto image with meta-nerveshub, with RAUC or fwup as the update tool."
 ---
 
-[meta-nerveshub](https://github.com/nerves-hub/meta-nerveshub) is a Yocto layer that packages the [Linux agent](/integrations/linux-agent) into an image. The layer is only the agent — [meta-rauc](https://github.com/rauc/meta-rauc) does the bundle and slot work.
+[meta-nerveshub](https://github.com/nerves-hub/meta-nerveshub) is a Yocto layer with one recipe, `nerves-hub-link-agent`. It builds the [Linux agent](/integrations/linux-agent) and installs it with a systemd unit, a service user and a starter config file.
 
-```bash
-bitbake-layers add-layer /path/to/meta-nerveshub
-```
+The layer does not build bundles or configure slots. That is the job of [meta-rauc](https://github.com/rauc/meta-rauc), or of your fwup configuration.
 
-```bitbake
-IMAGE_INSTALL:append = " nerves-hub-link-agent"
-```
+## Requirements
 
-## Layers it depends on
+| What | Needed |
+| --- | --- |
+| Yocto release | The layer declares compatibility with `scarthgap`, `styhead`, `walnascar` and `whinlatter`. Its test script builds against `scarthgap`. |
+| [meta-rust-bin](https://github.com/rust-embedded/meta-rust-bin) | Always. It supplies the Rust toolchain. |
+| [meta-rauc](https://github.com/rauc/meta-rauc) | When the agent is built for RAUC, which is the default |
+| [meta-fwup](https://github.com/fwup-home/meta-fwup) | When the agent is built for fwup |
+| systemd | As the init manager |
 
-```bash
-bitbake-layers add-layer /path/to/meta-rauc
-bitbake-layers add-layer /path/to/meta-rust-bin
-bitbake-layers add-layer /path/to/meta-nerveshub
-```
+The recipe uses meta-rust-bin's `cargo_bin` class, not poky's `cargo`. The layer's README gives the reason: the Rust that `scarthgap` and `walnascar` ship is older than the agent needs. meta-rust-bin packages prebuilt upstream toolchains. Those are upstream binaries, not something your build compiled, which matters if you have reproducibility or audit requirements.
 
-Both are declared in `LAYERDEPENDS`, so a missing one fails when the layer is added rather than deep into a build.
+## Add the layer
 
-**meta-rauc** supplies the `rauc` the agent shells out to. The agent talks to `rauc install` over D-Bus, so the image needs `rauc` and its service running.
+<Steps>
+  <Step title="Add the layers">
+    For a RAUC image:
 
-**[meta-rust-bin](https://github.com/rust-embedded/meta-rust-bin)** supplies the toolchain. The agent needs Rust 1.85 — where edition 2024 was stabilised — and no released Yocto ships one that new: scarthgap has cargo 1.75, walnascar 1.84. meta-rust-bin packages prebuilt upstream toolchains and spans kirkstone through wrynose, so the Rust version stops being a function of the Yocto release. The recipe inherits `cargo_bin` from that layer rather than poky's `cargo`.
+    ```bash
+    bitbake-layers add-layer /path/to/meta-rauc
+    bitbake-layers add-layer /path/to/meta-rust-bin
+    bitbake-layers add-layer /path/to/meta-nerveshub
+    ```
 
-<Note>
-  That tradeoff is worth knowing before you adopt it. In meta-rust-bin's own words, prebuilt toolchains "will never be able to support architectures or options not supported by the Rust team itself", and the prebuilt standard library may be less efficient than a custom-compiled one. They are also upstream binaries rather than something your build system compiled, which matters if you have reproducibility or audit requirements.
-</Note>
+    meta-nerveshub declares a dependency on `core` only. A missing update tool layer is reported when the recipe is parsed, with a message naming the layer to add.
+  </Step>
 
-## Required DISTRO_FEATURES
+  <Step title="Configure the distro and image">
+    ```bitbake
+    IMAGE_INSTALL:append = " nerves-hub-link-agent"
+    DISTRO_FEATURES:append = " rauc"
+    INIT_MANAGER = "systemd"
+    ```
 
-Both `rauc` and `systemd` have to be present:
+    `rauc` in `DISTRO_FEATURES` is meta-rauc's requirement. Leave it out for an fwup image.
+  </Step>
 
-```bitbake
-DISTRO_FEATURES:append = " rauc"
-INIT_MANAGER = "systemd"
-```
-
-`rauc` is meta-rauc's requirement rather than this layer's; without it meta-rauc warns and the image has no RAUC support to speak of.
+  <Step title="Replace the starter config">
+    The recipe installs `/etc/nerves-hub-link-agent.toml` with placeholder credentials. Override it from your own layer. See [Configure the agent](#configure-the-agent).
+  </Step>
+</Steps>
 
 <Warning>
-  Without systemd, `systemd_system_unitdir` expands to nothing and the unit installs nowhere — the package builds, ships a binary with nothing to start it, and says nothing. The recipe guards the install so that is a missing unit rather than a broken one, but the image still needs systemd for the agent to run as intended.
+  Without systemd in `DISTRO_FEATURES`, the recipe skips installing the unit. The package still builds and installs the binary, but nothing starts it.
 </Warning>
 
-## Updating the crate list
+## Choose the update tool
 
-Yocto fetches offline, so every crate is declared as a source rather than resolved by cargo during `do_compile`. After a `Cargo.lock` change:
+The recipe maps `PACKAGECONFIG` to the agent's cargo features. The default is `rauc`.
+
+| `PACKAGECONFIG` | Builds | Adds to the image | Layer needed |
+| --- | --- | --- | --- |
+| `rauc` (default) | The RAUC update tool | `rauc` | meta-rauc |
+| `fwup` | The fwup update tool | `fwup` | meta-fwup |
+| `sandbox` | The sandbox tool, which writes to a file only | Nothing | None |
+
+To build for fwup, set this in your configuration or a `.bbappend`:
+
+```bitbake
+PACKAGECONFIG:pn-nerves-hub-link-agent = "fwup"
+```
+
+Extensions are not build options. They are turned on in the agent's config file.
+
+## What the recipe installs
+
+| Item | Detail |
+| --- | --- |
+| Binaries | The agent, started as `/usr/bin/nerves-hub-link-agent` |
+| Config | `/etc/nerves-hub-link-agent.toml`, marked as a config file of the package |
+| Service | `nerves-hub-link-agent.service`, enabled, running as user `agent` and group `agent` |
+| User | System user and group `agent` |
+| Directories | systemd creates `/run/nerves-hub-link-agent` and `/var/lib/nerves-hub-link-agent` for the service |
+
+The unit also gives the service the `systemd-journal` group, which the logging extension needs to read the journal.
+
+## Configure the agent
+
+The starter config connects to `devices.nervescloud.com` with the RAUC update tool. It contains placeholders that you must replace:
+
+```toml
+[identity]
+product_key = "nhp_REPLACE_ME"
+product_secret = "REPLACE_ME"
+identifier = { file = "/data/nerves-hub/identifier" }
+```
+
+It also sets the IPC socket to `/run/nerves-hub-link-agent/agent.sock` and the reboot command to `reboot`.
+
+Ship your own file from your product's layer, so that the config is versioned with the image. See [Linux agent](/integrations/linux-agent#configuration) for every section. The agent's [`docs/deploying.md`](https://github.com/nerves-hub/nerves-hub-link-agent/blob/main/docs/deploying.md) covers the device identifier, file permissions for the service user, and the sudoers rule for an unprivileged reboot.
+
+For a RAUC image, the device also needs the RAUC service running and a `system.conf` with its slots and keyring. See the agent's [`docs/rauc.md`](https://github.com/nerves-hub/nerves-hub-link-agent/blob/main/docs/rauc.md), and [RAUC bundles](/updates/rauc) for what NervesHub needs in the bundle manifest.
+
+## Update the crate list
+
+Yocto fetches sources before it builds, so the recipe lists every crate the agent depends on. After the agent's `Cargo.lock` changes, regenerate the list:
 
 ```bash
 bitbake -c update_crates nerves-hub-link-agent
 ```
 
-That rewrites `nerves-hub-link-agent-crates.inc`.
+This rewrites `nerves-hub-link-agent-crates.inc`.
 
-## Configuring the agent
+The recipe pins the agent to a git revision. A new agent version is a new recipe file.
 
-Packaging puts the binary and its unit in the image; it does not configure it. See [Linux Agent](/integrations/linux-agent) for the TOML config, and the agent's [`docs/deploying.md`](https://github.com/nerves-hub/nerves-hub-link-agent/blob/main/docs/deploying.md) for the service user, the device identifier and the rest of the deployment contract.
+## Related pages
+
+- [Linux agent](/integrations/linux-agent)
+- [RAUC bundles](/updates/rauc)
+- [Extensions overview](/extensions/overview)
+- [Choosing a device client](/integrations/overview)

@@ -42,6 +42,15 @@
             ]
           },
           {
+            "group": "Guides",
+            "pages": [
+              "guides/basic-device-setup",
+              "guides/complete-device-setup",
+              "guides/basic-fleet-operations",
+              "guides/complete-fleet-operations"
+            ]
+          },
+          {
             "group": "Setup",
             "pages": [
               "setup/add-to-project",
@@ -57,24 +66,104 @@
             "pages": [
               "auth/shared-secret",
               "auth/device-certificates",
-              "auth/nerveskey"
+              "auth/nerveskey",
+              "auth/tpm",
+              "auth/just-in-time-provisioning",
+              "concepts/pki"
+            ]
+          },
+          {
+            "group": "Device Connection",
+            "pages": [
+              "connection/transport",
+              "connection/lifecycle"
+            ]
+          },
+          {
+            "group": "Firmware Updates",
+            "pages": [
+              "updates/overview",
+              "updates/applying-updates",
+              "updates/download-strategies",
+              "updates/device-managed-updates",
+              "updates/archives",
+              {
+                "group": "fwup",
+                "pages": [
+                  "concepts/firmware-signing",
+                  "management/delta-updates"
+                ]
+              },
+              {
+                "group": "Other firmware formats",
+                "pages": [
+                  "updates/rauc",
+                  "updates/esp-idf",
+                  "updates/atomvm"
+                ]
+              }
+            ]
+          },
+          {
+            "group": "Deployments",
+            "pages": [
+              "deployments/releases",
+              "deployments/rollout-controls",
+              "deployments/connecting-code",
+              "concepts/deployment-workflows"
+            ]
+          },
+          {
+            "group": "Extensions",
+            "pages": [
+              "extensions/overview",
+              "extensions/health",
+              "extensions/geo",
+              "extensions/logging",
+              "extensions/error-reports",
+              "extensions/local-shell",
+              "extensions/network-identity",
+              "extensions/metrics-and-alarms"
             ]
           },
           {
             "group": "Device Management",
             "pages": [
               "management/fleet-overview",
+              "management/finding-devices",
               "management/remote-console",
+              "management/support-scripts",
               "management/health-monitoring",
-              "management/delta-updates"
+              "management/insights",
+              "management/notifications",
+              "management/sleeping-devices"
             ]
           },
           {
-            "group": "Advanced",
+            "group": "Organization and Access",
             "pages": [
-              "concepts/pki",
-              "concepts/firmware-signing",
-              "concepts/deployment-workflows"
+              "access/roles",
+              "access/two-factor",
+              "access/audit-log"
+            ]
+          },
+          {
+            "group": "Connect Your Systems",
+            "pages": [
+              "outbound/webhooks",
+              "outbound/slack",
+              "outbound/teams",
+              "outbound/discord",
+              "outbound/event-stream",
+              "outbound/ci-cd"
+            ]
+          },
+          {
+            "group": "Self-hosting",
+            "pages": [
+              "hosting/feature-prerequisites",
+              "hosting/clickhouse",
+              "hosting/slack-app"
             ]
           }
         ]

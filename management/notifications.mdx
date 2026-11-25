@@ -1,0 +1,80 @@
+---
+title: "Product notifications"
+sidebarTitle: "Notifications"
+description: "What NervesHub raises on a product's Notifications page, how to act on each kind, and how to send notifications to a chat channel."
+---
+
+Product notifications are NervesHub telling you about problems that nothing else on the page would show. A device that cannot start an extension stays connected and looks fine. A webhook that was turned off just goes quiet. NervesHub raises a notification on the product so someone can act.
+
+Notifications are raised by NervesHub. You do not configure which ones exist.
+
+## Requirements
+
+* NervesHub 2.5.0 or later. The notification for failing connecting code needs 2.5.1 or later.
+* Any member can read a product's notifications. Dismissing needs the `product:notifications:dismiss` permission, which the built-in **Manage** and **Admin** roles hold. See [Roles](/access/roles).
+* The **Notifications** page is closed to members whose custom role is limited to devices with certain tags.
+
+Notifications need nothing extra on the NervesHub instance.
+
+## Read notifications
+
+In your product, select **Notifications**. The sidebar link shows how many there are. The three most recent also show on the product's **Insights** page.
+
+Each notification is a card with a level, a title, a message, and when it last happened. Filter by level with the **All**, **Errors**, **Warnings**, and **Info** tabs. The page updates as notifications arrive.
+
+Two things keep the list short:
+
+* A notification that happens again does not make a second card. Its count goes up and its time moves forward.
+* Kinds that are raised per device are rolled up into one card per kind. Open the card to see each device, how many times it happened, and when it last did.
+
+## Dismiss notifications
+
+Select **Dismiss** on a card to remove it. A rolled-up card can dismiss one device or all of its devices. **Dismiss all** removes every notification on the product, at every level.
+
+Dismissing removes the notification for everyone. If what it was about happens again, it comes back as a new notification.
+
+A halted deployment workflow has no dismiss button and is marked **Clears itself**. It goes when the step is approved, retried, or skipped. A duplicate identifier notification also clears on its own once a device with that identifier connects.
+
+## What NervesHub raises
+
+| Notification | Level | Per device | What to do |
+| --- | --- | --- | --- |
+| A device could not start an extension | Warning | Yes | The extension stays on in NervesHub but does not work on that device. Fix the cause, usually in the device's firmware. See [Extensions](/extensions/overview). |
+| A device could not run its connecting code | Warning | No | Fix the code. Devices sent the same code share one notification, which names the first device to fail. See [Connecting code](/deployments/connecting-code). |
+| A device tried to connect with an identifier already in use | Warning | Yes | Another device has the identifier, possibly a soft-deleted one. Remove that device or give the new one a different identifier. |
+| A device connected without firmware metadata | Warning | Yes | The device reported no firmware UUID, so NervesHub cannot tell which firmware it runs. Check the device's firmware. |
+| A device connected to the wrong host | Warning | Yes | The device connected to the management host and was redirected. Point its configuration at the device host named in the message. |
+| A device reported metric names too long to store | Warning | Yes | Those readings were dropped and the rest of the report kept. Shorten the metric names. See [Metrics and alarms](/extensions/metrics-and-alarms). |
+| A device reported more metrics than NervesHub stores | Warning | Yes | The report was trimmed to the first names in alphabetical order. Report fewer metrics. |
+| A device could not be returned to automatic updates | Error | Yes | The device is set to manage its own updates but its firmware is too old to. It gets no firmware until you set its update mode or send it firmware by hand. See [Device-managed updates](/updates/device-managed-updates). |
+| A deployment workflow is waiting for approval | Info | No | Approve or skip the step. See [Deployment workflows](/concepts/deployment-workflows). |
+| A deployment workflow stopped after devices failed to update | Error | No | Retry or skip the step. No more devices update to the release until you do. |
+| A webhook was turned off | Error | No | Fix the endpoint, then turn the webhook back on in the organization's **Integrations** settings. See [Webhooks](/outbound/webhooks). |
+| Slack notifications were turned off | Error | No | Fix the cause, then turn the channel back on in **Integrations**. See [Slack](/outbound/slack). |
+| Teams or Discord notifications were turned off | Error | No | Fix the webhook, then turn the channel back on in **Integrations** or give it the new URL. See [Teams](/outbound/teams) and [Discord](/outbound/discord). |
+| A device import finished | Info, warning, or error | No | Says how many devices were added and how many failed. See [Finding devices](/management/finding-devices). |
+| A soft-deleted device was permanently deleted | Info | Yes | Nothing. Raised when NervesHub permanently deletes a device that was soft-deleted. |
+
+Webhooks and chat channels belong to the organization. When one is turned off, each product it was sending events for gets the notification.
+
+## Send notifications to a chat channel
+
+Slack, Teams, and Discord channels can subscribe to the **Product notifications** event. NervesHub then posts each new notification to the channel with its title, message, and level.
+
+A notification is posted only the first time it happens. Recurrences raise its count on the **Notifications** page and are not posted again.
+
+A halted deployment workflow raises a product notification and also has its own channel events. A channel subscribed to both hears about it from both.
+
+Set this up on the organization's **Integrations** page:
+
+* [Slack](/outbound/slack), which needs a Slack app configured on the NervesHub instance. See [Feature prerequisites](/hosting/feature-prerequisites#slack).
+* [Teams](/outbound/teams)
+* [Discord](/outbound/discord)
+
+## Related pages
+
+- [Insights and history](/management/insights)
+- [Webhooks](/outbound/webhooks)
+- [Slack](/outbound/slack)
+- [Connecting code](/deployments/connecting-code)
+- [Rollout controls](/deployments/rollout-controls)

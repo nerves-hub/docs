@@ -1,79 +1,139 @@
 ---
 title: "AtomVM on ESP32"
 sidebarTitle: "AtomVM on ESP32"
-description: "Connect an ESP32 running AtomVM to NervesHub with the Erlang device agent, or the Elixir layer over it, including the custom VM build both require."
+description: "Connect an ESP32 running AtomVM to NervesHub with the Erlang device agent, including the custom AtomVM build it requires."
 ---
 
-[nerves_hub_link_atomvm_esp32](https://github.com/nerves-hub/nerves_hub_link_atomvm_esp32) is a NervesHub device agent for [AtomVM](https://www.atomvm.net/) on the ESP32, written in Erlang. [nerves_hub_link_atomvm_esp32_ex](https://github.com/nerves-hub/nerves_hub_link_atomvm_esp32_ex) is an Elixir layer over it — a convenience wrapper rather than an abstraction, so the two can be mixed freely.
+[nerves_hub_link_atomvm_esp32](https://github.com/nerves-hub/nerves_hub_link_atomvm_esp32) is a NervesHub client for [AtomVM](https://www.atomvm.net/) on the ESP32. It is written in Erlang and you can call it from Erlang or Elixir. The firmware it manages is the application's packbeam archive, not AtomVM itself.
+
+This page describes version 0.2.0 and notes where the `main` branch differs.
 
 <Warning>
-  A device needs **AtomVM built from source**. The WebSocket transport is an ESP-IDF component, so a stock AtomVM build cannot reach NervesHub at all. This is a prerequisite for connecting, not for an optional feature.
+  A device needs AtomVM built from source. The agent's [WebSocket transport](https://github.com/nerves-hub/atomvm_websocket_client) is an ESP-IDF component, so a stock AtomVM build cannot connect to NervesHub.
 </Warning>
 
-## Building the VM
+## Requirements
 
-Three changes to an AtomVM build, each buying one thing:
+| What | Needed |
+| --- | --- |
+| NervesHub | 2.5.0 or later, with AtomVM firmware enabled for the instance and the product. See [AtomVM packbeam archives](/updates/atomvm). |
+| Authentication | A [shared secret](/auth/shared-secret). The instance must have shared secrets enabled. See [feature prerequisites](/hosting/feature-prerequisites#shared-secret-authentication). Client certificates are accepted in config but have never been run on a device. |
+| ESP-IDF | v5.2 to v5.5. AtomVM does not build against v6. |
+| OTP on the build host | 27 or later |
+| Device clock | Set before connecting. See [Connect](#connect). |
+
+## Build the VM
+
+The AtomVM build needs up to three changes:
 
 | Change | Needed for |
 | --- | --- |
-| The [WebSocket transport](https://github.com/nerves-hub/atomvm_websocket_client) as an ESP-IDF component | Connecting at all |
+| The WebSocket transport as an ESP-IDF component | Connecting at all |
 | Two packbeam partitions, `main.avm` and `alt.avm` | Over-the-air updates |
-| `AVM_USE_LIBSODIUM=ON` and a 16K main task stack | Verifying firmware signatures |
+| `AVM_USE_LIBSODIUM=ON` and a 16K main task stack | Verifying firmware signatures on the device |
 
-Only the first is mandatory. Leaving the partitions out gives a device that connects, reports what it is running, answers the console and carries the extensions — it simply has nowhere to put an update other than the partition it is executing from. Leaving libsodium out means a device configured with `firmware_keys` reports `verification_unavailable` rather than accepting an update it cannot check. Both are supported choices.
+Only the first is required to connect. Without the two partitions a device connects and reports its firmware but cannot be updated. Without libsodium a device configured with `firmware_keys` reports `verification_unavailable` and does not install the update.
 
-The agent ships the files the VM needs in `priv/atomvm`. The repository's [building the VM](https://github.com/nerves-hub/nerves_hub_link_atomvm_esp32#building-the-vm) section has the full sequence.
-
-<Note>
-  Use `idf.py set-target` rather than `reconfigure` when adding the transport component. CMake caches its component list, so a plain `idf.py build` afterwards reports success without ever compiling the new component — a silent failure. Supported ESP-IDF versions are **v5.2 to v5.5**; AtomVM does not build against v6.
-</Note>
-
-From Elixir, a mix task does the VM preparation for you:
+The agent ships the files for the last two changes in `priv/atomvm`. After `rebar3 compile` in your project they are in `_build/default/lib/nerves_hub_link_atomvm_esp32/priv/atomvm`:
 
 ```bash
-. $IDF_PATH/export.sh
-mix nerves_hub.atomvm.vm ~/src/AtomVM ~/src/atomvm_websocket_client
+priv=_build/default/lib/nerves_hub_link_atomvm_esp32/priv/atomvm
+esp32=<AtomVM>/src/platforms/esp32
+
+cp $priv/partitions.csv     $esp32/partitions.csv
+cp $priv/idf_component.yml  $esp32/components/libatomvm/
+
+cd $esp32
+idf.py -DAVM_USE_LIBSODIUM=ON \
+       -DEXTRA_COMPONENT_DIRS=<transport> \
+       -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;$priv/sdkconfig.defaults" \
+       set-target esp32
+idf.py build
 ```
 
-## Installing
+Replace `<AtomVM>` with your AtomVM checkout and `<transport>` with your checkout of `atomvm_websocket_client`.
+
+<Note>
+  Use `idf.py set-target`, not `reconfigure`. CMake caches its component list, and a plain `idf.py build` after adding a component reports success without compiling it.
+</Note>
+
+### Flash the VM and the application
+
+```bash
+cd <AtomVM>/src/platforms/esp32
+idf.py -p /dev/ttyUSB0 flash
+idf.py -p /dev/ttyUSB0 flash-elixir    # or flash-erlang
+```
+
+Then write your application's packbeam to the `main.avm` partition. Read the offset from the device's own partition table:
+
+```bash
+esptool.py --chip esp32 --port /dev/ttyUSB0 read_flash 0x8000 0xC00 ptable.bin
+gen_esp32part.py ptable.bin
+```
+
+Writing to an offset from a stale copy of the table puts the application inside `boot.avm`. The only symptom is `Failed app start: invalid_avm`.
+
+### The partition table
+
+```
+# Name,     Type, SubType, Offset,   Size,     Flags
+nvs,        data, nvs,     0x9000,   0x6000,
+phy_init,   data, phy,     0xf000,   0x1000,
+factory,    app,  factory, 0x10000,  0x1D0000,
+boot.avm,   data, phy,     0x1E0000, 0x90000,
+main.avm,   data, phy,     0x270000, 0xC8000,
+alt.avm,    data, phy,     0x338000, 0xC8000,
+```
+
+`main.avm` and `alt.avm` must be the same size, because either one has to hold the archive. `boot.avm` and `factory` are larger than in stock AtomVM, to fit the Elixir boot archive and libsodium. `priv/atomvm/partitions.csv` explains each size.
+
+## Install
 
 <Tabs>
   <Tab title="Erlang">
-    ```erlang
+    ```erlang rebar.config
     {deps, [
-        {nerves_hub_link_atomvm_esp32, "~> 0.1"},
+        {nerves_hub_link_atomvm_esp32, "~> 0.2"},
         {atomvm_websocket_client,
             {git, "https://github.com/nerves-hub/atomvm_websocket_client.git",
                 {branch, "main"}}}
     ]}.
     ```
-
-    The transport stays a git dependency because it is not published — it is an ESP-IDF component first and an Erlang library second, and the half that matters is compiled into the VM rather than fetched by rebar3.
   </Tab>
 
   <Tab title="Elixir">
-    ```elixir
+    Both dependencies are rebar3 projects, so tell Mix which manager to use:
+
+    ```elixir mix.exs
     defp deps do
       [
-        {:nerves_hub_link_atomvm_esp32_ex, "~> 0.1"},
+        {:exatomvm, github: "atomvm/exatomvm", runtime: false},
+        {:nerves_hub_link_atomvm_esp32, "~> 0.2", manager: :rebar3},
         {:atomvm_websocket_client,
          github: "nerves-hub/atomvm_websocket_client", manager: :rebar3}
       ]
     end
     ```
 
-    The Erlang agent is not listed and does not need to be — this package depends on it, so mix resolves and builds it for you. The transport does need listing, because nothing depends on it.
+    An Elixir project must also write `priv/application.bin` before it builds the packbeam. ExAtomVM does not generate it, and without it the device cannot report its firmware and NervesHub cannot read the upload. The [`smart_kiosk_ex` example](https://github.com/nerves-hub/nerves_hub_link_atomvm_esp32/tree/main/examples/smart_kiosk_ex) has a Mix task that does this.
   </Tab>
 </Tabs>
 
-## Connecting
+The transport is a git dependency because it is not published on Hex. Listing it here is not enough: it must also be compiled into the VM.
+
+## Connect
+
+Set the device clock before you start the agent, for example with SNTP. A shared-secret signature is valid for 90 seconds, and an ESP32 boots with its clock at the epoch. `start/1` returns `{error, {clock_not_set, Now}}` if the clock is not set.
 
 <Tabs>
   <Tab title="Erlang">
     ```erlang
     {ok, _Pid} = nerves_hub_link:start(#{
         identifier    => <<"my-device">>,
-        shared_secret => {Key, Secret}
+        shared_secret => {Key, Secret},
+        console       => true,
+        extensions    => [health, geo, logging]
     }).
     ```
   </Tab>
@@ -81,46 +141,141 @@ mix nerves_hub.atomvm.vm ~/src/AtomVM ~/src/atomvm_websocket_client
   <Tab title="Elixir">
     ```elixir
     {:ok, agent} =
-      NervesHubLink.start_link(
+      :nerves_hub_link.start(
         identifier: "my-device",
         shared_secret: {key, secret},
         console: true,
-        extensions: :all
+        extensions: [:health, :geo, :logging]
       )
     ```
   </Tab>
 </Tabs>
 
-There is no URL in either call — where it connects is worked out for you.
+With no `host` or `url`, the agent connects to NervesCloud. Set one of them for another instance. Setting both is an error.
 
-## Handling events
+| Config | Connects to |
+| --- | --- |
+| Neither | `wss://devices.nervescloud.com/device-socket/websocket?vsn=2.0.0` |
+| `host => "your.nerveshub.host"` | `wss://your.nerveshub.host/device-socket/websocket?vsn=2.0.0` |
+| `url => "ws://192.168.1.10:4000"` | `ws://192.168.1.10:4000/device-socket/websocket?vsn=2.0.0` |
 
-The agent sends `{nerves_hub, Event}` to the calling process, or in Elixir to whichever process is named as its `:handler`, so a device is naturally written as a `GenServer` receiving them in `handle_info/2`.
+### Options
+
+These are the options you are most likely to set. The repository's README lists all of them.
+
+| Option | Default | Purpose |
+| --- | --- | --- |
+| `identifier` | required | The device's identifier in NervesHub |
+| `shared_secret` | none | `{Key, Secret}` |
+| `client_cert` | none | `{CertPem, KeyPem}` |
+| `host` | `devices.nervescloud.com` | Host of the device endpoint |
+| `url` | none | A full or partial URL, used in place of `host` |
+| `verify` | `crt_bundle` | Server certificate verification. Also `{cacert_pem, Pem}` or `none`. |
+| `firmware` | `boot` | Where the running firmware's description comes from |
+| `firmware_keys` | none | Public keys. Configuring any makes signatures required. |
+| `request_firmware_keys` | `false` | Also ask NervesHub for the organization's keys |
+| `updates` | `auto` | `manual` reports the offer and waits for your decision |
+| `reboot` | `auto` | `manual` sends `reboot_requested` to your handler |
+| `console` | `false` | Join the [console](/management/remote-console) channel |
+| `extensions` | none | `all`, or a list of `health`, `geo`, `logging` |
+| `handler` | the caller | The process that receives `{nerves_hub, Event}` |
+| `firmware_trial` | `#{boot_attempts => 3, join_timeout_ms => 300000}` | Or `off` |
+
+One of `shared_secret` and `client_cert` is required.
+
+## Handle events
+
+The agent sends `{nerves_hub, Event}` to the process that started it, or to `handler`.
 
 | Event | Meaning |
 | --- | --- |
-| `{joined, Response}` | The device channel is live |
+| `{joined, Response}` | The device channel is joined |
 | `{join_error, Reason}` | The server refused the join |
+| `{message, Event, Payload}` | A server message the agent does not handle itself |
 | `{update_started, Pid}` | An update is downloading |
-| `{update_ready, Slot}` | Written and armed; reboot when convenient |
-| `{update_failed, Reason}` | Refused, or the write failed |
-| `{firmware_committed, Slot}` | The running update proved itself |
-| `identify` | Blink something |
-| `reboot_requested` | Only with `reboot => manual` |
+| `{update_ready, Slot}` | The update is written and armed. Reboot when it suits the device. |
+| `{update_failed, Reason}` | The update was refused, or the write failed |
+| `{firmware_committed, Slot}` | The running update reached NervesHub and is kept |
+| `{firmware_trial, Slot, Boot}` | The device booted firmware that is still on trial |
+| `{firmware_reverted, Slot}` | The trial failed. The device boots `Slot` next. |
+| `{update_mode, Mode, Allowed}` | NervesHub reported the device's update mode |
+| `{update_rejected, Reason}` | NervesHub refused `request_update/1` |
+| `identify` | Someone selected identify for the device |
+| `reboot_requested` | Sent only with `reboot => manual` |
 | `console_joined` | Someone opened the console |
-| `{disconnected, Reason}` | The socket dropped; the transport reconnects |
-| `{transport_error, Reason}` | TLS or network failure |
+| `{extensions_attached, Names}` | The extensions NervesHub turned on |
+| `{extension_detached, Name}` | NervesHub stopped an extension |
+| `{disconnected, Reason}` | The socket dropped. The agent reconnects. |
+| `{transport_error, Reason}` | A TLS or network failure |
 
-And the device reports back:
+<Note>
+  New events are added between versions. If your handler is a `gen_server`, give `handle_info/2` a catch-all clause.
+</Note>
+
+## Updates
+
+With `updates => auto`, the agent downloads the packbeam NervesHub offers into whichever of `main.avm` and `alt.avm` the device is not running from. It then arms that partition and sends `{update_ready, Slot}`. Your application decides when to reboot.
+
+### Firmware on trial
+
+After an update, the new firmware is on trial until it joins NervesHub. It has three boots to join, and five minutes on each. If it uses up either, the device points back at the previous firmware and restarts into it. That firmware then reports to NervesHub that an update was reverted.
+
+Start the agent early in your application. A firmware that crashes before it calls `nerves_hub_link:start/1` is not counted. `firmware_trial => off` turns the trial off.
+
+### Deciding for yourself
+
+With `updates => manual`, the offer arrives as `{message, <<"update">>, Payload}`. Answer it with one of:
 
 ```erlang
-nerves_hub_link:update_progress(Pid, 42, <<"downloading">>),
-nerves_hub_link:firmware_validated(Pid),
-nerves_hub_link:update_failed(Pid, <<"flash write failed">>).
+nerves_hub_link:apply_update(Pid, Payload),
+nerves_hub_link:ignore_update(Pid, <<"on battery">>),
+nerves_hub_link:reschedule_update(Pid, 3600000, <<"in use">>).
 ```
 
-## Partition sizing
+The agent also supports [device-managed updates](/updates/device-managed-updates):
 
-`main.avm` and `alt.avm` must be the same size, since either has to hold the archive. Read the offsets off the device rather than from a checkout — writing from a stale copy of the table lands the application inside `boot.avm`, and the only symptom is `Failed app start: invalid_avm`.
+```erlang
+{ok, #{mode := device_managed}} = nerves_hub_link:set_update_mode(Pid, device_managed),
+{ok, #{available := true}} = nerves_hub_link:check_for_update(Pid),
+ok = nerves_hub_link:request_update(Pid).
+```
 
-Both repositories document the reasoning behind each partition size. In short: `boot.avm` is larger than stock because an Elixir device needs `elixir_esp32boot.avm`, and `factory` is larger because libsodium adds around 140K. An Erlang device without signature verification can use the stock sizes for both.
+### Verifying signatures on the device
+
+Set `firmware_keys` to your organization's fwup public keys. A device with keys refuses any update the keys do not cover, including an unsigned one, before it changes the boot partition. A device with no keys installs what it is sent.
+
+Verification needs AtomVM built with `AVM_USE_LIBSODIUM=ON`. See [AtomVM packbeam archives](/updates/atomvm#signing) for how to sign an archive.
+
+## Console, scripts and extensions
+
+- **Console.** AtomVM has no shell, so `console => true` serves a fixed set of commands: `help`, `info`, `firmware`, `memory`, `partitions`, `net`, `geo`, `signature`, `uptime` and `reboot`. It does not evaluate Erlang.
+- **Support scripts.** A script is a list of console commands, one per line. Blank lines and lines that start with `#` are skipped. The first line that is not a command fails the script, so a script written in Elixir for Nerves devices reports a failure. `reboot` is refused in a script.
+- **Extensions.** Version 0.2.0 implements `health`, `geo` and `logging`. The product and the device must also have the extension enabled in NervesHub.
+
+<Warning>
+  AtomVM's `logger` raises `badarg` when given a binary message, which crashes the calling process. From Elixir, pass a charlist or a map to `:logger`, or call `nerves_hub_link:send_log/3`.
+</Warning>
+
+## What is on `main` but not in 0.2.0
+
+The `main` branch has unreleased additions, listed in the repository's changelog. They include an `alarms` extension, custom console commands (`console_commands`), and `keep_open_above` and `before_update` for devices with too little memory to hold two TLS sessions during a download.
+
+## What the device reports
+
+| Join parameter | Source |
+| --- | --- |
+| `atomvm_app_name` | The packbeam's application name |
+| `atomvm_app_version` | The application's `vsn` |
+| `atomvm_avm_sha256` | SHA-256 of the packbeam the device booted |
+| `atomvm_version` | `erlang:system_info(atomvm_version)` |
+| `device_api_version` | `2.4.0` |
+
+The device does not send a UUID. NervesHub derives it from the SHA-256, by the same rule it uses at upload, so the device matches the firmware you uploaded only if it runs the same bytes.
+
+## Related pages
+
+- [AtomVM packbeam archives](/updates/atomvm)
+- [Extensions overview](/extensions/overview)
+- [Shared secret authentication](/auth/shared-secret)
+- [Device WebSocket protocol](/device-api/websocket-overview)
+- [Choosing a device client](/integrations/overview)

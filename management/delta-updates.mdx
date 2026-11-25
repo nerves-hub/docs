@@ -1,81 +1,196 @@
 ---
-title: "Delta Updates"
-sidebarTitle: "Delta Updates"
-description: "Use NervesHub delta updates to ship binary diffs instead of full firmware, cutting transfer size by up to 95 percent and speeding up OTA updates."
+title: "Delta updates"
+sidebarTitle: "Delta updates"
+description: "Send fwup firmware as a patch against what a device already runs, and what your firmware build needs for that to work."
 ---
 
-NervesHub delta updates ship only the binary difference between firmware versions, dramatically reducing bandwidth consumption and update time. Instead of downloading a full 58 MB firmware image for a bug fix that touched a few hundred kilobytes of code, a device downloads a diff that may be as small as 100 KB — and applies it locally to reconstruct the new firmware. Delta updates are especially valuable for devices on metered or low-bandwidth connections.
+A delta update sends a device the difference between the firmware it runs and the firmware it is updating to, instead of the whole file. NervesHub builds the delta, and `fwup` on the device applies it against the inactive firmware slot. Use delta updates when download size matters, for example on cellular or metered links.
 
-<Note>
-  Delta support depends on the update tool behind your firmware. fwup firmware (`.fw`) is the production path and uses `xdelta3`. NervesHub can also ingest ESP-IDF application images (`.bin`), AtomVM packbeam archives (`.avm`), and RAUC bundles (`.raucb`), but that support is **experimental** — ESP-IDF deltas use Espressif's `esp_delta_ota` patch format rather than `xdelta3`, and the AtomVM and RAUC integrations currently cover the server side only.
-</Note>
-
-## How Delta Updates Work
-
-When you publish a new firmware version to NervesHub and add it to a deployment group, NervesHub automatically generates a binary diff between the firmware the target devices are currently running and the new target firmware. For fwup firmware that diff is produced with `xdelta3`. This diff is stored alongside the full firmware image.
-
-When a device checks in and is eligible for an update:
-
-1. NervesHub checks whether a delta diff exists between the device's current firmware and the target firmware
-2. If a delta is available, the device downloads the diff instead of the full image
-3. The device passes the diff to `fwup`, which applies it to the current firmware partition and validates the result
-4. NervesHub records whether the device used a full or delta update path
-
-The device never needs to know it's applying a delta — `fwup` handles the diff application transparently, and the end result is identical to applying the full firmware image.
-
-## Size Reduction
-
-The reduction in transfer size depends on how much the firmware changed between versions. In practice:
-
-| Scenario                       | Full firmware size | Delta size | Reduction |
-| ------------------------------ | ------------------ | ---------- | --------- |
-| Config change or small bug fix | 58 MB | ~100 KB | ~99% |
-| Minor feature addition | 58 MB | ~1–3 MB | ~95–98% |
-| Large dependency update | 58 MB | ~10–20 MB | ~65–80% |
-| Complete system rebuild | 58 MB | ~50 MB | minimal |
-
-Delta updates are most effective when the changes between versions are small relative to the total firmware size. For routine releases — bug fixes, configuration tweaks, application logic changes — the reduction is dramatic.
+This page covers fwup firmware (`.fw`). ESP-IDF images have their own delta format, described in [ESP-IDF](/updates/esp-idf). RAUC bundles and AtomVM archives have no delta updates.
 
 ## Requirements
 
-Before delta updates can be used, verify that your setup meets the following minimum versions:
+| What | Requirement |
+| --- | --- |
+| NervesHub | 2.3.0 or later. The per-release delta status described on this page is in 2.5.0 and later. |
+| Instance | `xdelta3` installed on the NervesHub server. See [feature prerequisites](/hosting/feature-prerequisites#firmware-formats). |
+| Firmware | `fwup.conf` declares a delta source for at least one resource. See [Enable delta updates](#enable-delta-updates). |
+| `fwup` on the device | New enough for the kind of delta your firmware uses. See the table below. |
+| `nerves_hub_link` | 0.9.1 or later, which reports the device's `fwup` version when it connects. |
 
-<Note>
-  Delta generation happens entirely on the NervesHub server. You do not need to run `xdelta3` locally or change your firmware build process. NervesHub handles diff generation automatically when you publish firmware.
-</Note>
+The `fwup` version a device needs depends on what the target firmware's `fwup.conf` uses:
 
-* **fwup >= 1.6.0** — the version of fwup baked into your Nerves system must support delta application. Check your Nerves system's fwup version with `fwup --version` in a device shell.
-* **nerves\\_hub\\_link >= 0.9.1** — your device firmware must include NervesHubLink at or above this version to negotiate the delta update path with the server.
-* **Two stored firmware versions** — NervesHub can only generate a delta between two firmware versions it has stored. Both the current firmware running on the device and the target firmware must exist in NervesHub's firmware storage.
+| The target firmware uses | Minimum `fwup` on the device |
+| --- | --- |
+| Raw deltas (`delta-source-raw-*`) | 1.6.0 |
+| FAT deltas (`delta-source-fat-*`) | 1.10.0 |
+| Raw deltas on an encrypted `raw_write` | 1.13.0 |
 
-Update your `mix.exs` to pull in a compatible NervesHubLink version:
+NervesHub takes the highest version that applies. A device that reports no `fwup` version is treated as running 0.2.0, so it always gets the full firmware.
 
-```elixir
-{:nerves_hub_link, "~> 2.7"}
-```
+## How it works
 
-## Enabling Delta Updates
+1. When you upload firmware, NervesHub reads the `meta.conf` inside the `.fw` file. It records whether the firmware declares delta sources and which `fwup` version a delta of it needs.
+2. When a [deployment group](/setup/deployments) with **Delta updates** on gets a new release, NervesHub looks at the firmware each device in the group runs. It queues one delta build per pair of running firmware and release firmware.
+3. A build unpacks both `.fw` files and runs `xdelta3` on each resource that declares a delta source. It then writes a new `.fw` file that holds the patches in place of those resources. Resources that no `upgrade` task uses are left out.
+4. When a device is due for the update, NervesHub sends it the delta's URL instead of the full firmware's URL, provided the device qualifies. The update message is otherwise the same.
+5. `fwup` on the device reads the old data from the locations `fwup.conf` names, applies the patch, and writes the result to the other slot.
 
-Delta updates are enabled at the server level and require no special configuration in your device firmware. When you create a deployment group in NervesHub, the server automatically generates delta diffs between the target firmware and each prior firmware version stored for your product. A group also carries its own toggle for delta updates, so you can turn them off for one fleet without affecting others.
+A delta is a `.fw` file that keeps the target firmware's metadata and signature. The device verifies it with the same [signing keys](/concepts/firmware-signing), and your [Client callbacks](/updates/applying-updates) run the same way.
 
-There is nothing to toggle in your firmware config, no extra mix dependency to add beyond NervesHubLink, and no change to your firmware build pipeline. Once your devices meet the version requirements above, they will automatically receive delta updates wherever a diff is available.
+## Enable delta updates
 
-## Verifying Delta Application
+<Steps>
+  <Step title="Declare delta sources in fwup.conf">
+    In the `upgrade` tasks of your `fwup.conf`, each resource you want patched needs a delta source. It tells `fwup` where on the device the old version of that resource is.
 
-NervesHub tracks the update path each device used. On the Device Detail page in NervesCloud, the firmware update history for a device shows whether each update was applied as a full download or a delta. This lets you confirm that delta updates are working as expected after a rollout and measure the bandwidth savings across your fleet.
+    For a resource written with `raw_write`, which is the usual case for the root filesystem, set both `delta-source-raw-offset` and `delta-source-raw-count`. The `upgrade.a` task writes slot A, so its source is slot B, and the other way round:
 
-If a device applied a full update when you expected a delta, check that:
+    ```
+    task upgrade.a {
+        on-resource rootfs.img {
+            delta-source-raw-offset=${ROOTFS_B_PART_OFFSET}
+            delta-source-raw-count=${ROOTFS_B_PART_COUNT}
+            raw_write(${ROOTFS_A_PART_OFFSET})
+        }
+    }
 
-* The device's current firmware version is stored in NervesHub (delta requires both versions to be present)
-* The device is running `nerves_hub_link >= 0.9.1`
-* The device's Nerves system includes `fwup >= 1.6.0`
+    task upgrade.b {
+        on-resource rootfs.img {
+            delta-source-raw-offset=${ROOTFS_A_PART_OFFSET}
+            delta-source-raw-count=${ROOTFS_A_PART_COUNT}
+            raw_write(${ROOTFS_B_PART_OFFSET})
+        }
+    }
+    ```
 
-## Fallback to Full Firmware
+    For a resource written with `fat_write`, set both `delta-source-fat-offset` and `delta-source-fat-path`:
 
-Delta update application is fault-tolerant. If the diff fails to apply — for any reason, including filesystem corruption, an interrupted download, or a checksum mismatch — NervesHubLink automatically falls back to downloading and applying the full firmware image. The update still completes successfully; it just uses more bandwidth.
+    ```
+    on-resource start4.elf {
+        delta-source-fat-offset=${BOOT_B_PART_OFFSET}
+        delta-source-fat-path="start4.elf"
+        fat_write(${BOOT_A_PART_OFFSET}, "start4.elf")
+    }
+    ```
 
-NervesHub records the fallback event on the device detail page so you can identify devices that consistently fail delta application and investigate the root cause.
+    For a `raw_write` that uses `cipher=` and `secret=`, also set `delta-source-raw-options` with the `cipher=` and `secret=` of the source.
 
-<Tip>
-  Delta updates deliver the greatest bandwidth savings when you release firmware frequently with small, incremental changes. Shipping bug fixes and configuration updates as separate releases — rather than batching them into large quarterly releases — lets NervesHub generate very small diffs and minimizes the data each device transfers over its lifetime.
-</Tip>
+    A resource that sets only one of a pair, for example the offset without the count, does not count as a delta source.
+
+    The raw snippet is the one in the Nerves [Experimental features](https://hexdocs.pm/nerves/experimental-features.html) guide, under "Firmware patches". The FAT snippet comes from `fwup.conf.eex` in `nerves_system_rpi4`, the template that system generates its `fwup.conf` from.
+
+    **Check what your system already declares.**
+
+    Official Nerves systems such as `nerves_system_rpi4` already declare a raw delta source for `rootfs.img`, so you may have nothing to add. `nerves_system_rpi4` also declares FAT delta sources for its boot files. Because of those, a device running it needs `fwup` 1.10.0 or later to be sent a delta.
+
+    To see what your system declares, copy its `fwup.conf` into your project and search it for `delta-source`. With `nerves` 1.15.0 or later:
+
+    ```bash
+    mix nerves.artifact.details nerves_system_rpi4 --copy-fwup-conf config/
+    ```
+
+    **Use your own `fwup.conf`.**
+
+    If the system's `fwup.conf` declares no delta source, edit the copy in `config/` and tell Nerves to build with it:
+
+    ```elixir
+    # config/config.exs
+    config :nerves, :firmware,
+      fwup_conf: "config/fwup.conf"
+    ```
+
+    If you already have a `config :nerves, :firmware` entry, add `fwup_conf` to it. If you maintain a custom system, you can add the lines to the system's `fwup.conf` instead.
+
+    <Warning>
+      The Nerves guide says these `fwup.conf` changes "must be applied in full to a running target before it is capable of applying firmware update patches". Send the first firmware that declares delta sources as a full update, with **Delta updates** off for the deployment group. Turn **Delta updates** on once your devices run it.
+    </Warning>
+  </Step>
+
+  <Step title="Build firmware that produces small deltas">
+    This step is optional. It does not decide whether a delta can be built, only how small it is.
+
+    A compressed root filesystem changes throughout when a few files change, which leaves `xdelta3` little to reuse. The Nerves [Experimental features](https://hexdocs.pm/nerves/experimental-features.html) guide, under "Tips for smaller patches", suggests turning squashfs compression off and fixing the build date. Both are build settings, so they go in `config/config.exs`:
+
+    ```elixir
+    # config/config.exs
+    config :nerves, :firmware,
+      rootfs_overlay: "rootfs_overlay",
+      mksquashfs_flags: ["-noI", "-noId", "-noD", "-noF", "-noX"]
+
+    # Set the SOURCE_DATE_EPOCH date for reproducible builds.
+    config :nerves, source_date_epoch: "1596027629"
+    ```
+
+    Keep your existing `rootfs_overlay` value. An uncompressed root filesystem is larger on the device and as a full download.
+
+    The firmware a device already runs has to be built this way too, because the delta is computed against it.
+  </Step>
+
+  <Step title="Upload the firmware">
+    [Upload](/setup/firmware) the new firmware as usual. NervesHub can only build a delta from firmware it holds, so the firmware your devices currently run must also be uploaded to the same product.
+
+    Open the firmware from the product's **Firmware** page. The **Delta updates to** section shows either the deltas built for it or the message "This firmware can't be delta updated, so devices always download the full file." The second means NervesHub found no complete delta source in its `fwup.conf`.
+  </Step>
+
+  <Step title="Turn on delta updates for the deployment group">
+    New deployment groups have **Delta updates** on. To change it, open the deployment group, go to the **Settings** tab, and set **Delta updates**. Changing it needs a [role](/access/roles) with permission to toggle delta updates.
+
+    With `nh`, pass `--delta-updatable` to `nh deployment create` or `nh deployment update`.
+  </Step>
+</Steps>
+
+## Check that it works
+
+- **Firmware page.** Open the target firmware. **Delta updates to** lists one row per source version with **From**, **Size**, **Saving** and **Status**. Status is **Building**, **Ready**, **Failed** or **Timed out**.
+- **Releases tab.** On the deployment group's **Releases** tab, expand a release. **Delta updates** lists the deltas that release's devices need, with the same statuses.
+- **Stats tab.** On the deployment group's **Stats** tab, **By the version devices came from** has a **Download** column that reads **Delta** or **Full** for each source version.
+- **Device page.** When you pick a version under **Send a specific version, outside the deployment group** and a delta from the device's firmware is ready, a **Send delta update** button appears next to the normal send button.
+
+## When a device gets the full firmware
+
+NervesHub sends a device the delta when the deployment group has **Delta updates** on and a delta from the firmware the device runs to the target has finished building. It sends the full firmware in these cases:
+
+- The deployment group has **Delta updates** off.
+- The firmware the device reports running is not uploaded to the same product, or has been deleted. No delta can be built from it.
+- The delta is built, and the device's reported `fwup` version is lower than the version the delta needs.
+
+A delta that is still building, or that failed, does not make NervesHub send the full firmware. The devices that need it wait. See [Releases wait for their deltas](#releases-wait-for-their-deltas).
+
+While it builds a delta, NervesHub skips any single resource whose patch is not smaller than the resource. A finished delta that is not smaller than the full firmware counts as a failed build.
+
+## Releases wait for their deltas
+
+A release in a group with delta updates on does not go out until its deltas are settled. Devices headed for that release are not offered the update while any delta they need is still building.
+
+The same is true after a delta fails or times out. Those devices stay where they are until you act. The release row reads "Devices on" the source version "get the full" firmware next to a failed delta, but they are not sent it. You have three options:
+
+- **Retry the build.** Click **Retry** next to the failed delta, on the release in the **Releases** tab or on the firmware's page. A retry fails again unless the cause is gone.
+- **Release a new firmware version.** The devices move on to the new release. With **Delta updates** off for the group, the new release goes out in full. With it on, the new release waits for its own deltas.
+- **Send the firmware to a device yourself.** On the device page, pick the version under **Send a specific version, outside the deployment group** and send it, or run `nh device upgrade <identifier> <firmware-uuid>`. This sets the device's update mode to off. Select the update mode in the device page header and choose **Automatic** afterwards.
+
+Turning **Delta updates** off in the group's **Settings** tab does not release a release that already has a failed delta. The setting only changes releases made afterwards.
+
+A build fails when:
+
+- The target firmware declares no delta source. Turn delta updates off for groups that deploy such firmware, before you release it.
+- The target uses a raw delta for a resource, and the source firmware does not write that resource with `raw_write`. The same applies to FAT deltas and `fat_write`.
+- The source firmware encrypts a resource, and the target has no `cipher=` and `secret=` in `delta-source-raw-options` for it.
+- No resource produced a patch smaller than itself, or the finished delta is not smaller than the full firmware.
+- `xdelta3` is missing on the server, or a firmware file cannot be downloaded or unpacked.
+
+## Limits
+
+- A delta is tied to one source firmware and one target firmware. Every deployment group that sends the same target shares it.
+- Deleting firmware deletes the deltas built from it. Devices running it then download the full file.
+- `nerves_hub_link` does not fall back to the full firmware on its own. If `fwup` fails to apply a delta, the update fails and the device reports it to NervesHub like any other failed update. See [failed updates](/updates/applying-updates#when-an-update-fails).
+- If a device runs out of memory applying a delta, set `block-cache-size-mb` in the target firmware's `fwup.conf`. NervesHub passes that size to `xdelta3` as the source window when it builds the delta.
+
+## Related pages
+
+- [Build, sign, and upload firmware](/setup/firmware)
+- [Releases](/deployments/releases)
+- [Rollout controls](/deployments/rollout-controls)
+- [ESP-IDF delta updates](/updates/esp-idf#delta-updates)
+- [Download strategies](/updates/download-strategies)
+- [Firmware format prerequisites](/hosting/feature-prerequisites#firmware-formats)

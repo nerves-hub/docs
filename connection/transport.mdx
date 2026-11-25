@@ -1,0 +1,212 @@
+---
+title: "Connection transport"
+sidebarTitle: "Transport"
+description: "Configure how a NervesHubLink device talks to NervesHub: Msgpack, TLS 1.3 session resumption, compression, CA certificates and HTTP proxies."
+---
+
+A device holds one WebSocket connection to NervesHub and opens separate HTTP connections to download firmware. This page covers the options that change what goes over those connections. You do not need any of them to connect. They matter on metered or slow links, behind a proxy, or against a self-hosted instance with its own certificates.
+
+For when the connection starts and how it recovers, see [Connection lifecycle](/connection/lifecycle).
+
+## Defaults
+
+| Setting | Default | Change it with |
+| --- | --- | --- |
+| Message encoding | JSON | `serializer: :msgpack` |
+| TLS version offered on the WebSocket | TLS 1.2 only | `ssl: [versions: ...]` |
+| Per-message compression | Offered by the device | `compress: false` |
+| Server certificate verification | `verify: :verify_peer` against the device's CA certificates | `ca_store`, `ssl: [cacerts: ...]` |
+| HTTP proxy | None | `socket: [http_opts: [proxy: ...]]` |
+
+## Msgpack serialization
+
+Messages between the device and NervesHub are JSON by default. [Msgpack](https://msgpack.org) encodes the same messages in fewer bytes and uses less memory on the device while doing it. Use it on metered or low bandwidth connections.
+
+### Requirements
+
+- `nerves_hub_link` 2.13.0 or later.
+- NervesHub 2.5.0 or later, on every node a device can reach.
+
+<Warning>
+  A device configured for Msgpack cannot connect to a server that does not support it (NervesHub before 2.5.0). The device asks for the Msgpack protocol when it connects and the server rejects the connection. A device that cannot connect cannot receive the firmware that would change the setting back. Confirm your server version before you roll this out to a fleet.
+</Warning>
+
+### Enable it
+
+Add the optional [`msgpax`](https://hex.pm/packages/msgpax) dependency:
+
+```elixir
+# mix.exs
+def deps do
+  [
+    {:msgpax, "~> 2.0"}
+  ]
+end
+```
+
+Then select the serializer:
+
+```elixir
+# config/target.exs
+config :nerves_hub_link, serializer: :msgpack
+```
+
+NervesHub needs no setting. Its device sockets accept both encodings and use the one the device asks for.
+
+### Limits
+
+- If `msgpax` is missing, or `:serializer` is a value the library does not know, the device logs an error and connects with JSON.
+- The two formats do not put identical values on the wire. Msgpack carries timestamps, such as the one in a health report, as its own extension type. JSON sends an ISO 8601 string.
+
+## TLS 1.3 and session resumption
+
+The device offers TLS 1.2 on the WebSocket by default. When the server supports TLS 1.3, the device can offer that too and keep TLS 1.3 session tickets. A reconnection then uses a resumed handshake, which sends no certificates and verifies none. That saves bytes and round trips on slow or metered connections such as LTE-M.
+
+### Requirements
+
+- NervesHub 2.5.0 or later, which is the first version that issues session tickets.
+- TLS 1.3 turned on for the instance's device endpoint. It is off by default. See [Feature prerequisites](/hosting/feature-prerequisites#tls-session-resumption). The `nerves_hub_link` configuration guide states that NervesCloud has TLS 1.3 enabled.
+- Devices running OTP 25.1 or later.
+
+### Enable it
+
+```elixir
+# config/target.exs
+config :nerves_hub_link,
+  ssl: [
+    versions: [:"tlsv1.3", :"tlsv1.2"],
+    session_tickets: :auto
+  ]
+```
+
+You need both options. Erlang's `:ssl` refuses `session_tickets` unless `:"tlsv1.3"` is one of the `:versions`. Keep `:"tlsv1.2"` in the list so that a device reaching a server without TLS 1.3 still connects.
+
+Devices that authenticate with a certificate ([NervesKey](/auth/nerveskey), [TPM](/auth/tpm), or a local certificate and key) and devices that authenticate with a [shared secret](/auth/shared-secret) can both resume.
+
+### How tickets are kept
+
+- Erlang's `ssl` application holds tickets in memory. They survive a socket reconnect but not a reboot. The first connection after boot is always a full handshake.
+- A ticket is matched on the server name. That is the host the device connects to, or `:sni` if you configured one.
+- Two `ssl` application variables bound the ticket store. They default to two hours and 1000 tickets. A device that talks to one server can use a smaller store:
+
+```elixir
+config :ssl,
+  client_session_ticket_lifetime: 7200,
+  client_session_ticket_store_size: 10
+```
+
+### Firmware downloads
+
+The firmware downloader leaves the TLS version to `Mint`, which already offers TLS 1.3. It can resume handshakes too. This helps when firmware is downloaded in parts or a download is retried:
+
+```elixir
+config :nerves_hub_link, downloader_ssl: [session_tickets: :auto]
+```
+
+### The server side
+
+If you host NervesHub, these environment variables on the device endpoint control TLS 1.3:
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `DEVICE_ENABLE_TLS_13` | `false` | When `false`, the endpoint enforces TLS 1.2. When `true`, the endpoint accepts TLS 1.3 and issues session tickets that carry the device's certificate. Turn it on only if every device runs OTP 25.1 or later. |
+| `DEVICE_TLS_SESSION_TICKET_SEED` | unset | A ticket key shared by every device node, so any node can resume a ticket another node issued, including across deploys. Unset, each node makes its own key and a device only resumes on the node that issued its ticket. Only read when `DEVICE_ENABLE_TLS_13` is `true`. |
+| `DEVICE_PROXY_PROTOCOL` | unset | Set to `v2` when a load balancer passes TLS through and announces the device with a PROXY protocol v2 header. Session tickets work behind the balancer too. |
+
+<Warning>
+  Whoever holds `DEVICE_TLS_SESSION_TICKET_SEED` can mint a ticket for any device's certificate and connect as that device without its key. Store it with your most sensitive secrets. Changing it voids every ticket, and devices fall back to a full handshake.
+</Warning>
+
+A resumed handshake skips certificate verification in the TLS layer. NervesHub still checks the certificate carried in the ticket against its database when the socket connects.
+
+## Compression
+
+The device offers per-message deflate on the WebSocket (`nerves_hub_link` 2.8.0 or later). NervesHub negotiates it by default. A device that offers the extension to a server that does not answer with it sends uncompressed frames, so neither side depends on the other.
+
+To stop the device offering it:
+
+```elixir
+# config/target.exs
+config :nerves_hub_link, compress: false
+```
+
+If you host NervesHub, compression costs memory on the server: a zlib deflate and inflate context for each connected device. From NervesHub 2.5.0 you can tune or disable it with environment variables. They apply to both the device endpoint and the web endpoint.
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `DEVICE_WEBSOCKET_COMPRESSION` | `true` | Whether the listener negotiates per-message deflate at all. |
+| `DEVICE_WEBSOCKET_DEFLATE_LEVEL` | `6` | zlib compression level, `0` to `9`. |
+| `DEVICE_WEBSOCKET_DEFLATE_MEM_LEVEL` | `4` | zlib memory level, `1` to `9`. |
+
+## CA certificates
+
+The device verifies the NervesHub server certificate. It picks the CA certificates to verify against in this order:
+
+1. `cacerts` in the `:ssl` option, if you set it.
+2. The module named in `:ca_store`, if you set one.
+3. [CAStore](https://hex.pm/packages/castore), if it is a dependency of your project.
+4. The CA certificates installed on the device.
+
+Use a custom store when your NervesHub instance has a certificate that a public CA did not sign. The module needs a `ca_certs/0` function that returns a list of DER encoded certificates:
+
+```elixir
+config :nerves_hub_link, ca_store: MyApp.CAStore
+```
+
+Or pass the DER encoded certificates directly:
+
+```elixir
+config :nerves_hub_link, ssl: [cacerts: my_der_list]
+```
+
+Firmware is downloaded over a separate HTTP connection, often from a different host. Give the downloader its own CA certificates when that host needs them:
+
+```elixir
+config :nerves_hub_link, downloader_ssl: [cacerts: my_der_list]
+```
+
+## HTTP proxy
+
+Devices that reach NervesHub through an HTTP proxy can configure one for the WebSocket connection and for the firmware downloader. This needs `nerves_hub_link` 2.12.0 or later.
+
+```elixir
+# config/target.exs
+proxy = {:http, "proxy.example.com", 8080, []}
+
+config :nerves_hub_link,
+  socket: [http_opts: [proxy: proxy]],
+  downloader_http_opts: [proxy: proxy]
+```
+
+The value is passed to `Mint.HTTP.connect/4` as `:proxy`, so any proxy form `Mint` accepts works.
+
+`http_opts` (under `:socket`) and `:downloader_http_opts` forward any other option `Mint.HTTP.connect/4` accepts, such as `:proxy_headers` or `:hostname`. They merge on top of the SSL configuration instead of replacing it, so you can combine them:
+
+```elixir
+config :nerves_hub_link,
+  ssl: [cacerts: my_der_list],
+  socket: [http_opts: [proxy: {:http, "proxy.example.com", 8080, []}]]
+```
+
+## Check that it works
+
+After you flash firmware with a changed transport setting, confirm on the device that it still connects:
+
+```elixir
+iex> NervesHubLink.connected?()
+true
+```
+
+Check the device log for these lines, which mean a setting was not applied:
+
+- `the :msgpack serializer needs the :msgpax dependency, using JSON instead`
+- `unknown serializer ..., using JSON instead`
+
+Test transport changes on one device you can reach physically before you deploy them. A transport setting the server does not accept can leave a device unable to connect.
+
+## Related pages
+
+- [Connection lifecycle](/connection/lifecycle)
+- [Connecting devices](/setup/connecting)
+- [Download strategies](/updates/download-strategies)
+- [TLS session resumption prerequisite](/hosting/feature-prerequisites#tls-session-resumption)

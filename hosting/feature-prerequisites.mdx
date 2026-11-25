@@ -1,0 +1,277 @@
+---
+title: "Feature prerequisites for a self-hosted instance"
+sidebarTitle: "Feature prerequisites"
+description: "What a NervesHub instance must have configured before developers can use each feature, and what they see when it is missing."
+---
+
+Some NervesHub features only work once the person hosting the instance has set something. This page lists each of those features, the setting it needs, and what developers see without it. Feature pages link here when they say a feature depends on the instance.
+
+Every setting on this page is an environment variable read when a node boots. Changing one means restarting the node. Boolean variables must be the exact string `true`; anything else, including `1` and `TRUE`, counts as false.
+
+This page covers NervesHub main (2.5.4 and later). It lists only the settings that change what a developer can do. The complete list, including clustering, storage, TLS certificates and observability, is in the upstream [runtime configuration reference](https://github.com/nerves-hub/nerves_hub_web/blob/main/docs/runtime_configuration.md).
+
+## Minimum configuration
+
+A single node that serves both the web UI and devices needs these variables:
+
+```bash
+SECRET_KEY_BASE=...
+LIVE_VIEW_SIGNING_SALT=...
+HOST=your.nerveshub.host
+DATABASE_URL=postgres://...
+```
+
+It also needs:
+
+- A TLS key and certificate for the device endpoint. Set `DEVICE_SSL_KEY` and `DEVICE_SSL_CERT` (base64 encoded), or put files at the paths `DEVICE_SSL_KEYFILE` and `DEVICE_SSL_CERTFILE` name. The device endpoint terminates mutual TLS itself, so it cannot sit behind a proxy that terminates TLS for it.
+- Somewhere to store firmware. Set `FIRMWARE_UPLOAD_PATH` to a persistent directory for the default `local` backend, or set `FIRMWARE_UPLOAD_BACKEND=S3` with the `S3_*` variables.
+
+### What works with only the minimum
+
+- Devices connect with certificates over TLS 1.2.
+- fwup firmware, [archives](/updates/archives), [deployment groups](/setup/deployments), the [remote console](/management/remote-console) and [support scripts](/management/support-scripts).
+- The Health, Geo, Alarms, Local Shell and Network Identity [extensions](/extensions/overview).
+- Current metric values, which devices report through the Health extension.
+- Device health status, judged against fixed thresholds instead of your health profiles. See [ClickHouse](#clickhouse).
+- [Webhooks](/outbound/webhooks) to public addresses.
+- The [API](/api/overview).
+- Accounts for people with an invite. No email is sent.
+
+Everything in the next section is off.
+
+## Features that need a setting
+
+| Developer feature | Set on the instance | Without it |
+| --- | --- | --- |
+| [Shared secret authentication](#shared-secret-authentication) | `DEVICE_SHARED_SECRETS_ENABLED=true` | Only certificate authentication works. |
+| [Logging, Error reports and Metrics extensions](#clickhouse) | `CLICKHOUSE_URL` | The extensions are not offered to devices. |
+| [Metric history, Insights trends, connection and update history, Data History, health profiles](#clickhouse) | `CLICKHOUSE_URL` | Charts and history are empty or replaced by a notice. Health profiles are not evaluated. |
+| [Two-factor authentication](#secrets-encryption-key) | `SECRETS_ENCRYPTION_KEY` | Users cannot turn it on, and organizations cannot require it. |
+| [Teams and Discord channels](#secrets-encryption-key) | `SECRETS_ENCRYPTION_KEY` | The options are shown, but saving a channel fails. |
+| [Slack](#slack) | A Slack app, `SLACK_CLIENT_ID`, `SLACK_CLIENT_SECRET`, `SECRETS_ENCRYPTION_KEY`, and `SLACK_SIGNING_SECRET` or `SLACK_APP_TOKEN` | Slack is hidden. |
+| [ESP-IDF, AtomVM and RAUC firmware](#firmware-formats) | `ESP_IDF_FIRMWARE_ENABLED=true`, `ATOMVM_FIRMWARE_ENABLED=true`, `RAUC_FIRMWARE_ENABLED=true` | Only fwup firmware is accepted. |
+| [Webhooks to private addresses](#webhooks-to-private-addresses) | `WEBHOOKS_ALLOW_PRIVATE_DESTINATIONS=true` | Webhooks only reach public addresses. |
+| [TLS 1.3 and session resumption](#tls-session-resumption) | `DEVICE_ENABLE_TLS_13=true` | The device endpoint only accepts TLS 1.2. |
+| [Email](#email-and-sign-up) | `SMTP_SERVER`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD` | No email is sent. |
+| [Open sign-up and Google sign-in](#email-and-sign-up) | `SIGN_UP_METHODS`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Only people with a pending invite can create an account. |
+| [Device location map](#device-location-map) | `MAPBOX_ACCESS_TOKEN` | The map is left off the device page. |
+| [Iroh endpoints page](#iroh-endpoints) | `ORG_IROH_ENDPOINTS_UI_ENABLED=true` | The page does not exist. |
+| Firmware or archives over 200MB | `FIRMWARE_UPLOAD_MAX_SIZE`, `ARCHIVE_UPLOAD_MAX_SIZE` (bytes) | The limit for each is 200MB. |
+
+<Note>
+`DEVICE_SHARED_SECRETS_ENABLED`, `CLICKHOUSE_URL`, `SIGN_UP_METHODS` and the `SMTP_*` variables are only read in a production release. A development instance started with `mix phx.server` takes those settings from `config/dev.exs`.
+</Note>
+
+## Shared secret authentication
+
+Set `DEVICE_SHARED_SECRETS_ENABLED=true` to let devices authenticate with a product or device shared secret instead of a certificate.
+
+Without it:
+
+- A device that connects with a shared secret is refused.
+- The **Shared secrets** card in product settings reads "Shared secret authentication hasn't been turned on for this platform. Ask whoever runs it." and has no **Create secret** button.
+- The **Add device** dialog only offers the certificate option.
+- The device shared secret API answers 422 with "Device shared secrets are not enabled on this platform".
+
+A device may ask for at most 10,000 PBKDF2 iterations and a 64 byte key. A device that asks for more is refused.
+
+Developer page: [Shared secret authentication](/auth/shared-secret).
+
+## ClickHouse
+
+Set `CLICKHOUSE_URL` to connect NervesHub to a ClickHouse database. NervesHub stores high-volume device data there: metric history, logs, error reports, connection history, update history and the device message log.
+
+Without it:
+
+- The Logging, Error reports and Metrics extensions are not offered to devices.
+- The device page's **Logs**, **Errors** and **Data History** tabs show "Analytics aren't enabled for your platform."
+- The health tab shows current metric values but no charts.
+- Product Insights shows fleet composition but no trends.
+- Health profiles are not evaluated. A device's health status comes from fixed thresholds applied to its latest health report.
+- The device logs and metrics API endpoints answer 501.
+
+[ClickHouse for a self-hosted instance](/hosting/clickhouse) has the full list, the variables, migrations and retention.
+
+Developer pages: [Logging extension](/extensions/logging), [Error reports extension](/extensions/error-reports), [Metrics and Alarms extensions](/extensions/metrics-and-alarms), [Health monitoring](/management/health-monitoring), [Insights and history](/management/insights).
+
+## Secrets encryption key
+
+Set `SECRETS_ENCRYPTION_KEY` to 32 random bytes, base64 encoded:
+
+```bash
+openssl rand -base64 32
+```
+
+NervesHub uses the key to encrypt secrets before it stores them: Slack bot tokens, Teams and Discord webhook URLs, and each user's two-factor authentication secret. A value that is not 32 bytes of base64 stops the node from booting.
+
+Without it:
+
+- **Two-factor authentication** (NervesHub 2.5.4) is not offered. The account's two-factor page reads "Two-factor authentication needs this server to have a key for encrypting secrets." An organization cannot require it of its members.
+- **Teams and Discord channels** are still offered on the organization's **Integrations** page, because nothing checks for the key there. Saving a channel raises an error when NervesHub tries to encrypt the webhook URL, and no channel is stored. Set the key before anyone uses these integrations.
+- **Slack** cannot be configured. A production node refuses to boot when `SLACK_CLIENT_ID` is set and the key is not.
+
+<Warning>
+Do not change the key once it is in use. Stored Slack tokens and chat webhook URLs become unreadable, so workspaces and channels have to be connected again. Users with two-factor authentication on can only sign in with a recovery code, then set up their authenticator app again.
+</Warning>
+
+Developer pages: [Two-factor authentication](/access/two-factor), [Microsoft Teams](/outbound/teams), [Discord](/outbound/discord).
+
+## Slack
+
+Slack needs a Slack app that belongs to your instance, and these variables:
+
+| Variable | What it is |
+| --- | --- |
+| `SLACK_CLIENT_ID` | The Slack app's client ID. |
+| `SLACK_CLIENT_SECRET` | The Slack app's client secret. |
+| `SLACK_SIGNING_SECRET` | The Slack app's signing secret, for an instance Slack can reach. |
+| `SLACK_APP_TOKEN` | An app-level token, for an instance Slack cannot reach (Socket Mode). |
+| `SECRETS_ENCRYPTION_KEY` | See [Secrets encryption key](#secrets-encryption-key). |
+
+The integration is on when the client ID and client secret are set, along with the signing secret, the app token, or both. Without that, Slack does not appear on the organization's **Integrations** page.
+
+[Create a Slack app for your instance](/hosting/slack-app) walks through the setup. Developer page: [Slack](/outbound/slack).
+
+## Firmware formats
+
+fwup firmware is always accepted. Each other format has its own switch, off by default:
+
+| Format | Variable | Also needs on the server |
+| --- | --- | --- |
+| ESP-IDF application images (`.bin`) | `ESP_IDF_FIRMWARE_ENABLED=true` | `detools`, to build deltas |
+| AtomVM packbeam archives (`.avm`) | `ATOMVM_FIRMWARE_ENABLED=true` | |
+| RAUC bundles (`.raucb`) | `RAUC_FIRMWARE_ENABLED=true` | `openssl`, to verify a bundle's signature |
+
+Without the variable, uploads of that format are not recognised and no product can opt in. With it, each product still has to accept the format in its settings, under **Firmware**.
+
+fwup delta updates need `xdelta3` on the server. The official container image includes `fwup`, `xdelta3`, `detools` and `openssl`. If you build your own image, install them.
+
+Developer pages: [ESP-IDF](/updates/esp-idf), [AtomVM](/updates/atomvm), [RAUC](/updates/rauc), [Delta updates](/management/delta-updates).
+
+## Webhooks to private addresses
+
+By default a webhook can only deliver to public addresses. A URL with a literal private address is refused when it is saved. A host name is resolved at delivery and refused if any address it resolves to is private.
+
+Set `WEBHOOKS_ALLOW_PRIVATE_DESTINATIONS=true` to allow loopback, private, link-local and other non-public addresses. You need this when your webhook receivers are on the instance's own network.
+
+<Warning>
+With this on, any member of any organization on the instance can point a webhook at an internal service, such as a cloud metadata endpoint. Turn it on only if you trust every member with access to that network.
+</Warning>
+
+Developer page: [Webhooks](/outbound/webhooks).
+
+## TLS session resumption
+
+By default the device endpoint only accepts TLS 1.2. Set `DEVICE_ENABLE_TLS_13=true` to accept TLS 1.3 as well. The endpoint then also issues TLS 1.3 session tickets, so a reconnecting device can resume its session instead of repeating the full handshake.
+
+<Warning>
+Turn this on only when every device runs OTP 25.1 or newer. Older OTP 25 releases can fail to negotiate either version against an endpoint that offers both.
+</Warning>
+
+By default each node makes its own ticket key, so a device only resumes on the node that issued its ticket, and not after that node restarts. To let any node resume any ticket, set `DEVICE_TLS_SESSION_TICKET_SEED` to the same value on every device node. It must be at least 64 bytes; `mix phx.gen.secret` generates one.
+
+<Warning>
+Treat `DEVICE_TLS_SESSION_TICKET_SEED` like a CA private key. Whoever holds it can mint a ticket for any device's certificate and connect as that device without its key. Changing it voids every ticket, and devices fall back to a full handshake.
+</Warning>
+
+Developer page: [Transport](/connection/transport).
+
+## Email and sign-up
+
+### Email
+
+Set `SMTP_SERVER`, `SMTP_PORT`, `SMTP_USERNAME` and `SMTP_PASSWORD` to send email. Setting `SMTP_SERVER` makes the other three required. Without `SMTP_SERVER`, no email is sent.
+
+`FROM_EMAIL` (default `no-reply@nerves-hub.org`) and `EMAIL_SENDER` (default `NervesHub`) set who the mail comes from.
+
+### Sign-up
+
+`SIGN_UP_METHODS` (NervesHub 2.5.3) is a comma-separated list of the ways anyone can create an account:
+
+| Value | Effect |
+| --- | --- |
+| `password` | The sign-up form is open. |
+| `google` | Anyone with a Google account can sign up. Needs `GOOGLE_CLIENT_ID`. |
+| `none`, or unset | Only people with a pending invite can create an account. |
+
+Someone with a pending invite can always create an account, whatever this is set to. An unknown value stops the node from booting.
+
+Setting `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` turns on Google sign-in for existing accounts. It creates accounts only when `SIGN_UP_METHODS` includes `google` or the address has a pending invite.
+
+`OPEN_FOR_REGISTRATIONS=true` is the older setting. It is only read when `SIGN_UP_METHODS` is unset, and means `password`, plus `google` when `GOOGLE_CLIENT_ID` is set.
+
+## Device location map
+
+Set `MAPBOX_ACCESS_TOKEN` to show a map of the device's location on the device page. Without it, the map is left out, even when the Geo extension is on for the product and the device.
+
+Developer page: [Geo extension](/extensions/geo).
+
+## Iroh endpoints
+
+Set `ORG_IROH_ENDPOINTS_UI_ENABLED=true` to add an **Iroh endpoints** page to each organization's settings. Without it the link is hidden and the page answers as not found.
+
+`ORG_IROH_ENDPOINTS_INFO_URL` adds a link on that page to your own documentation about your relays. `ORG_IROH_ENDPOINTS_INFO_LABEL` sets the link's text, which defaults to the URL's host.
+
+Developer pages: [Network identity extension](/extensions/network-identity), [Console over iroh](/management/remote-console#console-over-iroh).
+
+## Defaults that shape what developers see
+
+These settings do not turn a feature on or off. They set its pace or its limits for everyone on the instance. Developer pages: [Health extension](/extensions/health), [Geo extension](/extensions/geo), [Audit log](/access/audit-log), [Rollout controls](/deployments/rollout-controls), [Connecting devices](/setup/connecting).
+
+### Report intervals
+
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `FEATURES_HEALTH_INTERVAL_MINUTES` | `60` | How often a device is asked for a health report while nobody has its page open. |
+| `FEATURES_HEALTH_UI_POLLING_SECONDS` | `60` | How often it is asked while somebody does. |
+| `FEATURES_HEALTH_FIRST_CHECK_WINDOW_SECONDS` | `60` | After a device connects, it is asked for its first health report at a random point in this window. `0` asks straight away. |
+| `FEATURES_METRICS_INTERVAL_MINUTES` | `15` | How often a device on the Metrics extension reports while nobody has its page open. |
+| `FEATURES_METRICS_UI_POLLING_SECONDS` | `60` | How often it reports while somebody does. |
+| `FEATURES_METRICS_FIRST_CHECK_WINDOW_SECONDS` | `60` | The same first-report window, for the Metrics extension. |
+| `FEATURES_GEO_INTERVAL_MINUTES` | `0` | How often a device reports its location. `0` means once per connection. |
+| `DEVICE_LAST_SEEN_UPDATE_INTERVAL_MINUTES` | `15` | How often a connected device's last seen time is written. |
+
+### Retention
+
+| Data | Kept for | Configurable |
+| --- | --- | --- |
+| Audit log | Forever | `TRUNCATE_AUDIT_LOGS_ENABLED=true` deletes old entries. `TRUNCATE_AUDIT_LOGS_DEFAULT_DAYS_KEPT` (default `30`) applies to organizations that have not set their own retention. |
+| Deleted devices | Forever, soft deleted | `CLEAN_UP_SOFT_DELETED_DEVICES=true` lets a scheduled job hard-delete them. |
+| Data in ClickHouse | 3 to 365 days, by table | No. See [ClickHouse retention](/hosting/clickhouse#retention). |
+
+`HEALTH_CHECK_DAYS_TO_RETAIN` and `EXTENSIONS_LOGGING_DAYS_TO_KEEP` are still read at boot, but no code on main uses either value. Metric history and device logs follow the ClickHouse table TTLs.
+
+### Limits
+
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `DEVICE_METRICS_MAX_KEYS_PER_REPORT` | `20` | The most metric names stored from one report. A report with more is trimmed to that many, in sorted order, and the product gets a notification. |
+| `DEVICE_MESSAGES_MAX_PAYLOAD_BYTES` | `8192` | How much of each device message the **Data History** tab keeps. Longer bodies are truncated. |
+| `FIRMWARE_UPLOAD_MAX_SIZE` | `200000000` | The largest firmware upload, in bytes. |
+| `ARCHIVE_UPLOAD_MAX_SIZE` | `200000000` | The largest archive upload, in bytes. |
+| `DEVICE_CONNECT_RATE_LIMIT` | `100` | Device connections accepted per second. |
+
+### Other defaults
+
+| Variable | Default | Effect |
+| --- | --- | --- |
+| `DEFAULT_LIFO_DEPLOYMENT_QUEUE` | `false` | When `true`, new deployment groups update the most recently connected devices first. |
+| `REDIRECT_TO_DEVICES_WEBSOCKET_URL` | `false` | When `true`, a device that connects to the web host is answered with a redirect to the device host instead of being served. |
+| `DEVICES_WEBSOCKET_HOST` | `DEVICE_HOST`, then `WEB_HOST`, then `HOST` | The host the web UI shows in its device connection instructions. |
+| `FRIENDLY_PLATFORM_NAME` | `NervesHub` | The name the instance uses for itself in the web UI and in Slack, Teams and Discord messages. |
+
+## Upgrade notes that affect these features
+
+- **2.5.0** drops device health history and the PostgreSQL device metrics table. Metric history starts empty in ClickHouse. Rolling back to 2.4.0 afterwards is not supported.
+- **2.5.1** runs the container image as uid 65532 instead of root, and no longer sets a default `SECRET_KEY_BASE`. Either can stop a node from booting. A node on the default `DEVICE_PORT` of 443 needs a container runtime that allows unprivileged low ports, or a port of 1024 or above mapped from 443.
+- **2.5.3** adds `SIGN_UP_METHODS`. With `GOOGLE_CLIENT_ID` set and neither `SIGN_UP_METHODS` nor `OPEN_FOR_REGISTRATIONS` set, Google sign-in only creates accounts for people with a pending invite.
+- **2.5.4** adds two-factor authentication, which needs `SECRETS_ENCRYPTION_KEY`. Do not roll back to 2.5.3 once anyone holds a [custom role](/access/roles).
+
+## Related pages
+
+- [ClickHouse for a self-hosted instance](/hosting/clickhouse)
+- [Create a Slack app for your instance](/hosting/slack-app)
+- [Shared secret authentication](/auth/shared-secret)
+- [Two-factor authentication](/access/two-factor)
+- [How firmware updates work](/updates/overview)
+- [Runtime configuration on GitHub](https://github.com/nerves-hub/nerves_hub_web/blob/main/docs/runtime_configuration.md)

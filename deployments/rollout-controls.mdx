@@ -1,0 +1,151 @@
+---
+title: "Rollout controls"
+sidebarTitle: "Rollout controls"
+description: "Set how many devices update at once, which devices go first, what happens to a device that keeps failing, and whether devices can move in and out of a deployment group."
+---
+
+Every [deployment group](/setup/deployments) has settings that pace a rollout and contain a release that does not install cleanly. You set them on the group's **Settings** tab. Each card on that tab saves on its own: change a field, then select **Save** in the bar that appears at the foot of the card.
+
+## Requirements
+
+| Control                          | NervesHub version |
+| -------------------------------- | ----------------- |
+| Priority queue                   | 2.3.0             |
+| Firmware proxy URL               | 2.3.0             |
+| Lock membership                  | 2.5.0             |
+| `DEFAULT_LIFO_DEPLOYMENT_QUEUE`  | 2.5.0             |
+
+## Settings at a glance
+
+| Web UI setting                                  | API field                                   | Default | Limit            |
+| ----------------------------------------------- | ------------------------------------------- | ------- | ---------------- |
+| **Devices updating at once**                    | `concurrent_updates`                        | `10`    | Greater than 0   |
+| **Queue order**                                 | `queue_management`                          | `FIFO`  | `FIFO` or `LIFO` |
+| **Priority queue**                              | `priority_queue_enabled`                    | `false` |                  |
+| **On this version or older**                    | `priority_queue_firmware_version_threshold` | none    | A semantic version |
+| **At once** (priority queue)                    | `priority_queue_concurrent_updates`         | `5`     | Greater than 0   |
+| **After this many failed attempts** … in total  | `device_failure_threshold`                  | `3`     | Greater than 0   |
+| **Or this many close together**                 | `device_failure_rate_amount`                | `5`     | Greater than 0   |
+| … in … sec                                      | `device_failure_rate_seconds`               | `180`   | At least 60      |
+| **It stays in the penalty box for** … minutes   | `penalty_timeout_minutes`                   | `1440`  | At least 60      |
+| **Lock membership**                             | `lock_device_membership`                    | `false` |                  |
+
+The `nh` CLI has no flags for these settings. Set them in the web UI, or send the API fields inside the `deployment` object when you update a deployment group through the [REST API](/api/overview).
+
+## Concurrency
+
+**Devices updating at once**, on the **Sending updates** card, is how many of the group's devices NervesHub sends an update to at the same time. As devices finish, NervesHub sends the update to the next devices in the queue.
+
+The limit is soft. A few more devices can be updating at once as devices reconnect.
+
+A device in [device-managed update mode](/updates/device-managed-updates) is not held to this limit. When it asks for its update, NervesHub sends it whenever the group has firmware for it, whatever the number of updates in progress.
+
+<Note>
+  While the group has a [workflow](/concepts/deployment-workflows), this setting and the priority queue are not used. Each workflow step sets its own `concurrent_updates`.
+</Note>
+
+## Queue order
+
+**Queue order**, on the **Sending updates** card, decides which waiting devices update first.
+
+| Web UI option               | API value | Order                                                                    |
+| --------------------------- | --------- | ------------------------------------------------------------------------ |
+| **Connected longest**       | `FIFO`    | By when each device's current connection was established, oldest first.  |
+| **Connected most recently** | `LIFO`    | By when each device was first seen by NervesHub, newest first.           |
+
+**Connected most recently** does not look at the current connection. It puts the devices that connected to NervesHub for the first time most recently at the front.
+
+New groups use `FIFO`. An instance operator can make new groups use `LIFO` by setting the `DEFAULT_LIFO_DEPLOYMENT_QUEUE` environment variable to `true`. See [Feature prerequisites](/hosting/feature-prerequisites#other-defaults).
+
+## Priority queue
+
+The priority queue lets devices on old firmware skip the normal queue. Use it for devices fresh from the factory, which should reach current firmware before they do anything else.
+
+<Steps>
+  <Step title="Turn it on">
+    On the **Sending updates** card, switch on **Priority queue**.
+  </Step>
+  <Step title="Set the version threshold">
+    Enter a version in **On this version or older**, for example `1.0.0`. Devices running that firmware version or an older one use the priority queue. The value must be a valid semantic version.
+  </Step>
+  <Step title="Set its concurrency">
+    Enter how many priority devices may update at once in **At once**.
+  </Step>
+  <Step title="Save">
+    Select **Save**.
+  </Step>
+</Steps>
+
+NervesHub fills the priority queue before the normal queue. The priority queue has its own slots, counted separately from **Devices updating at once**.
+
+If the priority queue is on but no version threshold is set, no device uses it.
+
+## Penalty box
+
+A device that reports a failed update, or that keeps starting an update without finishing it, goes into the penalty box. NervesHub stops sending it updates until the penalty ends, so one device stuck in a failure loop does not keep taking a slot in the rollout.
+
+The **Penalty box** card has three rules:
+
+| Rule                                                                 | Default            |
+| -------------------------------------------------------------------- | ------------------ |
+| **After this many failed attempts** in total                         | 3 attempts         |
+| **Or this many close together**, within a number of seconds          | 5 attempts in 180 seconds |
+| **It stays in the penalty box for** a number of minutes              | 1,440 minutes      |
+
+A device enters the penalty box when it meets either of the first two rules. Those rules count the updates NervesHub sent the device, so they catch a device that keeps starting an update without finishing it. A device that reports a failed update enters the penalty box straight away, whatever the first two rules are set to, and stays for the same number of minutes. Entering the penalty box clears the device's recorded attempts, so the device has a full set of tries when the penalty ends.
+
+An update the device [reschedules](/updates/applying-updates#what-ignoring-and-rescheduling-do) counts as an attempt too. With `nerves_hub_link` 2.14.0 a rescheduled update is offered again within about a minute, so a device that keeps rescheduling enters the penalty box.
+
+In a group with a workflow, a device in the penalty box counts as a failed device towards its step's `failure_tolerance`.
+
+### Find devices in the penalty box
+
+- The device list has a **Penalty box** filter. See [Finding devices](/management/finding-devices).
+- The header of a device's page shows **Blocked** in place of its update mode.
+
+### Let a device out early
+
+- On the device's page, select the button beside **Blocked**. Its tooltip reads **Clear the penalty box**.
+- On the device list, select the devices and choose **Clear penalty box** from the **Updates** menu in the bulk action bar.
+- From the CLI:
+
+  ```bash
+  nh device clear-penalty <identifier>
+  ```
+
+## Lock membership
+
+By default, a device joins a matching group when it connects, and leaves its group when its firmware no longer meets the group's version condition, platform or architecture. See [How devices join a group](/setup/deployments#how-devices-join-a-group).
+
+**Lock membership**, on the **Device matching** card, turns both off for the group:
+
+- Devices that connect are not matched into the group.
+- Devices already in the group stay in it, whatever firmware version they run.
+
+Devices only join or leave a locked group when someone moves them.
+
+For example, a group with the version condition `~> 1.0` that sends firmware `2.0.0` loses each device the next time it connects after updating. Locking the group keeps those devices in it.
+
+## Firmware proxy URL
+
+An organization can have a firmware proxy URL. When it is set, NervesHub does not hand a device the firmware's download URL directly. It hands the device the proxy URL with the real download URL added as a `firmware` query parameter, encoded as URL-safe Base64 without padding:
+
+```text
+<firmware_proxy_url>?firmware=<base64url of the firmware URL>
+```
+
+Your proxy must decode the parameter to find the firmware to serve.
+
+The setting is stored in the organization's settings as `firmware_proxy_url`. The current web UI and REST API have no field for changing it.
+
+## Pause a group
+
+Pausing a group is the fastest way to stop a rollout. See [Pause a group](/setup/deployments#pause-a-group).
+
+## Related pages
+
+- [Deployment groups](/setup/deployments)
+- [Releases](/deployments/releases)
+- [Deployment workflows](/concepts/deployment-workflows)
+- [Device-managed updates](/updates/device-managed-updates)
+- [Delta updates](/management/delta-updates)

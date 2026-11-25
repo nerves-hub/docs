@@ -1,0 +1,513 @@
+---
+title: "Webhooks"
+sidebarTitle: "Webhooks"
+description: "Send device, error and deployment workflow events from NervesHub to your own HTTP endpoint as signed JSON."
+---
+
+A webhook sends your organization's events to an HTTP endpoint you run. Each event is a signed JSON `POST`. Use webhooks to feed a data warehouse, drive a dashboard, or trigger your own automation when a device connects, reports health, or finishes an update.
+
+A webhook belongs to an organization. It sends the events of every product in the organization, including products added later, or only the products you choose.
+
+Event types and the shape of each event's `data` only grow. Keys can be added. They are not renamed or removed without a new event type. Write your receiver to ignore keys it does not know.
+
+## Requirements
+
+- NervesHub 2.5.0 or later.
+- The built-in **Manage** or **Admin** role, or a custom role with the webhook permissions (**Add webhooks**, **Edit webhooks**, **Delete webhooks**). See [Roles](/access/roles).
+- An endpoint on a public address. An instance only delivers to private or loopback addresses when its operator sets `WEBHOOKS_ALLOW_PRIVATE_DESTINATIONS=true`. See [Feature prerequisites](/hosting/feature-prerequisites#webhooks-to-private-addresses).
+- Some events need an extension or an instance feature before they fire. See [Events](#events).
+
+An organization can have up to 20 webhooks.
+
+## Add a webhook
+
+<Steps>
+  <Step title="Open the Integrations page">
+    Open your organization and select the **Integrations** tab.
+  </Step>
+  <Step title="Start a new webhook">
+    Click **Add webhook**. Once the organization has any integration, click **Add integration**, then **Webhook**.
+  </Step>
+  <Step title="Fill in the form">
+    Enter the **URL** of your endpoint. Optionally enter a **Name**. Without one, the list shows the URL's host. Choose the products and the events, then click **Add webhook**.
+  </Step>
+  <Step title="Copy the signing secret">
+    Open the webhook's row menu and choose **Copy signing secret**. Give the secret to your receiver so it can verify deliveries.
+  </Step>
+</Steps>
+
+The row menu also has **Send test event**, **Edit**, **New signing secret…**, **Turn off** or **Turn on**, and **Delete webhook**.
+
+Members who cannot edit webhooks see each webhook's host, not its full URL, and cannot copy the secret.
+
+## Check that it works
+
+Choose **Send test event** from the webhook's row menu. NervesHub sends a `webhook.test` event to that webhook straight away and shows how your endpoint answered. The test is sent whether or not the webhook is on. Its result is not recorded against the webhook.
+
+## Delivery format
+
+Each event is a `POST` with a JSON body:
+
+```json
+{
+  "type": "device.connected",
+  "timestamp": "2026-10-13T09:41:07.123456Z",
+  "data": {
+    "org": { "name": "acme" },
+    "product": { "name": "my_app" },
+    "device": { "identifier": "nh-0f1e2d", "firmware": { "...": "..." } },
+    "connection": { "...": "..." }
+  }
+}
+```
+
+`timestamp` is when NervesHub raised the event, not when the delivery was sent. Every event carries `org`. Every event about a product carries `product`, and every event about a device carries `device`, so one endpoint can serve several products.
+
+The headers follow the [Standard Webhooks](https://www.standardwebhooks.com) specification:
+
+| Header | Value |
+| --- | --- |
+| `webhook-id` | The event's id, such as `msg_0199dd3c-…`. It is the same on every retry of the event. |
+| `webhook-timestamp` | When this attempt was sent, in Unix seconds. |
+| `webhook-signature` | `v1,` followed by the base64 HMAC-SHA256 signature. |
+| `content-type` | `application/json` |
+| `user-agent` | `NervesHub-Webhooks/1.0` |
+
+Answer with any `2xx` status to accept a delivery. NervesHub reads only the status and ignores the response body. Answer quickly and do the work afterwards. A delivery that is not answered within 15 seconds counts as failed.
+
+An event whose encoded body is larger than 256 KB is dropped and not delivered.
+
+## Verify signatures
+
+Each webhook has its own signing secret. It is `whsec_` followed by 32 random bytes in base64.
+
+The signature is the HMAC-SHA256 of the string below, keyed with the base64-decoded part of the secret after `whsec_`:
+
+```text
+<webhook-id>.<webhook-timestamp>.<raw request body>
+```
+
+Sign the raw body exactly as you received it. Parsing the JSON and encoding it again can change the bytes and break the signature.
+
+The Standard Webhooks libraries do all of this, including the constant-time comparison and the timestamp check.
+
+<Tabs>
+  <Tab title="Python">
+    ```python
+    from standardwebhooks.webhooks import Webhook
+
+    payload = Webhook(secret).verify(request.body, request.headers)
+    ```
+  </Tab>
+  <Tab title="JavaScript">
+    ```js
+    import { Webhook } from "standardwebhooks";
+
+    const payload = new Webhook(secret).verify(rawBody, headers);
+    ```
+  </Tab>
+  <Tab title="Python, no library">
+    ```python
+    import base64
+    import hashlib
+    import hmac
+    import time
+
+
+    def verify(secret: str, headers: dict, raw_body: bytes, tolerance_seconds: int = 300) -> bool:
+        """Return True if the delivery was signed with `secret`."""
+        msg_id = headers["webhook-id"]
+        timestamp = headers["webhook-timestamp"]
+
+        # Refuse deliveries whose timestamp is too far from your clock.
+        if abs(time.time() - int(timestamp)) > tolerance_seconds:
+            return False
+
+        key = base64.b64decode(secret.removeprefix("whsec_"))
+        signed = f"{msg_id}.{timestamp}.".encode() + raw_body
+        expected = "v1," + base64.b64encode(hmac.new(key, signed, hashlib.sha256).digest()).decode()
+
+        # The header can hold several space-separated signatures.
+        return any(
+            hmac.compare_digest(candidate, expected)
+            for candidate in headers["webhook-signature"].split()
+        )
+    ```
+
+    `headers` must be keyed by lowercase header name. `raw_body` is the request body as bytes, before any JSON parsing.
+  </Tab>
+</Tabs>
+
+Without a library, do the three things the example does. Check that `webhook-timestamp` is within a few minutes of your clock. Compute the signature over the raw body. Compare it with each space-separated entry in `webhook-signature` using a constant-time comparison.
+
+**New signing secret…** replaces the secret. The old secret stops working at once, including for retries of earlier events, so update your receiver straight away.
+
+## Retries, ordering and duplicates
+
+A delivery fails when the status is outside `2xx`, the request times out, or the connection fails. NervesHub retries a failed delivery after about 5 seconds, 1 minute, 5 minutes, 30 minutes and 2 hours. After the sixth attempt it drops the delivery.
+
+Redirects are not followed. A `3xx` counts as a failure. Change the webhook's URL instead.
+
+Deliveries are at least once and unordered. A retry can arrive after a later event, and an event can be delivered twice. Use `webhook-id` to discard duplicates and `timestamp` to order events.
+
+Each attempt reads the webhook as it is at that moment. A retry goes to the current URL and is signed with the current secret.
+
+## When an endpoint keeps failing
+
+While an endpoint is failing, the **Integrations** page shows when it started failing and the latest error.
+
+For 30 seconds after a failure, NervesHub does not send that webhook's other deliveries. Each one counts as a failed attempt and is retried on the schedule above.
+
+NervesHub turns a webhook off when its endpoint:
+
+- has accepted no delivery for 24 hours, or
+- answers `410 Gone`.
+
+Each product the webhook was sending events for gets a [product notification](/management/notifications) saying why.
+
+Deliveries for a webhook that is off are dropped. They are not saved for later. Fix the endpoint, then choose **Turn on** from the row menu. Turning a webhook on clears its recorded failures.
+
+## Where a webhook can point
+
+The URL must start with `https://` or `http://` and must not include a username or password. Use `https://`. The signature proves where a delivery came from. It does not hide the contents.
+
+By default a webhook can only reach public addresses. NervesHub refuses loopback, private, link-local and other reserved addresses:
+
+- A URL with a literal private address is refused when you save the webhook.
+- A host name is resolved at delivery time. The delivery fails if any address it resolves to is private or reserved.
+
+An instance operator can allow private destinations with `WEBHOOKS_ALLOW_PRIVATE_DESTINATIONS=true`. See [Feature prerequisites](/hosting/feature-prerequisites#webhooks-to-private-addresses).
+
+## Events
+
+A webhook subscribes to any of these types. `webhook.test` is only sent on request.
+
+| Type | Fires when | What must be in place |
+| --- | --- | --- |
+| `device.connected` | A device finished connecting and is online. | Nothing. |
+| `device.disconnected` | A device's connection closed, or NervesHub closed it after the device stopped sending heartbeats. | Nothing. |
+| `device.health_reported` | A device sent a health report. | The [Health extension](/extensions/health) on for the device. |
+| `device.metrics_reported` | A device sent a batch of metrics readings. | A device client that uses the [metrics extension](/extensions/metrics-and-alarms), and [ClickHouse](/hosting/clickhouse) on the instance. `nerves_hub_link` 2.14.0 has no metrics extension. It sends metrics in health reports. |
+| `device.health_status_changed` | A device's health status moved, such as from healthy to warning. | Devices that report health or metrics. Judging against a [health profile](/management/health-monitoring) needs ClickHouse on the instance. |
+| `device.firmware_update.scheduled` | An update was sent to a device. | Nothing. |
+| `device.firmware_update.progress` | A device reported how its update is going. | Nothing. |
+| `device.firmware_update.finished` | A device's update attempt ended. | Nothing. |
+| `device.firmware_validated` | A device confirmed that its firmware is good. | A device client that reports firmware validation. `nerves_hub_link` does from 2.8.1. |
+| `error_group.created` | A device reported an error not seen before in its product. | The [Error Reports extension](/extensions/error-reports) on for the device (`nerves_hub_link` 2.13.0 or later), and ClickHouse on the instance. |
+| `error_group.reopened` | An error that was marked resolved happened again. | The same as `error_group.created`. |
+| `deployment_group.workflow_step.started` | A [deployment group](/setup/deployments)'s workflow began a step, or began it again after a retry. | A deployment group with a [workflow](/concepts/deployment-workflows). |
+| `deployment_group.workflow_step.awaiting_approval` | A workflow reached a step that waits for approval. | A workflow with an approval step. |
+| `deployment_group.workflow_step.completed` | A workflow step finished, or an approval step was approved. | A deployment group with a workflow. |
+| `deployment_group.workflow_step.failed` | More of a step's devices failed to update than the step tolerates. | A deployment group with a workflow. |
+| `deployment_group.workflow_step.skipped` | Somebody skipped a workflow step. | A deployment group with a workflow. |
+
+An extension must be on for the product and for the device. A product created through the API or `nh` starts with every extension off, so check **Product settings** before expecting an extension's events. See [Extensions overview](/extensions/overview). For the instance side, see [Feature prerequisites](/hosting/feature-prerequisites).
+
+### The device
+
+Every device event's `data.device` identifies the device and the firmware it is running, as far as NervesHub knows:
+
+```json
+{
+  "identifier": "nh-0f1e2d",
+  "firmware": {
+    "uuid": "6bb3bf62-4d9a-5a21-9a8b-38e6e8c8f6d1",
+    "version": "1.4.2",
+    "platform": "rpi4",
+    "architecture": "arm"
+  }
+}
+```
+
+`firmware` is `null` for a device that has never reported its firmware. The examples below leave out `device`, `org` and `product`.
+
+### `device.connected`
+
+```json
+{
+  "connection": {
+    "id": "0199dd3c-2f6e-7b1a-9d0e-3c5c2a1b4f00",
+    "established_at": "2026-10-13T09:41:06.871203Z"
+  }
+}
+```
+
+`connection.id` is the same in the matching `device.disconnected`.
+
+### `device.disconnected`
+
+```json
+{
+  "connection": {
+    "id": "0199dd3c-2f6e-7b1a-9d0e-3c5c2a1b4f00",
+    "established_at": "2026-10-13T09:41:06.871203Z",
+    "disconnected_at": "2026-10-13T11:02:44.510022Z",
+    "reason": "Stale connection",
+    "reason_code": "stale_connection",
+    "expected_wake_at": null
+  }
+}
+```
+
+`reason_code` says why the connection ended when NervesHub knows, and is `null` when it does not. Match on `reason_code`. `reason` is the same thing written for people and can be reworded.
+
+| `reason_code` | When |
+| --- | --- |
+| `light_sleep`, `deep_sleep` | The device said it was going to sleep. |
+| `rebooting` | The device said it was rebooting. |
+| `stale_connection` | The device stopped sending heartbeats and NervesHub closed its connection. This is how a device that lost power or network is noticed. |
+| `duplicate_connection` | The device connected again before NervesHub noticed this connection had gone. The event is sent as the new connection starts, and `disconnected_at` is when the old connection was last seen. |
+| `reconnect_requested` | Someone asked the device to reconnect, from the web UI or the API. |
+| `key_revoked` | The [shared secret](/auth/shared-secret) key the device authenticated with was deactivated. |
+| `platform_update` | The NervesHub node holding the connection shut down, as during a deploy. |
+
+`expected_wake_at` is when a device that went to sleep said it would be back. It is `null` otherwise, including for a sleeping device that gave no time.
+
+<Note>
+  Devices that sleep are on the main branch but in no tagged release as of `nerves_hub_link` 2.14.0 and NervesHub 2.5.4. See [Sleeping devices](/management/sleeping-devices).
+</Note>
+
+### `device.health_reported`
+
+```json
+{
+  "metrics": { "cpu_temp": 47.2, "mem_used_percent": 31.0 },
+  "alarms": { "Elixir.MyApp.DiskFull": "/data is 97% full" },
+  "metadata": { "site": "north-yard" }
+}
+```
+
+`metrics` holds the readings NervesHub stored. Only numbers are kept. `alarms` and `metadata` are passed on as the device sent them.
+
+### `device.metrics_reported`
+
+```json
+{
+  "reports": [
+    { "timestamp": "2026-10-13T09:40:00Z", "metrics": { "fps": 59.0 } },
+    { "timestamp": "2026-10-13T09:41:00Z", "metrics": { "fps": 60.0 } }
+  ]
+}
+```
+
+Each report's `timestamp` is when the device took the readings. Reports NervesHub did not store are left out. A batch with no stored report sends no event.
+
+### `device.health_status_changed`
+
+```json
+{
+  "status": "unhealthy",
+  "previous_status": "healthy",
+  "reasons": {
+    "warning": {},
+    "unhealthy": {
+      "cpu_usage_percent": {
+        "value": 75,
+        "threshold": 90.0,
+        "operator": "gte",
+        "period_seconds": 3600,
+        "aggregation": "share"
+      }
+    }
+  }
+}
+```
+
+`status` and `previous_status` are each one of `unknown`, `healthy`, `warning` or `unhealthy`. `previous_status` is `null` the first time a device is judged.
+
+`reasons` names each metric holding the device at `warning` or `unhealthy`. It is `null` when nothing is engaged.
+
+On an instance without ClickHouse, or for a product without a health profile, NervesHub judges a device on its latest report alone.
+
+The event is sent only when the status changes. A device that stays at `warning` while the metric holding it there changes sends nothing.
+
+### `device.firmware_update.scheduled`
+
+```json
+{
+  "firmware": { "uuid": "1d9e47a8-…", "version": "1.5.0" },
+  "initiated_by": "deployment_group",
+  "deployment_group": { "name": "production" }
+}
+```
+
+`initiated_by` is `"deployment_group"`, `"user"` for an update a person sent from NervesHub, or `"device"` for a device that manages its own updates and asked for one. `deployment_group` is `null` when no deployment group is involved.
+
+### `device.firmware_update.progress`
+
+```json
+{
+  "status": "downloading",
+  "progress": 42,
+  "firmware": { "uuid": "1d9e47a8-…", "version": "1.5.0" }
+}
+```
+
+`status` is one of `received`, `started`, `downloading`, `updating` or `completed`. `completed` means the firmware is installed and the device is about to restart into it. The update has not finished until the device comes back on the new firmware.
+
+`progress` is a percentage for `downloading` and `updating`, and `null` otherwise. While a device downloads or updates, an event is sent when the stage changes and then at most every 15 seconds.
+
+### `device.firmware_update.finished`
+
+```json
+{
+  "outcome": "failed",
+  "reason": "fwup error: signature verification failed",
+  "source_firmware": { "uuid": "6bb3bf62-…", "version": "1.4.2" },
+  "target_firmware": { "uuid": "1d9e47a8-…", "version": "1.5.0" },
+  "deployment_group": { "name": "production" }
+}
+```
+
+| `outcome` | Meaning |
+| --- | --- |
+| `succeeded` | The device came back running the new firmware. |
+| `failed` | The device reported that the update failed. |
+| `ignored` | The device declined the update. |
+| `rescheduled` | The device asked for the update to be sent again later. |
+| `expired` | The device stopped reporting progress. |
+| `abandoned` | The device reconnected still running its old firmware, without saying why. |
+
+`reason` is whatever the device said, if anything. `source_firmware`, `target_firmware` and `deployment_group` are `null` when not known. A firmware's `version` is `null` once the firmware has been deleted.
+
+### `device.firmware_validated`
+
+The device marked the firmware it is running as good. The event carries nothing beyond `device`.
+
+### `error_group.created` and `error_group.reopened`
+
+These events are about an error, not one device. They carry `org`, `product` and `error`, and no `device`:
+
+```json
+{
+  "error": {
+    "id": 4182,
+    "kind": "error",
+    "source": "logger",
+    "reason": "** (RuntimeError) connection refused",
+    "top_frame": "MyApp.Worker.handle_info/2 (lib/my_app/worker.ex:42)",
+    "occurrence_count": 3,
+    "first_seen_at": "2026-10-14T09:12:03.512000Z",
+    "last_seen_at": "2026-10-14T09:12:04.007000Z"
+  }
+}
+```
+
+`id` is the error's id in NervesHub and is the same in every event about it. `occurrence_count` is how many times the error has happened across the product's devices so far. `top_frame` is `null` when the device sent no stack frames. `reason` is what the device said, so treat it as untrusted text.
+
+A muted error does not reopen, so it sends neither event.
+
+### Deployment workflow events
+
+These events are about a deployment group, not one device. They carry `org`, `product` and the workflow, and no `device`:
+
+```json
+{
+  "deployment_group": { "name": "production" },
+  "release": {
+    "number": 4,
+    "firmware": {
+      "uuid": "6bb3bf62-4d9a-5a21-9a8b-38e6e8c8f6d1",
+      "version": "1.5.0"
+    }
+  },
+  "workflow": { "steps": 3 },
+  "step": {
+    "id": 812,
+    "number": 1,
+    "name": "Canary",
+    "type": "update_devices",
+    "status": "error",
+    "started_at": "2026-10-14T09:12:03Z",
+    "finished_at": "2026-10-14T09:40:51Z"
+  },
+  "user": null,
+  "failed_devices": 3
+}
+```
+
+- `workflow.steps` is how many steps the release's workflow has.
+- `step.type` is `update_devices`, `approval_required` or `catch_all`. `catch_all` is the last step.
+- `step.status` is the step's status after it moved: `in_progress`, `completed`, `error` or `skipped`.
+- `user` is who retried, approved or skipped the step, as `{"name": ...}`. It is `null` when the workflow moved on its own.
+- `failed_devices` is set only on `failed`.
+
+An approval step sends `awaiting_approval` in place of `started`.
+
+### `webhook.test`
+
+Sent only by **Send test event** or the API's test endpoint, to the one webhook being tested. It carries `org` and no `product` or `device`:
+
+```json
+{
+  "message": "A test event sent by Jane Doe from NervesHub."
+}
+```
+
+## Manage webhooks with the API
+
+The API manages the same webhooks under `/api/orgs/{org_name}/webhooks`. Authenticate as described in [API authentication](/api/authentication).
+
+Every endpoint needs permission to change webhooks, reading included, because a webhook's URL can carry the receiver's credentials. Listing, getting, updating, testing and regenerating need **Edit webhooks**. Creating needs **Add webhooks**. Deleting needs **Delete webhooks**. The built-in **Manage** and **Admin** roles have all three.
+
+| Request | Does |
+| --- | --- |
+| `GET /webhooks` | Lists the organization's webhooks, oldest first. |
+| `POST /webhooks` | Adds one from `url`, `events` and optionally `description`, `products`, `all_products` and `enabled`. Returns `201`. |
+| `GET /webhooks/{id}` | Gets one, with its delivery state (`failing_since`, `last_error`, `last_error_at`, `disabled_reason`). |
+| `PATCH /webhooks/{id}` | Changes `url`, `description`, `events`, `products`, `all_products` or `enabled`. `PUT` does the same. |
+| `DELETE /webhooks/{id}` | Removes it. Returns `204`. |
+| `POST /webhooks/{id}/regenerate_secret` | Replaces the signing secret and returns the new one. |
+| `POST /webhooks/{id}/test` | Sends a `webhook.test` event and returns `delivered`, `status` and `error`. It answers `200` whether or not your endpoint accepted the event. |
+
+Create a webhook:
+
+```bash
+curl -X POST "https://your.nerveshub.host/api/orgs/acme/webhooks" \
+  -H "Authorization: Bearer $NERVES_HUB_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://hooks.example.com/nerves-hub",
+    "description": "Fleet dashboard",
+    "events": ["device.connected", "device.disconnected"],
+    "products": ["my_app"]
+  }'
+```
+
+Responses wrap the webhook in `data`. Products are named, as in the rest of the API.
+
+- A webhook with `"all_products": true`, the default, sends every product's events, including products added later.
+- Naming products in `products` sets `all_products` to `false` unless the request says otherwise.
+- `products` in a response is empty for a webhook that sends every product's events.
+
+The signing secret is returned as `secret` only by `POST /webhooks` and `regenerate_secret`. Listing or getting a webhook never returns it. If you lose the secret, regenerate it.
+
+The full request and response schemas are in your instance's API documentation at `/api/docs`, under **Webhooks**.
+
+### With the CLI
+
+The `nh` CLI wraps the same endpoints:
+
+```bash
+nh webhook list
+nh webhook show 12
+nh webhook create --url https://hooks.example.com/nerves-hub \
+  --events device.connected,device.disconnected --products my_app \
+  --description "Fleet dashboard"
+nh webhook update 12 --events device.connected --all-products
+nh webhook update 12 --enabled=false
+nh webhook test 12
+nh webhook regenerate-secret 12
+nh webhook delete 12
+```
+
+`nh webhook create` prints the signing secret once. Save it then.
+
+## Related pages
+
+- [Slack](/outbound/slack)
+- [Microsoft Teams](/outbound/teams)
+- [Discord](/outbound/discord)
+- [Event stream](/outbound/event-stream)
+- [Roles and permissions](/access/roles)
+- [Webhooks to private addresses](/hosting/feature-prerequisites#webhooks-to-private-addresses)

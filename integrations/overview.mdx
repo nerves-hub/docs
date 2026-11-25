@@ -1,38 +1,84 @@
 ---
-title: "Choosing a Device Client"
+title: "Choosing a device client"
 sidebarTitle: "Overview"
-description: "The ways a device can connect to NervesHub: NervesHubLink for Nerves, AtomVM on the ESP32, a Rust agent for other Linux systems, and a Yocto layer."
+description: "The clients that connect a device to NervesHub, what each runs on, which firmware format it applies, and what state it is in."
 ---
 
-A device connects to NervesHub over a Phoenix Channels WebSocket and speaks the [device protocol](/device-api/websocket-overview). Nothing about that protocol is Elixir-specific, so a client is whatever software on the device speaks it — reporting the firmware it is running, accepting update assignments, and handing the download to whatever writes firmware on that platform.
+A device connects to NervesHub over a Phoenix Channels WebSocket and speaks the [device protocol](/device-api/websocket-overview). A client is the software on the device that speaks it. It reports the firmware the device is running, receives updates, and hands the download to whatever writes firmware on that platform.
 
-Several clients already exist. Which one you want follows from what the device runs.
+Which client you use follows from what the device runs.
 
-## The options
+## The clients
 
-| Client | Language | Runs on | Writes firmware with |
+| Client | Language | Runs on | Firmware format |
 | --- | --- | --- | --- |
-| [NervesHubLink](/integrations/nerves-hub-link) | Elixir | Nerves | fwup |
-| [AtomVM agent](/integrations/atomvm-esp32) | Erlang, with an Elixir layer | AtomVM on the ESP32 | packbeam partitions |
-| [Linux agent](/integrations/linux-agent) | Rust | Linux that is not Nerves | fwup or RAUC |
-| [meta-nerveshub](/integrations/yocto) | BitBake | Yocto builds | packages the Linux agent |
+| [NervesHubLink](/integrations/nerves-hub-link) | Elixir | Nerves | [fwup](/setup/firmware) |
+| [Linux agent](/integrations/linux-agent) | Rust | Linux that is not Nerves | [fwup](/setup/firmware) or [RAUC](/updates/rauc) |
+| [AtomVM agent](/integrations/atomvm-esp32) | Erlang | AtomVM on the ESP32 | [AtomVM packbeam](/updates/atomvm) |
+| [nerves-hub-link-esp32](https://github.com/nerves-hub/nerves-hub-link-esp32) | Rust | ESP-IDF on the ESP32 | [ESP-IDF application image](/updates/esp-idf) |
+
+[meta-nerveshub](/integrations/yocto) is not a client. It is a Yocto layer that packages the Linux agent into an image.
 
 <Note>
-  `meta-nerveshub` is a packaging layer rather than a separate client. It builds the Rust Linux agent into a Yocto image; the agent is what actually connects.
+  fwup is the only format an instance accepts by default. RAUC, AtomVM and ESP-IDF support are experimental. Each must be enabled for the instance and then for the product. See [feature prerequisites](/hosting/feature-prerequisites#firmware-formats) and the page for each format.
 </Note>
+
+## State of each client
+
+| Client | Version in source | State |
+| --- | --- | --- |
+| NervesHubLink | 2.14.0 | The reference client. The server is developed against it. |
+| Linux agent | 0.1.0 | Exercised end to end against a NervesHub. Both update tools install, roll back and validate on a QEMU rig with a real bootloader. Not yet run on production hardware. Client-certificate authentication and resumable downloads are not implemented. |
+| AtomVM agent | 0.2.0 | Tested on an ESP32 against NervesHub for shared-secret authentication, updates, signature verification, the [console](/management/remote-console), and the health, geo and logging extensions. Reconnecting, resuming downloads, reverting, [support scripts](/management/support-scripts) and [device-managed updates](/updates/device-managed-updates) are tested against fakes only. Client certificates are accepted in config but have never run on a device. |
+| nerves-hub-link-esp32 | 0.1.0 | Its README describes it as in early development. Updates, delta updates, rollback confirmation, the health, geo and logging extensions and a fixed-command console are implemented. It has run on an ESP32 and an ESP32-C6, with [shared secrets](/auth/shared-secret) and with client certificates. Resumable downloads, support scripts, and the [local shell](/extensions/local-shell) and [network identity](/extensions/network-identity) extensions are not implemented. |
+
+These states come from each project's own README. Check the repository for the current picture before you commit to one.
 
 ## Choosing
 
-**Running Nerves?** Use [NervesHubLink](/integrations/nerves-hub-link). It is the reference client, the one the protocol is designed against, and the one every other client is measured by.
+**Running Nerves?** Use [NervesHubLink](/integrations/nerves-hub-link).
 
-**On an ESP32 with AtomVM?** Use the [AtomVM agent](/integrations/atomvm-esp32). Be aware that it needs AtomVM built from source rather than a stock build — the WebSocket transport is an ESP-IDF component, so a stock VM cannot reach NervesHub at all.
+**Running Linux without Nerves?** Use the [Linux agent](/integrations/linux-agent). It is one Rust binary that runs beside your application and shells out to `fwup` or `rauc` to write firmware. If you build the image with Yocto, add [meta-nerveshub](/integrations/yocto).
 
-**On Linux, but not Nerves?** Use the [Linux agent](/integrations/linux-agent). It is a single Rust binary that leaves your application alone in whatever language it is already written in, and shells out to `fwup` or `rauc` to write firmware.
+**Running Erlang or Elixir on an ESP32 with AtomVM?** Use the [AtomVM agent](/integrations/atomvm-esp32). It needs AtomVM built from source, because the WebSocket transport is an ESP-IDF component.
 
-**Building that Linux image with Yocto?** Add [meta-nerveshub](/integrations/yocto) to package the agent, alongside `meta-rauc` and `meta-rust-bin`.
+**Running a Rust application on ESP-IDF?** Use [nerves-hub-link-esp32](https://github.com/nerves-hub/nerves-hub-link-esp32). This site has no page for the crate itself. Its README is the reference, and [ESP-IDF application images](/updates/esp-idf) covers the NervesHub side.
+
+## What differs between clients
+
+Features described elsewhere on this site are written for NervesHubLink unless the page says otherwise. The other clients differ in ways that matter when you operate a mixed fleet:
+
+- **Console.** NervesHubLink serves an IEx session. The AtomVM agent and nerves-hub-link-esp32 serve a fixed set of commands. The Linux agent offers a shell through the local shell extension.
+- **Support scripts.** On Nerves a script is Elixir. On the Linux agent it is a shell script. On the AtomVM agent it is a list of console commands. nerves-hub-link-esp32 does not run scripts. Scripts belong to the product, so a product with more than one kind of device needs scripts written for each.
+- **Extensions.** Each client implements its own subset. See its page or README.
+- **Delta updates.** Only fwup and ESP-IDF firmware are delta updated. See [Delta updates](/management/delta-updates) and [ESP-IDF application images](/updates/esp-idf#delta-updates).
+
+## How NervesHub identifies a client
+
+NervesHub 2.5.2 and later record which client library and version each device connected with. It reads them from the `User-Agent` header of the WebSocket upgrade request.
+
+| Client | Header | Recorded as |
+| --- | --- | --- |
+| NervesHubLink | `NHL/<version>` or `nerves_hub_link/<version>` | `nerves_hub_link` |
+| Linux agent | `nerves-hub-link-agent/<version>` | `nerves_hub_link_agent` |
+| nerves-hub-link-esp32 | `nerves-hub-link-esp32/<version>` | `nerves_hub_link_esp32` |
+| AtomVM agent | `nerves_hub_link_atomvm_esp32/<version>` | `nerves_hub_link_atomvm_esp32` |
+
+NervesHubLink sends the header from 2.14.0. A connection without a recognised header is recorded with an unknown library.
+
+A client that is not in this list can name itself with a `custom#` prefix, for example `User-Agent: custom#acme-link/1.4.0`. See [Connection lifecycle](/connection/lifecycle).
 
 ## Writing your own
 
-None of these are privileged. The server has no notion of an official client — it speaks the documented protocol, and anything that speaks it back is a device.
+The server has no notion of an official client. Anything that speaks the device protocol is a device.
 
-If you are targeting a runtime none of the above covers, the [Device WebSocket Protocol](/device-api/websocket-overview) and [WebSocket Channel Events](/device-api/websocket-events) references describe the connection, the join, and every message in both directions. The existing clients are also worth reading as reference implementations, particularly for reconnect behaviour and update progress reporting.
+If none of these clients covers your runtime, the [Device WebSocket protocol](/device-api/websocket-overview) and [WebSocket channel events](/device-api/websocket-events) references describe the connection, the join, and the messages in both directions. The existing clients are also useful as reference implementations.
+
+## Related pages
+
+- [NervesHubLink for Nerves](/integrations/nerves-hub-link)
+- [Linux agent](/integrations/linux-agent)
+- [Yocto layer](/integrations/yocto)
+- [AtomVM on ESP32](/integrations/atomvm-esp32)
+- [Extensions overview](/extensions/overview)
+- [How firmware updates work](/updates/overview)

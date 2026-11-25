@@ -1,149 +1,155 @@
 ---
-title: "Add NervesHubLink to a Project"
-sidebarTitle: "Add to Project"
-description: "Step-by-step guide to adding nerves_hub_link to your Nerves project mix.exs and configuring authentication for OTA firmware updates."
+title: "Add NervesHubLink to a project"
+sidebarTitle: "Add to project"
+description: "Add the nerves_hub_link dependency to a Nerves project, choose how the device authenticates, and check that it connects."
 ---
 
-Adding NervesHub to an existing Nerves project takes only a few minutes. You'll add the `nerves_hub_link` dependency, choose an authentication method, and configure your device to connect to NervesCloud. Once your firmware is flashed, the device will appear online in your NervesHub dashboard automatically.
+`nerves_hub_link` is the client library that connects a Nerves device to NervesHub. You add the dependency, point it at your NervesHub host, and choose how the device proves who it is. The device appears in your product the first time it connects.
 
-<Note>
-  Configure `NervesHubLink` only in `config/target.exs` (or environment-specific target configs such as `config/prod.exs`), not in `config/config.exs`. The link library is a device-side dependency and should never be evaluated on your host machine.
-</Note>
+## Requirements
+
+- A Nerves project. `nerves_hub_link` 2.13.0 and later need Elixir 1.15 or later.
+- A product in NervesHub. See [Products](/setup/products).
+- Each device needs a unique serial number. With a shared secret, NervesHub identifies the device by the serial number its firmware reports. With a certificate, NervesHub identifies the device by the certificate's common name, so issue each certificate with the device's serial number as its common name.
 
 <Steps>
-  <Step title="Add the dependency to mix.exs">
-    Open your project's `mix.exs` and add `nerves_hub_link` to the list of dependencies:
+  <Step title="Add the dependency">
+    Add `nerves_hub_link` to the target dependencies in `mix.exs`:
 
     ```elixir
     defp deps do
       [
         # ... existing deps ...
-        {:nerves_hub_link, "~> 2.7"}
+        {:nerves_hub_link, "~> 2.14"}
       ]
     end
     ```
 
-    Then fetch the new dependency:
+    Then fetch it:
 
     ```bash
     mix deps.get
     ```
+
+    `nerves_hub_link` is an OTP application and starts with your firmware. You do not need to add it to a supervision tree. To start it yourself, see [Connection lifecycle](/connection/lifecycle).
   </Step>
 
-  <Step title="Add nerves_hub_link to extra_applications">
-    If your `mix.exs` specifies an `extra_applications` list inside the `application/0` callback, add `:nerves_hub_link` so it starts with your application:
+  <Step title="Choose how the device authenticates">
+    NervesHubLink picks a configurator in this order:
 
-    ```elixir
-    def application do
-      [
-        mod: {MyFirmware.Application, []},
-        extra_applications: [:logger, :nerves_hub_link]
-      ]
-    end
-    ```
+    1. The module you set as `configurator` in the `:nerves_hub_link` config.
+    2. `NervesHubLink.Configurator.NervesKey`, if the `nerves_key` library is in your project.
+    3. `NervesHubLink.Configurator.TPM`, if the `tpm` library is in your project.
+    4. `NervesHubLink.Configurator.SharedSecret`.
 
-    If you do not specify `extra_applications`, OTP will start it automatically and you can skip this step.
+    | Method | What the device holds | Page |
+    | --- | --- | --- |
+    | Shared secret | A key and secret, for the product or for one device | [Shared secret](/auth/shared-secret) |
+    | Certificate and key on the filesystem | An X.509 certificate and private key | [Device certificates](/auth/device-certificates) |
+    | NervesKey | A certificate and key in a NervesKey secure element | [NervesKey](/auth/nerveskey) |
+    | TPM | A certificate and key in a TPM | [TPM](/auth/tpm) |
+
+    Shared secrets are the quickest way to connect a first device. They only work when the NervesHub instance has them turned on. See [Feature prerequisites](/hosting/feature-prerequisites#shared-secret-authentication).
   </Step>
 
-  <Step title="Choose an authentication method">
-    NervesHub supports three authentication modes. Pick the one that fits your deployment:
+  <Step title="Configure the connection">
+    Add the configuration for your method to `config/target.exs`. Replace the host with your NervesHub device host.
 
     <Tabs>
-      <Tab title="Shared Secret">
-        Shared Secret authentication uses a `product_key` and `product_secret` pair generated in the NervesCloud UI. This is the fastest way to get started and works well for development and evaluation.
+      <Tab title="Shared secret">
+        Create a shared secret in **Product settings** and copy its key and secret. See [Shared secret](/auth/shared-secret).
 
         ```elixir
         # config/target.exs
         config :nerves_hub_link,
-          auth: %{
-            product_key: "your-product-key",
-            product_secret: "your-product-secret"
-          }
+          host: "devices.nervescloud.com",
+          shared_secret: [
+            product_key: System.fetch_env!("NERVES_HUB_PRODUCT_KEY"),
+            product_secret: System.fetch_env!("NERVES_HUB_PRODUCT_SECRET")
+          ]
         ```
 
-        Retrieve your `product_key` and `product_secret` from **Products → Settings → Shared Secret** in the NervesCloud dashboard.
+        `System.fetch_env!/1` runs when you build the firmware. Set both variables in the shell or CI job that runs `mix firmware`.
       </Tab>
 
-      <Tab title="Device Certificates">
-        Device Certificate authentication uses X.509 client certificates over mTLS. Each device holds a unique certificate signed by a Certificate Authority (CA) that you register with NervesHub. This is the recommended mode for production fleets.
-
+      <Tab title="Certificate and key files">
         ```elixir
         # config/target.exs
         config :nerves_hub_link,
-          auth: %{
-            cert: File.read!("/data/nerves_hub/cert.pem"),
-            key: File.read!("/data/nerves_hub/key.pem")
-          }
+          host: "devices.nervescloud.com",
+          configurator: NervesHubLink.Configurator.LocalCertKey
         ```
 
-        Provision the certificate and private key onto each device at manufacturing time, or generate them with the `nh device certificates generate` command during development.
+        By default the configurator reads `/data/nerves-hub/cert.pem` and `/data/nerves-hub/key.pem`. See [Device certificates](/auth/device-certificates).
       </Tab>
 
       <Tab title="NervesKey">
-        NervesKey uses an ATECC508A or ATECC608A secure element to store the device private key in tamper-resistant hardware. The certificate is read directly from the chip at runtime.
-
-        Add the `nerves_key` dependency alongside `nerves_hub_link`:
-
         ```elixir
-        {:nerves_key, "~> 1.0"}
+        # mix.exs
+        {:nerves_key, "~> 1.2"}
         ```
-
-        Then configure NervesHubLink to use the hardware-backed authenticator:
 
         ```elixir
         # config/target.exs
         config :nerves_hub_link,
-          configurator: NervesKey.NervesHubLinkConfigurator
+          host: "devices.nervescloud.com"
         ```
 
-        NervesKey handles key generation and certificate signing automatically during provisioning. See the [NervesKey documentation](https://hexdocs.pm/nerves_key) for chip wiring and provisioning details.
+        See [NervesKey](/auth/nerveskey).
+      </Tab>
+
+      <Tab title="TPM">
+        ```elixir
+        # mix.exs
+        {:tpm, "~> 0.2.0"}
+        ```
+
+        ```elixir
+        # config/target.exs
+        config :nerves_hub_link,
+          host: "devices.nervescloud.com"
+        ```
+
+        See [TPM](/auth/tpm).
       </Tab>
     </Tabs>
-  </Step>
-
-  <Step title="Configure config/target.exs">
-    Add the full NervesHubLink configuration block to `config/target.exs`. The example below uses Shared Secret authentication and targets NervesCloud:
-
-    ```elixir
-    # config/target.exs
-    import Config
-
-    config :nerves_hub_link,
-      host: "devices.nervescloud.com",
-      port: 443,
-      auth: %{
-        product_key: System.fetch_env!("NERVES_HUB_PRODUCT_KEY"),
-        product_secret: System.fetch_env!("NERVES_HUB_PRODUCT_SECRET")
-      }
-    ```
-
-    Using `System.fetch_env!/1` instead of a literal fallback ensures the build fails fast with a clear error if the environment variable is not set, rather than silently embedding a placeholder in firmware. Set `NERVES_HUB_PRODUCT_KEY` and `NERVES_HUB_PRODUCT_SECRET` in your CI/CD system and in your local shell when building firmware.
 
     <Tip>
-      Disable the connection in development and test environments so that host-side tasks (such as `mix test`) never try to reach NervesHub:
+      To stop NervesHubLink from connecting while you run tests, set `connect: false`:
 
       ```elixir
-      # config/dev.exs or config/test.exs
+      # config/test.exs
       config :nerves_hub_link, connect: false
       ```
     </Tip>
   </Step>
 
-  <Step title="Rebuild firmware and verify the connection">
-    Build and burn your firmware with the updated configuration:
+  <Step title="Set up firmware signing">
+    From `nerves_hub_link` 2.13.0, a device refuses firmware it cannot signature-check. A device with no `fwup_public_keys` configured asks NervesHub for your organization's signing keys when it connects. If it has none configured and receives none, it stops taking updates.
 
+    Register a signing key before you upload firmware. See [Firmware signing](/concepts/firmware-signing).
+  </Step>
+
+  <Step title="Build, burn, and check the connection">
     ```bash
     export MIX_TARGET=rpi4   # replace with your target
     mix firmware
     mix firmware.burn
     ```
 
-    After the device boots, open the [NervesCloud dashboard](https://manage.nervescloud.com) and navigate to **Devices**. Your device should appear with a status of **Online** within a few seconds of connecting to the network.
+    Boot the device and open **Devices** in your product. A connected device shows as **Online**.
 
     If the device does not appear, check:
 
-    * The `product_key` and `product_secret` values match exactly what is shown in **Products → Settings**.
-    * The device has outbound access to `devices.nervescloud.com` on port 443.
-    * Your `config/target.exs` is being imported correctly (check for a stray `import_config` override).
+    - The device has a network connection and can reach the host. NervesHubLink checks that the network is available before its first connection attempt.
+    - With a shared secret, the key and secret match an active secret in **Product settings**, and the device clock is correct. NervesHub accepts a signature for 90 seconds.
+    - With a certificate, the signing CA is registered and the device exists or the CA has a [just-in-time provisioning](/auth/just-in-time-provisioning) profile. See [Device certificates](/auth/device-certificates).
   </Step>
 </Steps>
+
+## Related pages
+
+- [Connecting devices](/setup/connecting)
+- [Connection lifecycle](/connection/lifecycle)
+- [Applying updates on the device](/updates/applying-updates)
+- [Extensions overview](/extensions/overview)

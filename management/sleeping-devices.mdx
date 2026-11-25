@@ -1,0 +1,110 @@
+---
+title: "Devices that sleep"
+sidebarTitle: "Sleeping devices"
+description: "Have a battery device tell NervesHub it is going to sleep, so it shows as asleep with a wake time instead of offline."
+---
+
+A device on a battery often cannot keep a connection open. It wakes, connects, does its work, and sleeps again. If it does not say so first, NervesHub only sees the connection close. The device shows as offline, the same as one that lost power, and every wake counts as a disconnect in its health and in Insights.
+
+A device that tells NervesHub it is going to sleep shows as asleep instead, with when it is due back. Its sleep does not count as a disconnect.
+
+<Note>
+  This feature is on the main branch of `nerves_hub_link` and NervesHub but is in no tagged release as of `nerves_hub_link` 2.14.0 and NervesHub 2.5.4. You need a build from main of both to use it.
+</Note>
+
+## Requirements
+
+* `nerves_hub_link` from main, for `NervesHubLink.going_to_sleep/2`.
+* NervesHub from main. An older NervesHub logs the message as unknown and carries on. The connection still closes and the device shows as offline, so firmware does not need to check which server it is talking to.
+
+Nothing has to be turned on in NervesHub, and nothing extra is needed on the instance. The connection history that records each sleep needs ClickHouse. See [Feature prerequisites](/hosting/feature-prerequisites#clickhouse).
+
+## Tell NervesHub before sleeping
+
+Call `NervesHubLink.going_to_sleep/2` just before the device sleeps:
+
+```elixir
+:ok = NervesHubLink.going_to_sleep(mode: :deep, duration_ms: :timer.minutes(5))
+# now put the device to sleep
+```
+
+The call pushes a `sleeping` message on the device channel and closes the connection. It returns once both are done, or after five seconds if the close is slow, so the device can sleep straight after. NervesHub does not reply.
+
+<ParamField path=":mode" type=":deep | :light" default=":deep">
+  What kind of sleep this is. NervesHub shows the mode to people and does nothing else with it. Use `:deep` when the device loses what it was running and starts again on waking. Use `:light` when it carries on where it left off, as after a suspend to RAM.
+</ParamField>
+
+<ParamField path=":duration_ms" type="positive integer">
+  How long the device will sleep, in milliseconds. Leave it out when something else wakes the device, such as a GPIO or a sensor interrupt. NervesHub then shows it as asleep with no time given.
+</ParamField>
+
+Send how long, never when. A device that has just woken may not have its clock set, so NervesHub counts from when the message arrives.
+
+`going_to_sleep/2` returns `{:error, :disconnected}` when the device channel is not joined. It sends nothing and leaves the connection as it was. The device can still sleep, and NervesHub shows it as offline. The call raises `ArgumentError` on an unknown option, a bad `:mode`, or a `:duration_ms` that is not a positive integer.
+
+<Warning>
+  Closing the connection does not stop a firmware update in progress. If the device should not sleep in the middle of one, check `NervesHubLink.status/0` first.
+</Warning>
+
+## Reconnect on waking
+
+After `going_to_sleep/2` the connection stays closed.
+
+A device in deep sleep restarts when it wakes and connects at boot as it always does. You do not need to do anything.
+
+A device that keeps running through its sleep reconnects with `NervesHubLink.reconnect/0`. Call it when the device wakes:
+
+```elixir
+:ok = NervesHubLink.going_to_sleep(mode: :light, duration_ms: :timer.minutes(5))
+suspend_until_woken()
+NervesHubLink.reconnect()
+```
+
+A device that gave a `:duration_ms` also reconnects on its own once that much time has passed, in case nothing calls `reconnect/0`. Do not rely on that after a suspend to RAM. The BEAM's timers may not count the time spent suspended, so the reconnect fires late.
+
+A device that gave no duration stays disconnected until you call `reconnect/0`.
+
+## Check that it works
+
+Put a device to sleep with a duration, then open it in NervesHub.
+
+* On the device page, the status dot is replaced by a sleep mark. The line beside the identifier reads "Asleep" with when the device is due back, such as "back in 5 minutes".
+* In the devices list, the **Connection** column shows the same, and the **Connection** filter has an **Asleep** choice.
+* In the search bar, `connection = "asleep"` finds sleeping devices, including overdue ones. From the CLI, use `nh device list --filter connection:asleep`.
+
+When the device wakes and connects, it shows as online again.
+
+## Overdue devices
+
+A device is overdue once it is later than it said by two minutes or a tenth of how long it slept, whichever is longer. A five-minute sleep has until seven minutes. A ten-hour sleep has until eleven hours.
+
+An overdue device reads "Overdue" with how late it is, and its sleep mark turns orange. A device that gave no duration is never overdue.
+
+## What NervesHub does with a sleep
+
+* **Insights and health.** A connection that ended in sleep does not count toward the **Flapping** list on [Insights](/management/insights) or toward the disconnects health metric. See [Health monitoring](/management/health-monitoring).
+* **API.** A device's `sleep` field holds `state`, `mode`, and `expected_wake_at` from when the device says it is going to sleep until it connects again. It is null otherwise. `state` is `going_to_sleep`, `asleep`, or `overdue`.
+* **Webhooks.** The `device.disconnected` event carries a `reason_code` of `light_sleep` or `deep_sleep`, and `expected_wake_at`. See [Webhooks](/outbound/webhooks).
+
+## Limits
+
+* A sleep duration of zero or less, one that is not a whole number, or one over 366 days is recorded as a sleep with no time given.
+* NervesHub does not yet raise anything when a device misses its wake time. Overdue devices only show in the UI and the API.
+
+## Other device clients
+
+The message is part of the device protocol, so a client other than `nerves_hub_link` can send it. Before it sleeps, the device pushes `sleeping` on its device channel, then closes the socket:
+
+```json
+{"mode": "deep", "duration_ms": 300000}
+```
+
+Both fields are optional. `mode` is `"deep"` or `"light"`, and anything else is taken as `"deep"`. See [WebSocket events](/device-api/websocket-events).
+
+## Related pages
+
+- [WebSocket channel events](/device-api/websocket-events)
+- [Connection lifecycle](/connection/lifecycle)
+- [Device-managed updates](/updates/device-managed-updates)
+- [Finding devices](/management/finding-devices)
+- [Insights and history](/management/insights)

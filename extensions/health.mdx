@@ -1,0 +1,207 @@
+---
+title: "Health extension"
+sidebarTitle: "Health"
+description: "Report metrics, metadata and alarms from a Nerves device to NervesHub with the Health extension, and add your own."
+---
+
+The Health extension sends a report each time NervesHub asks for one. A report carries the device's metrics, any metadata you add, and its currently raised alarms. NervesHub uses the report for the device's health status, the **Health** tab charts, and the alarms shown on the device page.
+
+This page covers the firmware side. For what NervesHub does with the reports, see [Health monitoring](/management/health-monitoring).
+
+## Requirements
+
+- `nerves_hub_link` 2.6.0 or later.
+- NervesHub 2.3.0 or later.
+- Metric history charts and health profiles need ClickHouse on the instance. Without it, devices still report and NervesHub still shows current values. See [Feature prerequisites](/hosting/feature-prerequisites#clickhouse).
+
+## Enable it
+
+<Steps>
+  <Step title="Keep Health in your firmware">
+    `NervesHubLink.Extensions.Health` is in the default `extension_modules` list. You only need to act if you set `extension_modules` yourself, because that setting replaces the default list:
+
+    ```elixir
+    config :nerves_hub_link,
+      extension_modules: [
+        NervesHubLink.Extensions.Geo,
+        NervesHubLink.Extensions.Health,
+        NervesHubLink.Extensions.NetworkIdentity
+      ]
+    ```
+  </Step>
+
+  <Step title="Turn it on for the product">
+    In **Product settings**, on the **General** tab, switch on **Health** in the **Device extensions** card. A product created in the web UI starts with every extension on. A product created through the API or `nh` starts with every extension off.
+  </Step>
+
+  <Step title="Check the device setting">
+    On the device's **Settings** tab, **Health** in the **Extensions** card is on by default. Leave it on.
+  </Step>
+</Steps>
+
+## Check that it works
+
+Reconnect the device if it was connected before you turned Health on. Then open the device in NervesHub. The **Health** card on the **Details** tab and the **Now** card on the **Health** tab show the latest readings.
+
+NervesHub asks for a report shortly after the extension attaches, then on an interval. See [When reports are sent](#when-reports-are-sent).
+
+To see what the device would report, without sending it:
+
+```elixir
+iex> NervesHubLink.Extensions.Health.check_health()
+```
+
+## What is reported by default
+
+The default report, `NervesHubLink.Extensions.Health.DefaultReport`, samples three metric sets:
+
+| Metric set | Metrics |
+| --- | --- |
+| `NervesHubLink.Extensions.Health.MetricSet.CPU` | `cpu_temp`, `cpu_usage_percent`, `load_1min`, `load_5min`, `load_15min` |
+| `NervesHubLink.Extensions.Health.MetricSet.Memory` | `mem_size_mb`, `mem_used_mb`, `mem_used_percent` |
+| `NervesHubLink.Extensions.Health.MetricSet.Disk` | `disk_total_kb`, `disk_available_kb`, `disk_used_percentage` |
+
+One more metric set is available but not in the defaults:
+
+| Metric set | Metrics |
+| --- | --- |
+| `NervesHubLink.Extensions.Health.MetricSet.NetworkTraffic` | `[interface]_bytes_received_total` and `[interface]_bytes_sent_total` for each interface |
+
+The default report also sends the device's currently raised alarms. See [Alarms](#alarms).
+
+## Choose the metric sets
+
+Set `metric_sets` to control what is sampled. Use `:defaults` (or `:default`) to keep the three default sets and add to them:
+
+```elixir
+config :nerves_hub_link,
+  health: [
+    metric_sets: [
+      :defaults,
+      NervesHubLink.Extensions.Health.MetricSet.NetworkTraffic,
+      MyApp.HealthMetrics
+    ]
+  ]
+```
+
+Name sets one by one to send only some of the defaults:
+
+```elixir
+config :nerves_hub_link,
+  health: [
+    metric_sets: [
+      NervesHubLink.Extensions.Health.MetricSet.CPU,
+      NervesHubLink.Extensions.Health.MetricSet.Memory
+    ]
+  ]
+```
+
+Set `metric_sets: []` to send no metric sets.
+
+## Add your own metrics
+
+Implement the `NervesHubLink.Extensions.Health.MetricSet` behaviour. It has one callback, `sample/0`, which returns a map of metric names to numbers:
+
+```elixir
+defmodule MyApp.HealthMetrics do
+  @behaviour NervesHubLink.Extensions.Health.MetricSet
+
+  @impl true
+  def sample() do
+    %{
+      "battery_percent" => MyApp.Battery.percent(),
+      "queue_depth" => MyApp.Queue.depth()
+    }
+  end
+end
+```
+
+Then add the module to `metric_sets` as shown above.
+
+For a single value, you can skip the module and give the default report a value or an MFA under `metrics`:
+
+```elixir
+config :nerves_hub_link,
+  health: [
+    metrics: %{
+      "battery_percent" => {MyApp.Battery, :percent, []}
+    }
+  ]
+```
+
+NervesHub applies these limits to the metrics in each report:
+
+- A name longer than 64 bytes is dropped.
+- At most 20 names per report are kept, in sorted order. The instance operator can raise this with `DEVICE_METRICS_MAX_KEYS_PER_REPORT`.
+- A value that is not a number is dropped.
+
+The three default metric sets use 11 names. When NervesHub drops something, it stores the rest of the report and raises a [product notification](/management/notifications).
+
+Custom metrics appear on the device's **Health** tab. To have one affect the device's health status, add it to a [health profile](/management/health-monitoring#health-profiles).
+
+## Add metadata
+
+Metadata is a map of string keys to string values. Each value is a string or an MFA that returns one:
+
+```elixir
+config :nerves_hub_link,
+  health: [
+    metadata: %{
+      "placement" => {MyApp.Site, :placement, []}
+    }
+  ]
+```
+
+## Alarms
+
+The default report sends every alarm currently raised on the device. It reads them from [`alarmist`](https://hex.pm/packages/alarmist) when your project depends on it, and from Erlang's `:alarm_handler` otherwise (`nerves_hub_link` 2.8.0 and later). The `nerves_hub_link` guide recommends `alarmist`.
+
+Alarms travel inside the health report, so NervesHub learns about a change the next time it asks for a report. NervesHub never raises an alarm itself. Thresholds on metrics are a separate feature, [health profiles](/management/health-monitoring#health-profiles).
+
+### Ignore disk-full alarms for a mount
+
+Erlang raises `:disk_almost_full` for `/` at startup on a Nerves device, because the read-only root filesystem is sized to fit the firmware. The default report filters that alarm out. To change which mounts are ignored (`nerves_hub_link` 2.9.0 and later):
+
+```elixir
+config :nerves_hub_link,
+  health: [
+    alarms: [
+      ignore_disk_full_mounts: ["/", "/a_different_mount"]
+    ]
+  ]
+```
+
+This list replaces the default. Include `"/"` if you still want it ignored.
+
+## Replace the report
+
+For full control, implement `NervesHubLink.Extensions.Health.Report` and point the config at your module:
+
+```elixir
+config :nerves_hub_link,
+  health: [
+    report: MyApp.HealthReport
+  ]
+```
+
+The behaviour's callbacks are `timestamp/0`, `metadata/0`, `alarms/0`, `metrics/0`, `checks/0` and `connectivity/0`.
+
+## When reports are sent
+
+NervesHub sets the pace. The device answers each `health:check` with one report.
+
+| Situation | Default pace |
+| --- | --- |
+| Nobody has the device's page open | Every 60 minutes |
+| Somebody has the device's page open | Every 60 seconds |
+| Just attached, nobody watching | Once, at a random point in the first 60 seconds |
+| Just attached, somebody watching | Once, straight away |
+
+These are instance settings (`FEATURES_HEALTH_INTERVAL_MINUTES`, `FEATURES_HEALTH_UI_POLLING_SECONDS`, `FEATURES_HEALTH_FIRST_CHECK_WINDOW_SECONDS`). You cannot change them from firmware.
+
+## Related pages
+
+- [Extensions overview](/extensions/overview)
+- [Health monitoring](/management/health-monitoring)
+- [Metrics and Alarms extensions](/extensions/metrics-and-alarms)
+- [Webhook events](/outbound/webhooks#events)

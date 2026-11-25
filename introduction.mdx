@@ -1,67 +1,49 @@
 ---
 title: "Introduction"
 sidebarTitle: "Introduction"
-description: "NervesHub is an open-source platform for secure OTA firmware updates and fleet management of Nerves-based IoT devices — self-hosted or on NervesCloud."
+description: "NervesHub is an open-source platform for signed over-the-air firmware updates and device management, self-hosted or on NervesCloud."
 ---
 
-NervesHub is an open-source firmware update and device management platform built specifically for [Nerves](https://nerves-project.org/) IoT devices. It gives your team a reliable, secure pipeline for shipping firmware updates over the air, monitoring the health of your device fleet, and accessing individual devices for debugging — whether you're managing a handful of prototypes or hundreds of thousands of production units.
+NervesHub is an open-source firmware update and device management platform. It was built for [Nerves](https://nerves-project.org/) devices and can also update other Linux and ESP32 devices. Devices hold a WebSocket connection to NervesHub. Over that connection NervesHub tells a device when firmware is available, and you get a remote console, [health](/management/health-monitoring) reports and other device data back.
 
-## Why NervesHub
+## What NervesHub does
 
-IoT firmware management is deceptively hard. Devices are often deployed in locations you can't physically reach, running software that must be updated without breaking anything, on hardware that may have constrained connectivity. NervesHub is designed to solve exactly these problems:
+- **Signed firmware updates.** You sign firmware before you upload it. NervesHub checks the signature against the signing keys registered for your organization, and the device checks it again before applying the update. See [Firmware signing](/concepts/firmware-signing).
+- **Controlled rollouts.** A deployment group targets devices by tag and version condition. You can limit how many devices update at once, stop a rollout when failures pass a threshold, and stage a [release](/deployments/releases) with a workflow. See [Deployment groups](/setup/deployments) and [Rollout controls](/deployments/rollout-controls).
+- **Updates on the device's terms.** Your firmware decides when to apply an update, reports progress, and can defer or refuse. See [Applying updates](/updates/applying-updates).
+- **Remote access.** Open an IEx console on a connected device, run [support scripts](/management/support-scripts), reboot it, or ask it to identify itself. See [Remote console](/management/remote-console).
+- **Device data.** Extensions report health metrics and alarms, location, log lines, error reports and [network identities](/extensions/network-identity). See [Extensions](/extensions/overview).
+- **Device authentication.** Devices authenticate with a shared secret or with an X.509 certificate, which can be held in a [NervesKey](/auth/nerveskey) or a [TPM](/auth/tpm). See [Shared secrets](/auth/shared-secret) and [Device certificates](/auth/device-certificates).
+- **Integration.** An HTTP API, the `nh` CLI, webhooks, and [Slack](/outbound/slack), Microsoft Teams and Discord notifications. See [API overview](/api/overview) and [Webhooks](/outbound/webhooks).
 
-* **Reliable OTA updates** — firmware is cryptographically signed and verified on the device before applying, so a corrupted or tampered image is never applied.
-* **Safe rollouts** — deployment groups target devices by tag and version condition, with configurable concurrency limits and automatic failure thresholds to stop a bad update from spreading.
-* **Remote access** — connect to a live IEx console or remote shell on any device in your fleet without a VPN or physical access.
-* **Fleet visibility** — track device health metrics (CPU, memory, load), firmware versions, and online/offline status across your entire fleet in real time.
-* **Flexible authentication** — choose from Shared Secret (great for getting started), X.509 device certificates (production-grade mTLS), or NervesKey hardware-backed security.
+Some features depend on how the instance is set up. See [Feature prerequisites](/hosting/feature-prerequisites).
 
-## Deployment Options
+## The parts
 
-NervesHub is Apache-2.0 licensed with no vendor lock-in. You can run it yourself or use the managed cloud service.
+| Part | What it is |
+| --- | --- |
+| NervesHub | The server: web UI, HTTP API and the endpoint devices connect to. Source at [nerves-hub/nerves_hub_web](https://github.com/nerves-hub/nerves_hub_web). |
+| NervesHubLink | The Elixir library you add to a Nerves project. It holds the connection and applies updates. See [NervesHubLink](/integrations/nerves-hub-link). |
+| `nh` | The command-line tool for signing and uploading firmware and managing devices and deployment groups. See [CLI installation](/cli/installation). |
+| Other device clients | Clients for Linux without Nerves, ESP-IDF and AtomVM. See [Integrations](/integrations/overview). |
+
+[Architecture](/architecture) describes how they fit together.
+
+## Where to run it
 
 <CardGroup cols={2}>
-  <Card title="NervesCloud (Managed)" icon="cloud" href="https://manage.nervescloud.com">
-    The fastest way to get started. NervesCloud is a fully managed NervesHub service hosted at **manage.nervescloud.com**. No infrastructure to provision — sign up and start managing devices in minutes. Devices connect to **devices.nervescloud.com**.
+  <Card title="NervesCloud" icon="cloud" href="https://manage.nervescloud.com">
+    A hosted NervesHub. You manage devices at `manage.nervescloud.com`, and devices connect to `devices.nervescloud.com`.
   </Card>
 
-  <Card title="Self-Hosted (Open Source)" icon="server" href="https://github.com/nerves-hub/nerves_hub_web">
-    Run NervesHub on your own infrastructure for full control. The server is a standard Phoenix/Elixir application deployable on any cloud or on-premises environment, backed by S3-compatible object storage.
+  <Card title="Self-hosted" icon="server" href="https://github.com/nerves-hub/nerves_hub_web">
+    Run NervesHub on your own infrastructure. It is a Phoenix application that needs PostgreSQL and somewhere to store firmware files: a local disk or S3-compatible object storage.
   </Card>
 </CardGroup>
 
-## Key Capabilities
+NervesHub, NervesHubLink and `nh` are open source. NervesHub is released under the [Apache License 2.0](https://github.com/nerves-hub/nerves_hub_web/blob/main/LICENSE).
 
-<CardGroup cols={2}>
-  <Card title="Signed OTA Updates" icon="shield-check">
-    Every firmware file is signed before it is published. Devices reject any image that fails signature verification, protecting your fleet from tampered or corrupted updates.
-  </Card>
+## Next steps
 
-  <Card title="Delta Updates" icon="arrows-minimize">
-    Reduce bandwidth and update time with binary delta updates. For fwup firmware the server builds the diff with **xdelta3**, so only the changed bytes are transferred — a large saving on constrained connections.
-  </Card>
-
-  <Card title="Remote Console" icon="terminal">
-    Open a live IEx session or shell directly on any connected device from the NervesHub UI or CLI. Inspect state, run diagnostics, and debug production issues without physical access.
-  </Card>
-
-  <Card title="Fleet Health Monitoring" icon="chart-line">
-    Collect CPU, memory, load average, and custom application metrics and alarms from every device. Identify unhealthy devices at a glance and drill down to individual device telemetry.
-  </Card>
-
-  <Card title="Flexible Authentication" icon="key">
-    Start fast with **Shared Secret** auth using a product key and secret. Upgrade to **X.509 device certificates** for production mTLS, or use **NervesKey** (ATECC508A/608A) for hardware-backed identity.
-  </Card>
-
-  <Card title="Scalable Architecture" icon="chart-bar">
-    NervesHub is proven at **400,000+ devices per instance**. Devices connect over Phoenix WebSocket channels, and the server scales horizontally with standard Elixir clustering.
-  </Card>
-</CardGroup>
-
-## Open Source and No Vendor Lock-in
-
-NervesHub is released under the [Apache License 2.0](https://github.com/nerves-hub/nerves_hub_web/blob/main/LICENSE). The full server source code, device client library, and CLI are all open source. If you start on NervesCloud and later want to migrate to self-hosted (or vice versa), your devices, firmware, and deployment configurations go with you — there is no proprietary lock-in.
-
-<Note>
-  NervesCloud is the quickest way to evaluate NervesHub and get your first device online. Head to [manage.nervescloud.com](https://manage.nervescloud.com) to create a free account.
-</Note>
+- [Quickstart](/quickstart): connect a device and send it an update.
+- [Terminology](/terminology): the names used in the UI, the CLI and these docs.
