@@ -4,7 +4,7 @@ sidebarTitle: "CI/CD"
 description: "Authenticate, sign, upload and deploy firmware from a CI pipeline with the nh CLI, the GitHub Action, or the HTTP API."
 ---
 
-A CI pipeline does three things with NervesHub: it signs the firmware it built, uploads it to a product, and optionally creates a release on a [deployment group](/setup/deployments) so devices start updating. This page is the reference for each way of doing that. To do the same steps by hand first, see the [Quickstart](/quickstart).
+A CI pipeline signs the firmware it built, uploads it to a product, and optionally creates a release on a [deployment group](/setup/deployments) so devices start updating. To do the same steps by hand first, see the [Quickstart](/quickstart).
 
 | Approach | Use it when |
 | --- | --- |
@@ -24,7 +24,7 @@ Give the pipeline one credential, stored as a CI secret. `nh` reads it from `NER
 | Tied to a person | No. It keeps working when its creator leaves. | Yes. It stops working when the user's account is deleted. |
 | Availability | NervesHub main branch only | All versions |
 
-Use a product API key where you can. A leaked key exposes one product with the permissions you chose. A leaked user token exposes everything that user can do.
+Use a product API key where you can. A leaked key exposes one product with the permissions you chose.
 
 <Note>
   Product API keys are on the NervesHub main branch but in no tagged release as of NervesHub 2.5.4. On 2.5.4 and earlier, use a user access token.
@@ -69,7 +69,7 @@ To install `nh` on the runner, download the archive for the runner's platform fr
 
 ## Sign in CI
 
-NervesHub refuses fwup firmware that is not signed with a key registered to the organization. The other formats have their own signing rules. How the pipeline signs depends on the firmware format.
+NervesHub refuses fwup firmware that is not signed with a key registered to the organization. The other formats have their own signing rules.
 
 ### fwup and AtomVM firmware
 
@@ -204,7 +204,7 @@ The [`nervescloud/upload-nerves-firmware`](https://github.com/nervescloud/upload
 | `deployment` | No | | Deployment group to update with the uploaded firmware |
 | `firmware` | No | | Path of the firmware file, relative to the working directory. Left out, the action uses the single `.fw` file under `_build/*/nerves/images`, and fails if there is none or more than one. |
 | `working-directory` | No | Repository root | Directory to run `nh` in |
-| `version` | No | `latest` | Version of `nh` to install, for example `0.1.0` |
+| `version` | No | `latest` | Version of `nh` to install |
 | `public-key` | No | | Deprecated and ignored. Remove it from your workflow. |
 
 ### Outputs
@@ -230,7 +230,7 @@ With `version: latest`, the action asks the GitHub API for the newest `nh` relea
 
 ## Equivalent API calls
 
-Use the HTTP API directly when you cannot run `nh`. The API does not sign firmware, so sign the file first.
+The API does not sign firmware, so sign the file first.
 
 Sign an fwup image with fwup:
 

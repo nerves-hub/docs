@@ -87,7 +87,7 @@ Return one of:
 | `:ignore` | Do not apply it. Reported to NervesHub as ignored. |
 | `{:ignore, reason}` | The same, with a reason string that NervesHub records. |
 | `{:reschedule, milliseconds}` | Do not apply it now. Ask NervesHub to offer it again later. |
-| `{:reschedule, minutes, reason}` | The same, with a reason string. Note that this form takes minutes. |
+| `{:reschedule, minutes, reason}` | The same, with a reason string. This form takes minutes. |
 
 The default implementation returns `:ignore` when the offered firmware's UUID equals the running firmware's UUID, and `:apply` otherwise.
 
@@ -147,7 +147,7 @@ The device keeps running its current firmware. It does not retry on its own beyo
 
 ## Validation and auto-revert
 
-After an update, a Nerves device boots the new firmware slot before that firmware has been marked valid. On systems that revert automatically, firmware that is not validated in time is abandoned and the device reboots into the previous slot. `nerves_hub_link` reports both facts to NervesHub so you can see which updates stuck.
+After an update, a Nerves device boots the new firmware slot before that firmware has been marked valid. On systems that revert automatically, firmware that is not validated in time is abandoned and the device reboots into the previous slot.
 
 When the device connects, it sends:
 
@@ -189,7 +189,7 @@ end
 
 Both must return a boolean. For any other value, `firmware_validated?/0` is treated as `true` and `firmware_auto_revert_detected?/0` as `false`, with a warning in the log.
 
-`nerves_hub_link` reports validation. It does not validate firmware. Your application still has to mark the firmware valid, for example with `Nerves.Runtime.validate_firmware/0`, once it has decided the firmware works.
+`nerves_hub_link` only reports validation. Your application still has to mark the firmware valid, for example with `Nerves.Runtime.validate_firmware/0`, once it has decided the firmware works.
 
 ## Other callbacks
 

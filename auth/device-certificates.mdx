@@ -10,7 +10,7 @@ This page covers a certificate and private key stored on the device filesystem. 
 
 ## How NervesHub decides
 
-NervesHub keeps device certificates on file. Authentication depends on whether it has seen the certificate before.
+NervesHub keeps device certificates on file.
 
 - **The certificate is on file.** The device is allowed. NervesHub does not check the expiry of a certificate it has on file.
 - **The certificate is new, and a CA signed it.** NervesHub looks up the signing CA among the registered certificate authorities and validates the certificate against it. The certificate's common name must match the identifier of a device in the CA's organization. NervesHub then records the certificate for that device. If no such device exists, the connection is refused unless the CA has a [just-in-time provisioning](/auth/just-in-time-provisioning) profile.
@@ -22,7 +22,7 @@ So there are three ways to get a certificate accepted:
 | --- | --- |
 | Register the CA and add each device before it connects | NervesHub records the certificate on first connection. |
 | Register the CA with a just-in-time provisioning profile | NervesHub creates the device and records the certificate on first connection. |
-| Upload the certificate to the device | The device connects with exactly that certificate. This is the only way for a self-signed certificate. |
+| Upload the certificate to the device | The device connects with exactly that certificate. |
 
 A deleted device is refused, whatever certificate it presents.
 
@@ -52,7 +52,7 @@ You register the CA certificate only. NervesHub never sees the CA private key. T
     nh ca upload --cert rootCA.crt --key rootCA.key --description "Factory CA"
     ```
 
-    The key is used locally to sign the verification certificate. It is not uploaded.
+    The key is used locally to sign the verification certificate.
 
     ```bash
     nh ca list
@@ -138,7 +138,7 @@ nh device certificates upload my-device-001 cert.pem
 In the web UI, open the device's **Settings** tab and click **Upload certificate** in the **Certificates** card. It takes a PEM or DER file.
 
 <Warning>
-  A self-signed certificate must be uploaded before the device connects. NervesHub never registers a self-signed certificate on first connection.
+  A self-signed certificate must be uploaded before the device connects.
 </Warning>
 
 If you use Microchip Trust&Go secure elements, `nh device import` creates the devices and their certificates from the manifest. See [Devices](/setup/devices).

@@ -4,7 +4,7 @@ sidebarTitle: "Finding devices"
 description: "Search a product's devices with the query language, filter and choose columns, act on many devices at once, import devices in bulk, and export the list."
 ---
 
-A product's **Devices** page is where you find the devices you care about and act on them together. You can search with free text or a query expression, narrow with filters, change tags or [deployment groups](/setup/deployments) for every match, and export what you see as CSV.
+On a product's **Devices** page you can search with free text or a query expression, narrow with filters, change tags or [deployment groups](/setup/deployments) for every match, and export what you see as CSV.
 
 ## Requirements
 
@@ -18,7 +18,7 @@ The search bar sits above the list. Press `/` to focus it, type, and press Enter
 
 Text that is not a query expression is a free-text search. NervesHub looks for it in the identifier, firmware version, platform, and tags, ignoring case. The bar rewrites it to the query it ran, such as `search like "%kitchen%"`.
 
-Anything else is read as a query expression. A typo in an expression shows the parse error instead of falling back to free text.
+A typo in a query expression shows the parse error instead of falling back to free text.
 
 ## The query language
 
@@ -59,7 +59,7 @@ Each comparison is a column, an operator, and a value. Values are double-quoted 
 
 Values other than `LIKE` patterns and metric numbers must be one of the known values for your product. A platform, tag, or deployment group name that no device has is rejected.
 
-A few columns behave in ways worth knowing:
+Special cases:
 
 * `last_seen` only matches offline devices. `last_seen > "7 days ago"` means last seen less than 7 days ago. `last_seen < "7 days ago"` means longer ago.
 * `":not_set"` matches devices with no value: no tags, no deployment group, or no signer CA.

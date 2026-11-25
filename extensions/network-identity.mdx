@@ -4,13 +4,13 @@ sidebarTitle: "Network identity"
 description: "Report a device's iroh, NetBird, Tailscale or WireGuard identity to NervesHub with the Network identity extension."
 ---
 
-Devices often reach the outside world over something other than their NervesHub connection: an iroh endpoint, a NetBird or Tailscale peer, a WireGuard interface. Each of those networks names the device by a long-lived public key. The Network identity extension reports those keys so they appear on the device page, where an operator can copy one without opening a console.
+An iroh, NetBird, Tailscale or WireGuard network names a device by a long-lived public key. The Network identity extension reports those keys so they appear on the device page, where an operator can copy one.
 
 ## Requirements
 
 - `nerves_hub_link` 2.13.0 or later.
 - NervesHub 2.5.0 or later.
-- A provider module for each network. There is no default provider, because `nerves_hub_link` cannot know which networks your device is on.
+- A provider module for each network. There is no default provider.
 
 ## Enable it
 
@@ -84,7 +84,7 @@ In NervesHub, open the device's **Details** tab and look at the **Network identi
 | `:unavailable` | Nothing to report: the endpoint has not started, or this unit is not on that network | debug |
 | `{:error, reason}` | Something is wrong | warning |
 
-A provider that raises is caught, logged and skipped. One broken provider does not cost the others their identities.
+A provider that raises is caught, logged and skipped.
 
 An identity is a map:
 
@@ -102,7 +102,7 @@ An identity is a map:
 ## When identities are sent
 
 - NervesHub asks for all identities once, when the extension attaches.
-- After that, the device asks its own providers every `interval_minutes` (default `5`) and sends only what changed. Nothing goes over the wire when nothing changed.
+- After that, the device asks its own providers every `interval_minutes` (default `5`) and sends only what changed.
 - Set `interval_minutes: 0` to turn the poll off and send only on connect.
 
 A provider that knows the moment its identity changed can send it straight away:

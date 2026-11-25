@@ -10,8 +10,7 @@ A member holds one role in each organization: a built-in role or a custom role, 
 
 ## Requirements
 
-- The built-in roles exist in every organization.
-- Custom roles and tag-scoped roles need NervesHub 2.5.4 or later.
+Custom roles and tag-scoped roles need NervesHub 2.5.4 or later.
 
 <Warning>
   If you self-host, do not roll back to NervesHub 2.5.3 once any member holds a custom role. 2.5.3 does not know about custom roles, so that member has no role it understands. Finish a rolling deploy to 2.5.4 before you give anyone a custom role.
@@ -107,7 +106,7 @@ A custom role is a name, an optional description and a set of permissions.
 
 - Every custom role can view the organization's products, devices and settings. You do not pick that.
 - You pick what the role can change, from the permissions that **Manage** has.
-- Permissions that only **Admin** has cannot be given to a custom role. Managing the organization, its members, its roles and its Slack workspaces stays with the built-in **Admin** role.
+- Permissions that only **Admin** has cannot be given to a custom role.
 - **Run support scripts on devices** is optional for a custom role, although the built-in **View** role has it.
 - Creating a deployment group also needs **Create, edit and approve releases**, because a group starts with a release.
 
@@ -164,7 +163,6 @@ A tag-scoped role has these limits:
 The JSON API checks the same permissions as the web UI. A user access token acts with that user's role in each organization.
 
 - Reads need only membership of the organization.
-- Each write needs the same permission the web UI checks for that action.
 - A member of a tag-scoped role sees only the devices its tags match through the API too. Endpoints built from all of a product's devices, such as firmware, archives, deployment groups and releases, refuse them.
 
 The member endpoints handle custom roles as follows:

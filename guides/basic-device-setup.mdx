@@ -12,8 +12,6 @@ This guide takes one Nerves device from nothing to a working NervesHub setup. At
 - reports health, logs and errors, and
 - optionally takes delta updates.
 
-Each part does the minimum and links to the feature page that covers the rest.
-
 ## Before you start
 
 You need:
@@ -30,7 +28,7 @@ nh user login
 
 The commands assume you run them from the `my_app` project directory with `MIX_TARGET=rpi4` exported and `MIX_ENV` left at its default, so every build lands at `_build/rpi4_dev/nerves/images/my_app.fw`.
 
-The guide builds five firmware versions. Each part that ships firmware uses the next one:
+The guide builds five firmware versions:
 
 | Version | Part | How it reaches the device |
 | --- | --- | --- |
@@ -48,8 +46,6 @@ The guide builds five firmware versions. Each part that ships firmware uses the 
 5. [Where you are now](#where-you-are-now): the complete configuration and what to do next
 
 ## Part 1: Connect the device
-
-This part creates the product, adds `nerves_hub_link` to `my_app`, gives the device a credential, and gets it online.
 
 ### Create the product
 
@@ -120,7 +116,7 @@ Either way, you create the one `config :nerves_hub_link` block in `config/target
   </Tab>
 
   <Tab title="Local certificate">
-    The device presents an X.509 certificate that NervesHub already has on file for it. The shortest path is a self-signed certificate that `nh` generates and uploads. See [Device certificates](/auth/device-certificates).
+    The shortest path is a self-signed certificate that `nh` generates and uploads. See [Device certificates](/auth/device-certificates).
 
     <Steps>
       <Step title="Configure the firmware">
@@ -193,11 +189,9 @@ If it is not there, check that the device has a network connection and can reach
 
 ## Part 2: Take a signed update
 
-Your device connects. Now give it a signing key to trust, turn on the remote console, and send it one update over the air.
-
 ### Create the signing key
 
-Every firmware file is signed with a private key you hold. NervesHub checks the signature at upload, and the device checks it again before it installs. [Firmware signing](/concepts/firmware-signing) explains the whole scheme.
+Every firmware file is signed with a private key you hold. [Firmware signing](/concepts/firmware-signing) explains the whole scheme.
 
 ```bash
 nh key create my_app_key
@@ -222,7 +216,7 @@ config :nerves_hub_link,
   remote_iex: true
 ```
 
-Configure the key rather than letting the device request it from NervesHub. Requested keys come from the same server that supplies the firmware, so only a built-in key gives you a check that does not depend on that server. Since `nerves_hub_link` 2.13.0, a device that holds no public key [refuses updates](/concepts/firmware-signing#unverifiable-firmware-is-refused).
+Configure the key rather than letting the device request it from NervesHub, because requested keys come from the same server that supplies the firmware. Since `nerves_hub_link` 2.13.0, a device that holds no public key [refuses updates](/concepts/firmware-signing#unverifiable-firmware-is-refused).
 
 `remote_iex: true` lets you open an IEx session on the device from NervesHub. It is off by default. See [Remote console](/management/remote-console).
 
@@ -273,7 +267,7 @@ nh deployment create bench \
   --state on
 ```
 
-A new group otherwise has delta updates on, and a release in such a group waits for its deltas to build. `--delta-updatable=false` sends the full file. Part 4 turns it on.
+A new group otherwise has delta updates on, and a release in such a group waits for its deltas to build. Part 4 turns it on.
 
 A device only [joins a group when it connects](/setup/deployments#how-devices-join-a-group). Yours connected before the group existed, so make it reconnect:
 
@@ -331,7 +325,7 @@ config :nerves_hub_link,
 ```
 
 <Warning>
-  `extension_modules` replaces the default list. It does not add to it. The list above keeps the three defaults (Health, Geo, Network identity) and adds the two new ones. It leaves out `NervesHubLink.Extensions.LocalShell`, the optional [system shell](/extensions/local-shell). It is mostly for devices that are not Nerves devices.
+  `extension_modules` replaces the default list. The list above keeps the three defaults (Health, Geo, Network identity) and adds the two new ones. It leaves out `NervesHubLink.Extensions.LocalShell`, the optional [system shell](/extensions/local-shell). It is mostly for devices that are not Nerves devices.
 </Warning>
 
 `level: :info` sends `:info` and above, which is also the default. Change it to `:warning` if the device is on a metered connection. See [Choose what is sent](/extensions/logging#choose-what-is-sent).
@@ -349,7 +343,7 @@ nh firmware upload _build/rpi4_dev/nerves/images/my_app.fw --key my_app_key --de
   <Step title="Check the product switches">
     Open **Product settings** for `my_app` and find the **Device extensions** card on the **General** tab. Make sure **Health**, **Logging** and **Error reports** are switched on.
 
-    What you find depends on how you created the product. A product created in the web UI, as in part 1, starts with every extension on. A product created with `nh` or the API starts with every extension off, and the device sends nothing until you switch them on. See [Device extensions](/setup/products#device-extensions).
+    A product created in the web UI, as in part 1, starts with every extension on. A product created with `nh` or the API starts with every extension off, and the device sends nothing until you switch them on. See [Device extensions](/setup/products#device-extensions).
   </Step>
 
   <Step title="Leave the device switches on">
@@ -400,7 +394,7 @@ Without ClickHouse, health status is also judged against fixed thresholds, not y
 A [delta update](/management/delta-updates) sends a device the difference between the firmware it runs and the new firmware, instead of the whole `.fw` file. It is worth setting up when download size costs you something, such as on cellular or metered links. On a fast, unmetered network, skip it.
 
 <Warning>
-  **If you skip this part, leave delta updates off.** You created `bench` with **Delta updates** off, so leave it that way. Groups you create later have it on unless you say otherwise, and a group with it on holds each release back until its deltas are built. Firmware that cannot produce a delta stalls there. For such firmware, switch **Delta updates** off on the group's **Settings** tab and click **Save** before you release it, or create the group with `--delta-updatable=false`. Switching it off afterwards does not release a release whose delta has already failed. Release a new firmware version instead.
+  **If you skip this part, leave delta updates off.** Groups you create later have it on unless you say otherwise, and firmware that cannot produce a delta stalls there. For such firmware, switch **Delta updates** off on the group's **Settings** tab and click **Save** before you release it, or create the group with `--delta-updatable=false`. Switching it off afterwards does not release a release whose delta has already failed. Release a new firmware version instead.
 </Warning>
 
 The instance needs `xdelta3` on the server. See [Feature prerequisites](/hosting/feature-prerequisites#firmware-formats).
@@ -481,7 +475,7 @@ A change to `fwup.conf` has to reach a device as a full update before the device
 </Steps>
 
 <Warning>
-  A release does not fall back to the full firmware. While a delta is **Building**, and after one has **Failed** or **Timed out**, the devices that need it wait. Turning **Delta updates** off does not release them, because the release keeps its failed delta. You have two ways out. If the cause is fixed, click **Retry** next to the delta on the group's **Releases** tab. Otherwise release a new firmware version. With **Delta updates** off it goes out in full. With it on, it waits for a delta of its own. See [Releases wait for their deltas](/management/delta-updates#releases-wait-for-their-deltas).
+  A release does not fall back to the full firmware. While a delta is **Building**, and after one has **Failed** or **Timed out**, the devices that need it wait. If the cause is fixed, click **Retry** next to the delta on the group's **Releases** tab. Otherwise release a new firmware version. With **Delta updates** off it goes out in full. With it on, it waits for a delta of its own. See [Releases wait for their deltas](/management/delta-updates#releases-wait-for-their-deltas).
 </Warning>
 
 ### Check it works
@@ -494,11 +488,9 @@ A change to `fwup.conf` has to reach a device as a full update before the device
 
 ## Where you are now
 
-Your device connects, installs signed updates from the `bench` group, has a remote console, and reports health, logs and errors. It runs `1.4.0`, or `1.2.0` if you skipped part 4.
+Your device runs `1.4.0`, or `1.2.0` if you skipped part 4.
 
 ### The complete configuration
-
-This is the one `config :nerves_hub_link` block the guide arrives at:
 
 ```elixir
 # config/target.exs

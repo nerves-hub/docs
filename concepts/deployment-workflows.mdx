@@ -19,7 +19,7 @@ You write a workflow as a JSON file and upload it to a deployment group.
 
 ## An example workflow
 
-This workflow has four steps: canaries on Wi-Fi and Ethernet, then cellular canaries, then devices tagged for one city, then an approval. The file ends on the approval step. NervesHub appends a fifth step, a catch-all named **Remaining devices**, so the devices no earlier step covers are updated after the approval. See [Step types](#step-types).
+This workflow has four steps: canaries on Wi-Fi and Ethernet, then cellular canaries, then devices tagged for one city, then an approval. NervesHub appends a fifth step, a catch-all named **Remaining devices**, so the devices no earlier step covers are updated after the approval. See [Step types](#step-types).
 
 ```json
 {
@@ -124,8 +124,6 @@ A step waits for every device it claimed, including devices that are offline. A 
 A step that matches no devices completes straight away.
 
 ## Pacing and failure
-
-`concurrent_updates` sets how many of a step's devices update at once.
 
 `failure_tolerance` is an object with exactly one of two keys:
 

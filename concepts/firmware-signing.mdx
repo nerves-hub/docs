@@ -47,7 +47,7 @@ You can also add a public key in the web UI, on the organization's **Signing key
 
 ## Give devices the public keys
 
-A device needs at least one public key before it accepts an update. There are two ways to provide them.
+A device needs at least one public key before it accepts an update.
 
 ### Put the keys in the firmware
 
@@ -127,8 +127,6 @@ fwup --sign -i my_app.fw -o my_app_signed.fw -s my_app_key.priv
 ```
 
 ## Use more than one key
-
-Register several keys to separate environments or to rotate a key.
 
 - **Separate development and production.** Sign release builds with a production key held only by your release pipeline. Build production firmware with only the production public key in `fwup_public_keys`. Development-signed firmware then cannot be installed on production devices.
 - **Rotate a key.** Ship firmware that lists both the old and the new public key, signed with the old key. Once devices run it, sign later firmware with the new key. Remove the old public key from the list in a later release.

@@ -93,7 +93,7 @@ The function returns `:ok` whether or not the extension is running.
 
 ## How errors are grouped
 
-NervesHub decides which occurrences are the same bug. It uses the kind of error, the reason with per-occurrence detail such as pids removed, and the top three stack frames. Line numbers are ignored, so an issue does not split when unrelated code above it changes.
+NervesHub groups occurrences by the kind of error, the reason with per-occurrence detail such as pids removed, and the top three stack frames. Line numbers are ignored, so an issue does not split when unrelated code above it changes.
 
 Use `:group` when your application knows something the stacktrace does not. Every failure in a payment integration might arrive through one HTTP client function. A group of your own wins outright.
 
@@ -118,7 +118,7 @@ The function runs once per batch on the extension's own process, never in the pr
 
 NervesHub gives the keys `uptime_ms`, `free_memory_bytes` and `reboot_count` labels and units. Other keys are shown as they arrive. NervesHub keeps at most 32 context keys and 512 bytes per value, and redacts values under keys that look like credentials.
 
-You do not need to send the firmware UUID. NervesHub fills it in from the device's connection.
+NervesHub fills in the firmware UUID from the device's connection.
 
 ## Buffering and limits
 
@@ -141,7 +141,7 @@ config :nerves_hub_link,
 
 The product's **Errors** page lists issues under **Unresolved**, **Muted** and **Resolved**. You can search error messages and stack frames.
 
-- **Resolve** an issue when you have shipped a fix. If it happens again, it reopens and is marked as regressed. Any occurrence after you resolve reopens it, including one from a device still on the old firmware.
+- **Resolve** an issue when you have shipped a fix. Any occurrence after you resolve reopens it and marks it as regressed, including one from a device still on the old firmware.
 - **Mute** an issue you know about and do not want in the queue. A muted issue keeps counting and does not reopen.
 - **Reopen** and **Unmute** move an issue back to **Unresolved**.
 

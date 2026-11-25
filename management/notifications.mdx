@@ -4,9 +4,9 @@ sidebarTitle: "Notifications"
 description: "What NervesHub raises on a product's Notifications page, how to act on each kind, and how to send notifications to a chat channel."
 ---
 
-Product notifications are NervesHub telling you about problems that nothing else on the page would show. A device that cannot start an extension stays connected and looks fine. A webhook that was turned off just goes quiet. NervesHub raises a notification on the product so someone can act.
+Product notifications tell you about problems that nothing else on the page would show. A device that cannot start an extension stays connected and looks fine. A webhook that was turned off just goes quiet.
 
-Notifications are raised by NervesHub. You do not configure which ones exist.
+NervesHub raises the notifications. You do not configure which ones exist.
 
 ## Requirements
 
@@ -53,7 +53,7 @@ A halted deployment workflow has no dismiss button and is marked **Clears itself
 | Slack notifications were turned off | Error | No | Fix the cause, then turn the channel back on in **Integrations**. See [Slack](/outbound/slack). |
 | Teams or Discord notifications were turned off | Error | No | Fix the webhook, then turn the channel back on in **Integrations** or give it the new URL. See [Teams](/outbound/teams) and [Discord](/outbound/discord). |
 | A device import finished | Info, warning, or error | No | Says how many devices were added and how many failed. See [Finding devices](/management/finding-devices). |
-| A soft-deleted device was permanently deleted | Info | Yes | Nothing. Raised when NervesHub permanently deletes a device that was soft-deleted. |
+| A soft-deleted device was permanently deleted | Info | Yes | Nothing. |
 
 Webhooks and chat channels belong to the organization. When one is turned off, each product it was sending events for gets the notification.
 
@@ -61,7 +61,7 @@ Webhooks and chat channels belong to the organization. When one is turned off, e
 
 Slack, Teams, and Discord channels can subscribe to the **Product notifications** event. NervesHub then posts each new notification to the channel with its title, message, and level.
 
-A notification is posted only the first time it happens. Recurrences raise its count on the **Notifications** page and are not posted again.
+A notification is posted only the first time it happens. Recurrences only raise its count on the **Notifications** page.
 
 A halted deployment workflow raises a product notification and also has its own channel events. A channel subscribed to both hears about it from both.
 

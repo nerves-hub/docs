@@ -4,7 +4,7 @@ sidebarTitle: "Feature prerequisites"
 description: "What a NervesHub instance must have configured before developers can use each feature, and what they see when it is missing."
 ---
 
-Some NervesHub features only work once the person hosting the instance has set something. This page lists each of those features, the setting it needs, and what developers see without it. Feature pages link here when they say a feature depends on the instance.
+Some NervesHub features only work once the person hosting the instance has set something. This page lists each of those features, the setting it needs, and what developers see without it.
 
 Every setting on this page is an environment variable read when a node boots. Changing one means restarting the node. Boolean variables must be the exact string `true`; anything else, including `1` and `TRUE`, counts as false.
 
@@ -107,7 +107,7 @@ NervesHub uses the key to encrypt secrets before it stores them: Slack bot token
 Without it:
 
 - **Two-factor authentication** (NervesHub 2.5.4) is not offered. The account's two-factor page reads "Two-factor authentication needs this server to have a key for encrypting secrets." An organization cannot require it of its members.
-- **Teams and Discord channels** are still offered on the organization's **Integrations** page, because nothing checks for the key there. Saving a channel raises an error when NervesHub tries to encrypt the webhook URL, and no channel is stored. Set the key before anyone uses these integrations.
+- **Teams and Discord channels** are still offered on the organization's **Integrations** page. Saving a channel raises an error, and no channel is stored. Set the key before anyone uses these integrations.
 - **Slack** cannot be configured. A production node refuses to boot when `SLACK_CLIENT_ID` is set and the key is not.
 
 <Warning>
@@ -216,7 +216,7 @@ Developer pages: [Network identity extension](/extensions/network-identity), [Co
 
 ## Defaults that shape what developers see
 
-These settings do not turn a feature on or off. They set its pace or its limits for everyone on the instance. Developer pages: [Health extension](/extensions/health), [Geo extension](/extensions/geo), [Audit log](/access/audit-log), [Rollout controls](/deployments/rollout-controls), [Connecting devices](/setup/connecting).
+These settings set a feature's pace or its limits for everyone on the instance. Developer pages: [Health extension](/extensions/health), [Geo extension](/extensions/geo), [Audit log](/access/audit-log), [Rollout controls](/deployments/rollout-controls), [Connecting devices](/setup/connecting).
 
 ### Report intervals
 

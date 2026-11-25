@@ -32,7 +32,7 @@ The AtomVM build needs up to three changes:
 | Two packbeam partitions, `main.avm` and `alt.avm` | Over-the-air updates |
 | `AVM_USE_LIBSODIUM=ON` and a 16K main task stack | Verifying firmware signatures on the device |
 
-Only the first is required to connect. Without the two partitions a device connects and reports its firmware but cannot be updated. Without libsodium a device configured with `firmware_keys` reports `verification_unavailable` and does not install the update.
+Without the two partitions a device connects and reports its firmware but cannot be updated. Without libsodium a device configured with `firmware_keys` reports `verification_unavailable` and does not install the update.
 
 The agent ships the files for the last two changes in `priv/atomvm`. After `rebar3 compile` in your project they are in `_build/default/lib/nerves_hub_link_atomvm_esp32/priv/atomvm`:
 
@@ -120,7 +120,7 @@ alt.avm,    data, phy,     0x338000, 0xC8000,
   </Tab>
 </Tabs>
 
-The transport is a git dependency because it is not published on Hex. Listing it here is not enough: it must also be compiled into the VM.
+The transport is a git dependency because it is not published on Hex. It must also be compiled into the VM.
 
 ## Connect
 

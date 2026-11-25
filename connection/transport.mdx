@@ -4,7 +4,7 @@ sidebarTitle: "Transport"
 description: "Configure how a NervesHubLink device talks to NervesHub: Msgpack, TLS 1.3 session resumption, compression, CA certificates and HTTP proxies."
 ---
 
-A device holds one WebSocket connection to NervesHub and opens separate HTTP connections to download firmware. This page covers the options that change what goes over those connections. You do not need any of them to connect. They matter on metered or slow links, behind a proxy, or against a self-hosted instance with its own certificates.
+A device holds one WebSocket connection to NervesHub and opens separate HTTP connections to download firmware. You do not need any of the options on this page to connect. They matter on metered or slow links, behind a proxy, or against a self-hosted instance with its own certificates.
 
 For when the connection starts and how it recovers, see [Connection lifecycle](/connection/lifecycle).
 
@@ -65,7 +65,7 @@ The device offers TLS 1.2 on the WebSocket by default. When the server supports 
 ### Requirements
 
 - NervesHub 2.5.0 or later, which is the first version that issues session tickets.
-- TLS 1.3 turned on for the instance's device endpoint. It is off by default. See [Feature prerequisites](/hosting/feature-prerequisites#tls-session-resumption). The `nerves_hub_link` configuration guide states that NervesCloud has TLS 1.3 enabled.
+- TLS 1.3 turned on for the instance's device endpoint. It is off by default. See [Feature prerequisites](/hosting/feature-prerequisites#tls-session-resumption).
 - Devices running OTP 25.1 or later.
 
 ### Enable it

@@ -4,7 +4,7 @@ sidebarTitle: "Logging"
 description: "Send a Nerves device's log lines to NervesHub with the Logging extension, then read them in the web UI, the CLI or the API."
 ---
 
-The Logging extension sends the device's `Logger` output to NervesHub, where it is stored against the device and can be searched. Use it to see what a device was doing without opening a console.
+The Logging extension sends the device's `Logger` output to NervesHub, where it is stored against the device and can be searched.
 
 ## Requirements
 
@@ -86,7 +86,7 @@ The extension has two versions. Naming `NervesHubLink.Extensions.Logging` regist
 | Collects from | The moment the extension attaches | Application start, so boot logs are included |
 | OTP reports (crashes, supervisor reports) | Skipped | Sent, on one line and bounded in length |
 
-Batching matters because NervesHub limits how often a device may send, not how much each message carries. At one message per line, a device that logs fast loses lines to the limit. NervesHub drops messages over the limit without telling the device.
+NervesHub limits how often a device may send, not how much each message carries. At one message per line, a device that logs fast loses lines to the limit. NervesHub drops messages over the limit without telling the device.
 
 The batched version holds lines in a bounded buffer and reports what it had to drop:
 
@@ -166,7 +166,7 @@ nh device logs thermostat-4021 --follow
 </ParamField>
 
 <ParamField query="--interval" type="duration" default="2s">
-  How often `--follow` polls. Only applies with `--follow`.
+  How often `--follow` polls.
 </ParamField>
 
 Add the global `-o json` flag for JSON output. A one-shot command prints a single array. With `--follow`, it prints one JSON object per line:

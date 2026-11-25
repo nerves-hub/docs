@@ -53,7 +53,7 @@ A product key is shared by every device in a product. A device holding one can c
 
 ## Firmware signatures
 
-Firmware signing is separate from device authentication. For fwup firmware, signing is built into `fwup`. Signing keys are Ed25519 key pairs, not certificates, and they are not part of the TLS chain. Other firmware formats use their own key types. See [Firmware signing](/concepts/firmware-signing).
+For fwup firmware, signing is built into `fwup`. Signing keys are Ed25519 key pairs, not certificates, and they are not part of the TLS chain. Other firmware formats use their own key types. See [Firmware signing](/concepts/firmware-signing).
 
 The signature is checked in two places:
 

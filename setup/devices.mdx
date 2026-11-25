@@ -87,7 +87,7 @@ NervesHub creates the devices in the background and posts a [product notificatio
 
 ## Set tags
 
-Tags decide which deployment group a device matches. A deployment group lists tags and matches devices that have all of them (**Require all**) or any of them (**Allow any**). See [Deployment groups](/setup/deployments#how-devices-join-a-group).
+Tags decide which deployment group a device matches. See [Deployment groups](/setup/deployments#how-devices-join-a-group).
 
 ```bash
 nh device update my-device-001 --tag main --tag qa
@@ -155,7 +155,7 @@ On the device's **Settings** tab, click **Delete device…**. NervesHub disconne
 nh device delete my-device-001
 ```
 
-A deleted device can be brought back. On its **Settings** tab, click **Restore device**. A restored device is matched to a deployment group again the next time it connects. Its certificates were deleted with it, so upload them again unless a registered CA signed them.
+To bring a deleted device back, click **Restore device** on its **Settings** tab. A restored device is matched to a deployment group again the next time it connects. Its certificates were deleted with it, so upload them again unless a registered CA signed them.
 
 To remove a deleted device for good, click **Delete permanently…**.
 

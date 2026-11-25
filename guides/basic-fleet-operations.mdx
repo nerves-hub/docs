@@ -4,7 +4,7 @@ sidebarTitle: "Basic fleet operations"
 description: "Build, sign and upload firmware from GitHub Actions, release every build to a QA deployment group, promote to production by hand, and send notifications to Slack."
 ---
 
-This guide takes you from uploading firmware by hand to a fleet that CI feeds. At the end you have:
+At the end of this guide you have:
 
 - A GitHub Actions workflow that builds `my_app` for `rpi4`, signs it and uploads it on every push to `main`.
 - Two deployment groups: `qa` for test devices, which gets every build, and `production` for the rest of the fleet, which you release to by hand.
@@ -23,14 +23,9 @@ The examples build for a Raspberry Pi 4. Any of the Nerves [supported targets](h
 
 The guide has four parts. Do them in order.
 
-1. [Build, sign and upload from CI](#1-build-sign-and-upload-from-ci)
-2. [Tag devices and create the deployment groups](#2-tag-devices-and-create-the-deployment-groups)
-3. [Release every build to QA, then promote by hand](#3-release-every-build-to-qa-then-promote-by-hand)
-4. [Send notifications to Slack](#4-send-notifications-to-slack)
-
 ## 1. Build, sign and upload from CI
 
-Until now you built `my_app` on your own machine and uploaded it with `nh`. This part moves that to GitHub Actions. The workflow uses the [`upload-nerves-firmware` action](/outbound/ci-cd#github-action), which installs and runs `nh` for you. Nothing is released to devices yet.
+This part moves the build and upload to GitHub Actions. The workflow uses the [`upload-nerves-firmware` action](/outbound/ci-cd#github-action), which installs and runs `nh` for you. Nothing is released to devices yet.
 
 The workflow needs two repository secrets and one repository variable. If your devices use a shared secret, it needs two more secrets. Add them all in GitHub under **Settings** > **Secrets and variables** > **Actions**.
 
@@ -38,7 +33,7 @@ The workflow needs two repository secrets and one repository variable. If your d
 
 In NervesHub, open the user menu, select **Access tokens**, click **New token**, enter a **Note** such as `CI`, and click **Create access token**. Store the value as `NERVES_HUB_TOKEN`. It is shown only once.
 
-The token acts as you, so your user needs the **Manage** or **Admin** role in `acme`. See [user access tokens](/api/authentication#user-access-tokens).
+The token acts as you. See [user access tokens](/api/authentication#user-access-tokens).
 
 ### Secret 2: a signing key for CI
 
@@ -172,7 +167,7 @@ jobs:
           firmware: _build/rpi4_prod/nerves/images/my_app.fw
 ```
 
-Leave `uri` out if you use NervesCloud. The action signs with `fwup` and does not install it, which is why the workflow does. The build step gets the product key and secret because the Shared secret config reads them when the firmware is built. Pass any other value your config reads from the environment the same way.
+Leave `uri` out if you use NervesCloud. The action signs with `fwup` and does not install it, which is why the workflow does. Pass any other value your config reads from the environment the way the build step passes the product key and secret.
 
 <Tip>
   On another CI system, install `nh`, set `NERVES_HUB_TOKEN`, `NERVES_HUB_ORG`, `NERVES_HUB_PRODUCT`, `NERVES_HUB_URI`, `NERVES_HUB_PRIVATE_KEY` and `NERVES_HUB_NON_INTERACTIVE=true`, and run `nh firmware upload _build/rpi4_prod/nerves/images/my_app.fw`. See [Upload and deploy with nh](/outbound/ci-cd#upload-and-deploy-with-nh) and [CLI configuration](/cli/configuration#environment-variables).
@@ -186,13 +181,13 @@ Bump the version and push to `main`. The run's summary shows the notice `Firmwar
 nh firmware list
 ```
 
-The new version also appears on the product's **Firmware** page. No device has it yet.
+The new version also appears on the product's **Firmware** page.
 
 **Go deeper:** [CI and automation](/outbound/ci-cd) · [Build, sign, and upload firmware](/setup/firmware) · [Firmware signing](/concepts/firmware-signing) · [API authentication](/api/authentication) · [Install the nh CLI](/cli/installation) · [CLI configuration](/cli/configuration)
 
 ## 2. Tag devices and create the deployment groups
 
-CI now uploads firmware, but no device receives it. A [deployment group](/setup/deployments) decides which devices get which firmware, and it picks devices by tag. You make two groups: `qa` for your test devices and `production` for the rest of the fleet.
+A [deployment group](/setup/deployments) decides which devices get which firmware, and it picks devices by tag. You make two groups: `qa` for your test devices and `production` for the rest of the fleet.
 
 ### Tag the devices
 
@@ -272,13 +267,9 @@ A device joins a group only when it connects, and only if it is in no group at t
 nh device reconnect <identifier>
 ```
 
-The rules to remember, set out in full in [How devices join a group](/setup/deployments#how-devices-join-a-group):
+The group must be on, and its tags, platform and architecture must match the device. See [How devices join a group](/setup/deployments#how-devices-join-a-group).
 
-- The group must be on, and its tags, platform and architecture must match the device.
-- Tagging a device that is already connected does nothing until it connects again.
-- Changing a device's tags does not take it out of the group it is in.
-
-So to move a device from `qa` to `production` later, do two things. Replace its tag with `nh device update <identifier> --tag prod`. Then tick it in the **Devices** list, open **Deployment group** in the bar at the foot of the list, choose `production`, select **Add to group**, and confirm. The `nh` CLI cannot set a device's group.
+To move a device from `qa` to `production` later, replace its tag with `nh device update <identifier> --tag prod`. Then tick it in the **Devices** list, open **Deployment group** in the bar at the foot of the list, choose `production`, select **Add to group**, and confirm. The `nh` CLI cannot set a device's group.
 
 ### Pause a group
 
@@ -302,7 +293,7 @@ Both groups show as on, and each device count goes up as tagged devices reconnec
 
 ## 3. Release every build to QA, then promote by hand
 
-The workflow from part 1 uploads firmware and stops. Here you make it create a [release](/deployments/releases) on the `qa` group after each upload, so your test devices update on every push to `main`. `production` stays manual: you release a build there once it has run on QA.
+Here you make the workflow from part 1 create a [release](/deployments/releases) on the `qa` group after each upload, so your test devices update on every push to `main`. `production` stays manual: you release a build there once it has run on QA.
 
 ### Release to `qa` from CI
 
@@ -383,7 +374,7 @@ The group starts sending the release as soon as it is created. To add a descript
 
 ## 4. Send notifications to Slack
 
-CI now releases every build to `qa`. The last part has NervesHub tell your team when an update fails or a device starts misbehaving, so nobody has to watch the web UI. The [Slack](/outbound/slack) integration posts those events to a channel.
+The [Slack](/outbound/slack) integration tells your team in a channel when an update fails or a device starts misbehaving.
 
 Your NervesHub instance must have a Slack app configured, or Slack does not appear on the **Integrations** page at all. See [Feature prerequisites](/hosting/feature-prerequisites#slack), and [Create a Slack app for your instance](/hosting/slack-app) if you host the instance yourself.
 
@@ -428,7 +419,7 @@ From here on, the **Manage** role is enough.
   </Step>
 </Steps>
 
-This set only speaks up when something needs attention. **Update succeeded** posts for every device that finishes updating, so expect more traffic if you add it. The **Workflow** events stay quiet until a deployment group has a [deployment workflow](/concepts/deployment-workflows), which the [complete fleet operations guide](/guides/complete-fleet-operations) adds to this same channel.
+**Update succeeded** posts for every device that finishes updating, so expect more traffic if you add it. The **Workflow** events stay quiet until a deployment group has a [deployment workflow](/concepts/deployment-workflows), which the [complete fleet operations guide](/guides/complete-fleet-operations) adds to this same channel.
 
 ### Check it works
 
@@ -444,10 +435,6 @@ A message about a single device has buttons to [act on the device](/outbound/sla
 **Go deeper:** [Slack](/outbound/slack) · [Product notifications](/management/notifications) · [Microsoft Teams](/outbound/teams) · [Discord](/outbound/discord) · [Roles](/access/roles) · [Feature prerequisites](/hosting/feature-prerequisites#slack) · [Create a Slack app for your instance](/hosting/slack-app)
 
 ## What you have now
-
-- Every push to `main` builds `my_app`, signs it with `my_app_ci_key`, uploads it and releases it to `qa`.
-- `production` takes a release when you create one, and pauses when you tell it to.
-- Slack hears about failed updates, new errors, health changes and product notifications.
 
 The finished `.github/workflows/firmware.yml`:
 

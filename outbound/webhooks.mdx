@@ -4,7 +4,7 @@ sidebarTitle: "Webhooks"
 description: "Send device, error and deployment workflow events from NervesHub to your own HTTP endpoint as signed JSON."
 ---
 
-A webhook sends your organization's events to an HTTP endpoint you run. Each event is a signed JSON `POST`. Use webhooks to feed a data warehouse, drive a dashboard, or trigger your own automation when a device connects, reports health, or finishes an update.
+A webhook sends your organization's events to an HTTP endpoint you run. Each event is a signed JSON `POST`.
 
 A webhook belongs to an organization. It sends the events of every product in the organization, including products added later, or only the products you choose.
 
@@ -372,7 +372,7 @@ The event is sent only when the status changes. A device that stays at `warning`
 
 ### `device.firmware_validated`
 
-The device marked the firmware it is running as good. The event carries nothing beyond `device`.
+The event carries nothing beyond `device`.
 
 ### `error_group.created` and `error_group.reopened`
 
@@ -480,7 +480,7 @@ Responses wrap the webhook in `data`. Products are named, as in the rest of the 
 - Naming products in `products` sets `all_products` to `false` unless the request says otherwise.
 - `products` in a response is empty for a webhook that sends every product's events.
 
-The signing secret is returned as `secret` only by `POST /webhooks` and `regenerate_secret`. Listing or getting a webhook never returns it. If you lose the secret, regenerate it.
+The signing secret is returned as `secret` only by `POST /webhooks` and `regenerate_secret`. If you lose the secret, regenerate it.
 
 The full request and response schemas are in your instance's API documentation at `/api/docs`, under **Webhooks**.
 

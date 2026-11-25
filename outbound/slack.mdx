@@ -73,7 +73,7 @@ An organization can have up to 20 Slack channels.
 
 These events have the same prerequisites as the matching [webhook events](/outbound/webhooks#events). For example, **New error** needs the [Error Reports extension](/extensions/error-reports).
 
-NervesHub holds events for 15 seconds before it posts them. Everything held for a channel goes out as one message per kind of event. A single event gets a message of its own. A burst, such as a fleet's health changing at once, gets one message with a count and the first ten devices. Device names link to the device in NervesHub.
+NervesHub holds events for 15 seconds, then posts one message per kind of event. A single event gets a message of its own. A burst, such as a fleet's health changing at once, gets one message with a count and the first ten devices. Device names link to the device in NervesHub.
 
 Anything a device sent, such as a failure reason, is escaped. It cannot mention `@channel` or become a link.
 

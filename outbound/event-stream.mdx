@@ -4,7 +4,7 @@ sidebarTitle: "Event stream"
 description: "Subscribe to a device's firmware update progress over a WebSocket, authenticated with an access token or a product API key."
 ---
 
-The event stream is a WebSocket your own service can open to follow a device live. It carries one thing: the progress of the device's firmware updates. Use it when you need to show an update's progress as it happens, for example in your own support tool or companion app.
+The event stream is a WebSocket your own service can open to follow the progress of a device's firmware updates as it happens, for example in your own support tool or companion app.
 
 For device connections, disconnections and the other fleet events, use [webhooks](/outbound/webhooks) instead.
 
@@ -30,7 +30,7 @@ A connection with a missing or invalid `token` is refused.
 
 ## Subscribe to a device
 
-Join the topic `device:<identifier>`, where `<identifier>` is the device's identifier. Join one topic for each device you want to follow.
+Join the topic `device:<identifier>`. Join one topic for each device you want to follow.
 
 ```json
 ["1", "1", "device:thermostat-0042", "phx_join", {}]
@@ -71,8 +71,6 @@ The server pushes `firmware_update` on the device's topic each time the device r
 | `rescheduled` | The device deferred the update. |
 | `failed` | The update failed. |
 | `expired` | NervesHub gave up on the update because the device stopped reporting on it. |
-
-The stream carries no other event.
 
 ## Example
 

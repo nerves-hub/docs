@@ -107,8 +107,6 @@ An archive is a signed fwup file that NervesHub delivers to devices without it b
   </Step>
 
   <Step title="Attach it to a release">
-    An archive is delivered through a [release](/deployments/releases).
-
     In the web UI, open the deployment group and click **New release**. Pick the archive in the **Archive** field, then click **Create release**. The field starts on the current release's archive.
 
     With `nh`:
@@ -184,7 +182,7 @@ config :nerves_hub_link,
   request_archive_public_keys: true
 ```
 
-NervesHub replies with all of the organization's Ed25519 public keys. Requested keys come from the same server that supplies the archive. See the trade-off described in [Firmware signing](/concepts/firmware-signing#ask-nerveshub-for-the-keys).
+NervesHub replies with all of the organization's Ed25519 public keys. Requested keys come from the same server that supplies the archive. See the trade-off in [Firmware signing](/concepts/firmware-signing#ask-nerveshub-for-the-keys).
 
 Since `nerves_hub_link` 2.13.0, a device with no usable archive key refuses the archive without calling `archive_available/1`. It logs `Refusing archive : no public keys are available to verify the archive signature`.
 

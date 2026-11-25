@@ -118,7 +118,7 @@ See [Delta updates](/management/delta-updates).
 
 By default every device in a group is sent the current release, however far behind it is. A **required** release is one every device passes through. A device that has not reached a required release is sent the earliest required release it is behind. It moves on only once it is running that release.
 
-Use a required release for firmware that later firmware depends on, such as a migration or a bootloader change that must be installed first.
+Use a required release for firmware that later firmware depends on, such as a migration or a bootloader change.
 
 ### Mark a release required
 
@@ -150,7 +150,7 @@ Marking or unmarking a release as required changes which firmware some devices a
 
 ## Edit a release
 
-You can change three things on a release after it is created: whether it is required, its connecting code, and where that code runs.
+After a release is created, you can change whether it is required, its connecting code, and where that code runs.
 
 ```bash
 nh deployment release update "production" 4 --connecting-code-file ./connect.exs --connecting-code-mode first

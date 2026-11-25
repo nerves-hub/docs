@@ -41,7 +41,7 @@ The Health, Geo, Alarms, Local Shell and Network Identity extensions do not depe
 
 With ClickHouse, NervesHub judges each device against its product's [health profile](/management/health-monitoring), over a window of stored readings.
 
-Without ClickHouse there is no history to judge. Health profiles are not evaluated. NervesHub instead checks the values in each health report against fixed thresholds:
+Without ClickHouse, health profiles are not evaluated. NervesHub instead checks the values in each health report against fixed thresholds:
 
 | Metric | Warning at | Unhealthy at |
 | --- | --- | --- |
@@ -111,7 +111,7 @@ Writes are buffered on each node and sent in batches. A page can take a moment t
 
 ClickHouse has its own migrations, separate from the PostgreSQL ones. They live in `priv/analytics_repo/migrations` in the NervesHub source.
 
-With `ANALYTICS_AUTO_MIGRATOR=true`, the default, each node runs pending ClickHouse migrations when it boots. You do not need to run anything by hand.
+With `ANALYTICS_AUTO_MIGRATOR=true`, the default, each node runs pending ClickHouse migrations when it boots.
 
 If you set `ANALYTICS_AUTO_MIGRATOR=false`, run migrations yourself before starting the new version:
 

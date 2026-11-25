@@ -6,7 +6,7 @@ description: "Report metrics, metadata and alarms from a Nerves device to Nerves
 
 The Health extension sends a report each time NervesHub asks for one. A report carries the device's metrics, any metadata you add, and its currently raised alarms. NervesHub uses the report for the device's health status, the **Health** tab charts, and the alarms shown on the device page.
 
-This page covers the firmware side. For what NervesHub does with the reports, see [Health monitoring](/management/health-monitoring).
+For what NervesHub does with the reports, see [Health monitoring](/management/health-monitoring).
 
 ## Requirements
 
@@ -35,7 +35,7 @@ This page covers the firmware side. For what NervesHub does with the reports, se
   </Step>
 
   <Step title="Check the device setting">
-    On the device's **Settings** tab, **Health** in the **Extensions** card is on by default. Leave it on.
+    On the device's **Settings** tab, **Health** in the **Extensions** card is on by default.
   </Step>
 </Steps>
 
@@ -116,7 +116,7 @@ defmodule MyApp.HealthMetrics do
 end
 ```
 
-Then add the module to `metric_sets` as shown above.
+Then add the module to `metric_sets`.
 
 For a single value, you can skip the module and give the default report a value or an MFA under `metrics`:
 
@@ -175,7 +175,7 @@ This list replaces the default. Include `"/"` if you still want it ignored.
 
 ## Replace the report
 
-For full control, implement `NervesHubLink.Extensions.Health.Report` and point the config at your module:
+Implement `NervesHubLink.Extensions.Health.Report` and point the config at your module:
 
 ```elixir
 config :nerves_hub_link,

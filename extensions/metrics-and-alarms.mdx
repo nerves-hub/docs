@@ -22,7 +22,7 @@ NervesHub has two extensions that carry part of what the [Health extension](/ext
 | `nerves-hub-link-agent` ([Linux agent](/integrations/linux-agent)) | No | No |
 | `nerves-hub-link-esp32` | No | No |
 
-Both extensions have a written contract so that any client can implement them: [`docs/metrics.md`](https://github.com/nerves-hub/nerves_hub_web/blob/main/docs/metrics.md) and [`docs/alarms.md`](https://github.com/nerves-hub/nerves_hub_web/blob/main/docs/alarms.md) in `nerves_hub_web`. The [extensions protocol reference](/device-api/extensions) summarizes the messages.
+Both extensions have a written contract: [`docs/metrics.md`](https://github.com/nerves-hub/nerves_hub_web/blob/main/docs/metrics.md) and [`docs/alarms.md`](https://github.com/nerves-hub/nerves_hub_web/blob/main/docs/alarms.md) in `nerves_hub_web`. The [extensions protocol reference](/device-api/extensions) summarizes the messages.
 
 ## Requirements
 
@@ -38,7 +38,7 @@ Health sends metrics, metadata and alarms in one report, on a timer NervesHub co
 - For metrics, the report repeats metadata that only changes when the device is updated. The Metrics extension lets a device sample often, batch readings with their own timestamps, and keep readings taken while offline.
 - For alarms, an alarm raised just after a report waits up to an hour to be seen, and one raised and cleared between two reports is never seen. The Alarms extension sends the event when it happens.
 
-Health keeps accepting metrics and alarms. Both paths end in the same place in NervesHub.
+Health keeps accepting metrics and alarms.
 
 ## Turn them on
 

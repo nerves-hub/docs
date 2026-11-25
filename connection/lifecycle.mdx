@@ -4,7 +4,7 @@ sidebarTitle: "Lifecycle"
 description: "Control when NervesHubLink starts, how it builds its configuration, how it waits for the network and reconnects, and what it reports about the connection."
 ---
 
-NervesHubLink starts with your firmware, waits for the network, connects, and reconnects on its own after a failure. This page covers the points where you can take control: who starts the connection, how its configuration is built, how reconnects are paced, and how your application learns the connection state.
+NervesHubLink starts with your firmware, waits for the network, connects, and reconnects on its own after a failure.
 
 For what goes over the connection, see [Connection transport](/connection/transport).
 
@@ -18,7 +18,7 @@ For what goes over the connection, see [Connection transport](/connection/transp
 
 ## Start the connection yourself
 
-By default the application starts the connection at boot. To start it later, for example after your own runtime setup has finished, turn off the automatic start. This needs `nerves_hub_link` 2.13.0 or later.
+To start the connection later, for example after your own runtime setup has finished, turn off the automatic start. This needs `nerves_hub_link` 2.13.0 or later.
 
 ```elixir
 # config/target.exs
@@ -54,7 +54,7 @@ children = [
   The name the supervisor registers under.
 </ParamField>
 
-The default (`start: :auto`) and manual mode use the same code path. Switching between them changes who starts the connection, not how it is configured.
+The default (`start: :auto`) and manual mode use the same code path.
 
 ## Build configuration at runtime
 
@@ -87,7 +87,7 @@ When you do not set `:configurator`, NervesHubLink picks one:
 2. `NervesHubLink.Configurator.TPM`, if the `TPM` module is loaded.
 3. `NervesHubLink.Configurator.SharedSecret` otherwise.
 
-Setting `:configurator` replaces this choice. See [NervesKey](/auth/nerveskey), [TPM](/auth/tpm) and [Shared secrets](/auth/shared-secret).
+See [NervesKey](/auth/nerveskey), [TPM](/auth/tpm) and [Shared secrets](/auth/shared-secret).
 
 ## Disable the connection in tests
 
@@ -110,7 +110,7 @@ To skip the check and attempt the connection straight away:
 config :nerves_hub_link, connect_wait_for_network: false
 ```
 
-The check only runs before the first attempt. After that, the reconnect backoff handles failures.
+After the first attempt, the reconnect backoff handles failures.
 
 ## Reconnect backoff
 
@@ -219,7 +219,7 @@ For how a revert is detected, see [Applying updates](/updates/applying-updates).
 
 ## Client identification
 
-NervesHubLink names itself and its version in the `User-Agent` header of the WebSocket upgrade request and of firmware downloads, for example `NHL/2.14.0`. NervesHub records the library and version for each connection, so you can tell which version of NervesHubLink a device runs.
+NervesHubLink names itself and its version in the `User-Agent` header of the WebSocket upgrade request and of firmware downloads, for example `NHL/2.14.0`. NervesHub records the library and version for each connection.
 
 ### Requirements
 

@@ -11,8 +11,6 @@ This guide continues from the end state of [Basic Nerves device setup](/guides/b
 - reports its own location, metrics, alarms and network identities, and
 - uses the connection options and extras that fit your product.
 
-Each part does the minimum and links to the feature page that covers the rest.
-
 ## Before you start
 
 You need the basic guide's end state:
@@ -22,7 +20,7 @@ You need the basic guide's end state:
 - The signing key `my_app_key`.
 - The `bench` deployment group, turned on, with your device in it. This guide releases through `bench`. If you have already replaced it with the groups from [Basic fleet operations](/guides/basic-fleet-operations), use `qa` wherever this guide says `bench`.
 
-The version numbering continues. The basic guide ended at `1.4.0`, and each part here ships one version, `1.5.0` to `1.8.0`. If you skipped the delta part of the basic guide your device is on a lower version, and these numbers still work.
+The basic guide ended at `1.4.0`, and each part here ships one version, `1.5.0` to `1.8.0`. If you skipped the delta part of the basic guide your device is on a lower version, and these numbers still work.
 
 Build and release every version the same way, from the project directory with `MIX_TARGET=rpi4` exported. The examples keep using a Raspberry Pi 4; any of the Nerves [supported targets](https://hexdocs.pm/nerves/supported-targets.html) works, with its name in place of `rpi4`:
 
@@ -43,7 +41,7 @@ Every config snippet adds to the one `config :nerves_hub_link` block in `config/
 
 ## Part 1: Move to certificate authentication
 
-A product's shared secret is compiled into every firmware image, and whoever holds it can connect as any device in the product. For production, give each device its own X.509 certificate. One leaked device then exposes only itself. [Security: PKI and the chain of trust](/concepts/pki) explains the model.
+A product's shared secret is compiled into every firmware image, and whoever holds it can connect as any device in the product. For production, give each device its own X.509 certificate. [Security: PKI and the chain of trust](/concepts/pki) explains the model.
 
 You sign device certificates with a certificate authority (CA) that you control and register with the `acme` organization. A [just-in-time provisioning](/auth/just-in-time-provisioning) profile on the CA lets new devices create themselves in `my_app`, tagged `prod`, the first time they connect. Registering a CA needs the `manage` role or higher.
 
@@ -200,8 +198,6 @@ When every device has a certificate on file, open **Product settings**, and in t
 
 ## Part 2: Control when and how updates are applied
 
-Until now the device applies every update it is offered and reboots when the update finishes. In this part you add a client module that decides the moment, switch to a download strategy that survives bad links, and optionally let the device ask for its updates itself. [How firmware updates work](/updates/overview) shows where each of these sits in the path of an update.
-
 ### Add the client module
 
 `NervesHubLink.Client` is the behaviour through which `nerves_hub_link` asks your application what to do with an update. Create `lib/my_app/nerves_hub_link_client.ex`:
@@ -280,7 +276,7 @@ config :nerves_hub_link,
   updater: NervesHubLink.UpdateManager.PartsUpdater
 ```
 
-`PartsUpdater` downloads the firmware in parts and verifies each one. On an unreliable link a corrupt part is fetched again on its own, and a restart resumes from the last verified part, where the default strategy starts over. It keeps the parts in `/data/nerves_hub_link/firmware`, so the device needs room for the firmware file there. It needs NervesHub 2.5.0 or later. The other strategies and the retry settings are in [Download strategies](/updates/download-strategies).
+`PartsUpdater` downloads the firmware in parts and verifies each one. It keeps the parts in `/data/nerves_hub_link/firmware`, so the device needs room for the firmware file there. It needs NervesHub 2.5.0 or later. The other strategies and the retry settings are in [Download strategies](/updates/download-strategies).
 
 Set the version to `1.6.0`, then build and release it to `bench`.
 
@@ -366,7 +362,7 @@ With the client module, NervesHub still picks the moment to offer an update and 
 
 ## Part 3: Turn on the rest of the extensions
 
-The basic guide left `my_app` reporting default health, a GeoIP location, logs and errors. This part makes those reports say something about your device and adds network identities. It ends with the optional system shell. Each section is independent, so skip what your device does not need. The config for all of them is in one snippet, in [Configure the extensions](#configure-the-extensions).
+Each section is independent, so skip what your device does not need. The config for all of them is in one snippet, in [Configure the extensions](#configure-the-extensions).
 
 Every extension also has to be on for the product, in **Product settings** on the **General** tab, in the **Device extensions** card. A product created through the API or `nh` starts with them all off. See the [extensions overview](/extensions/overview).
 
@@ -622,7 +618,7 @@ If you set up device-managed updates, `NervesHubLink.start_update/0` is refused 
 
 ### Support scripts and connecting code
 
-For anyone who supports devices in the field. Neither needs a firmware change.
+For anyone who supports devices in the field.
 
 A [support script](/management/support-scripts) is Elixir saved on the product that you run on one online device, with the output returned to you. It does not need `remote_iex`. Managing scripts with `nh` needs NervesHub 2.5.0 or later.
 
@@ -679,11 +675,11 @@ The call closes the connection. A device that restarts on waking connects at boo
 
 ## Where you are now
 
-Your device authenticates with its own certificate, decides when to apply updates and validates them, reports through five extensions, or six with the optional system shell, and runs `1.8.0`.
+Your device runs `1.8.0`.
 
 ### The complete configuration
 
-This is the one `config :nerves_hub_link` block the two guides arrive at. It holds everything from the [basic guide's block](/guides/basic-device-setup#the-complete-configuration), with `shared_secret` replaced by certificate authentication in part 1, and everything this guide added. Lines for sections you skipped are not in yours.
+This block holds everything from the [basic guide's block](/guides/basic-device-setup#the-complete-configuration), with `shared_secret` replaced by certificate authentication in part 1, and everything this guide added. Lines for sections you skipped are not in yours.
 
 ```elixir
 # config/target.exs
@@ -735,7 +731,7 @@ The guide also added dependencies to `mix.exs`: `nerves_key` (NervesKey tab only
 
 ### Where to go next
 
-Your device is ready. The next step is the fleet it belongs to. If you still have the `bench` group, delete it with `nh deployment delete bench` before you start, because a device belongs to one group and tag changes never remove it.
+Keep the `bench` group. Basic fleet operations uses it for one last release, then deletes it.
 
 - [Basic fleet operations](/guides/basic-fleet-operations): firmware built and signed in CI, `qa` and `production` groups, and Slack notifications.
 - [Complete fleet operations](/guides/complete-fleet-operations): a pipeline that rolls out through canaries with approval, webhooks into your own backend, and rollout guardrails.

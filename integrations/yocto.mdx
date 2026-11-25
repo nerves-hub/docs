@@ -18,7 +18,7 @@ The layer does not build bundles or configure slots. That is the job of [meta-ra
 | [meta-fwup](https://github.com/fwup-home/meta-fwup) | When the agent is built for fwup |
 | systemd | As the init manager |
 
-The recipe uses meta-rust-bin's `cargo_bin` class, not poky's `cargo`. The layer's README gives the reason: the Rust that `scarthgap` and `walnascar` ship is older than the agent needs. meta-rust-bin packages prebuilt upstream toolchains. Those are upstream binaries, not something your build compiled, which matters if you have reproducibility or audit requirements.
+The recipe uses meta-rust-bin's `cargo_bin` class, not poky's `cargo`, because the Rust that `scarthgap` and `walnascar` ship is older than the agent needs. meta-rust-bin packages prebuilt upstream toolchains, not ones your build compiled, which matters if you have reproducibility or audit requirements.
 
 ## Add the layer
 

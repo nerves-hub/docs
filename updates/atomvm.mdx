@@ -103,7 +103,7 @@ An OTP `vsn` is free form. NervesHub requires a semantic version and accepts the
 
 The packbeam format has no signature of its own. NervesHub defines one: a data entry named `nerves_hub/signature`, appended as the last entry of the archive. It holds an Ed25519 signature over every byte before that entry. AtomVM skips data entries when it looks for code, so a signed archive still runs on a VM that knows nothing about the signature.
 
-The key is your organization's fwup signing key. You do not create or register a separate key for AtomVM. If the organization has no fwup key yet, see [Firmware signing](/concepts/firmware-signing).
+The key is your organization's fwup signing key. If the organization has no fwup key yet, see [Firmware signing](/concepts/firmware-signing).
 
 Sign an archive in one of two ways:
 
@@ -170,7 +170,6 @@ Then create or update a [deployment group](/setup/deployments) as you would for 
 ## Limits
 
 - **No delta updates.** NervesHub never generates [deltas](/management/delta-updates) for packbeams. A deployment group with **Delta updates** turned on still sends AtomVM devices the whole archive.
-- **Application only.** Updating AtomVM itself or the bootloader is outside what NervesHub does for this format.
 - **Two partitions on the device.** The agent writes an update into the packbeam partition the device is not running from. A device built with the stock AtomVM partition table has only one and cannot be updated. See [AtomVM on ESP32](/integrations/atomvm-esp32).
 - **Archives are separate.** [Archives](/updates/archives) are fwup files regardless of the firmware format.
 

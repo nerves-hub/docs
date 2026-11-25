@@ -4,7 +4,7 @@ sidebarTitle: "Complete fleet operations"
 description: "Extend the basic fleet setup into a two-stage CI/CD pipeline that rolls out to production through canaries and a human approval, reports to your own backend, and has guardrails."
 ---
 
-This guide continues from the end state of [Basic fleet operations](/guides/basic-fleet-operations). It does not repeat that guide's setup. At the end you have:
+This guide continues from the end of [Basic fleet operations](/guides/basic-fleet-operations). At the end you have:
 
 - A pipeline that releases every merge to `qa` and releases to `production` when you push a version tag.
 - A `production` rollout that goes to a few canary devices first, waits for a person to approve, then reaches the rest of the fleet.
@@ -24,14 +24,9 @@ The examples still build for a Raspberry Pi 4. Any of the Nerves [supported targ
 
 The guide has four parts. Do them in order.
 
-1. [Build a two-stage release pipeline](#1-build-a-two-stage-release-pipeline)
-2. [Roll out through canaries with an approval gate](#2-roll-out-through-canaries-with-an-approval-gate)
-3. [Report rollouts to your backend with a webhook](#3-report-rollouts-to-your-backend-with-a-webhook)
-4. [Add guardrails](#4-add-guardrails)
-
 ## 1. Build a two-stage release pipeline
 
-The basic guide's workflow builds on every push to `main`, uploads the firmware with the `upload-nerves-firmware` action, and releases it to `qa`. This part adds a second stage: pushing a tag `v<version>` releases that firmware version to `production`.
+This part adds a second stage to the basic guide's workflow: pushing a tag `v<version>` releases that firmware version to `production`.
 
 The tag job does not build anything. It finds the firmware that `qa` already received and creates a [release](/deployments/releases) of that same firmware on `production`. The fleet gets the exact file your QA devices ran, and the production job never holds the signing key.
 
@@ -144,12 +139,12 @@ jobs:
 What changed from the basic workflow, apart from the tool:
 
 - **The `build` job is now `qa`, and it creates its release explicitly.** The action's `deployment` input and `nh firmware upload --deploy` cannot describe a release. So the job uploads with `-o json`, reads the firmware UUID, and runs `nh deployment release create` with a `--description`. See [the deploy option](/outbound/ci-cd#the-deploy-option).
-- **The `production` job looks the firmware up.** `nh deployment release list qa` returns the group's releases newest first, so the job takes the newest `qa` release whose firmware version matches the tag. It installs `nh` and nothing else.
+- **The `production` job looks the firmware up.** `nh deployment release list qa` returns the group's releases newest first, so the job takes the newest `qa` release whose firmware version matches the tag.
 - **The production release carries a description and notes.** Neither can change later. `nh deployment release show` prints both. The group's **Releases** tab shows the description on each row, and the notes when you open the row.
 
 Each `nh deployment release create` call prints the number of the release it created.
 
-The tag only names a version. Bump `version` in `mix.exs`, merge, wait for the QA run to finish, and push the tag once you are happy with what `qa` is running. This is why every merge needs a new version: the production job finds firmware by its version.
+The tag only names a version. Bump `version` in `mix.exs`, merge, wait for the QA run to finish, and push the tag once you are happy with what `qa` is running. Every merge needs a new version, because the production job finds firmware by its version.
 
 The `nh deployment release` commands need a server with the release API, and descriptions and notes need NervesHub 2.5.0. See [Releases](/deployments/releases#requirements). If later firmware depends on a release being installed first, add `--required` to the `production` job's `nh deployment release create` command. See [Required releases](/deployments/releases#required-releases).
 
@@ -157,7 +152,7 @@ The `nh deployment release` commands need a server with the release API, and des
 
 `NERVES_HUB_TOKEN` currently holds your user access token. It works on every NervesHub version, but it can do everything you can do, in every organization you belong to, and it stops working when your account is deleted.
 
-Two things narrow that. Today, you can move the token to a user that holds a custom role with only the two permissions the pipeline uses. [Part 4](#give-approvers-and-ci-their-own-roles) creates that role as `CI`. Later, a product API key is the better fit: it reaches `my_app` only, holds a role of its own, and keeps working when the person who created it leaves.
+Today, you can move the token to a user that holds a custom role with only the two permissions the pipeline uses. [Part 4](#give-approvers-and-ci-their-own-roles) creates that role as `CI`. Later, a product API key is the better fit: it reaches `my_app` only, holds a role of its own, and keeps working when the person who created it leaves.
 
 <Note>
   Product API keys are on the NervesHub main branch but in no tagged release as of NervesHub 2.5.4. On 2.5.4 and earlier, keep the user access token.
@@ -195,7 +190,7 @@ The workflow needs no change, because `nh` sends either credential the same way.
 
    The newest release is marked with `*`, shows the version you tagged, and has the same firmware UUID as the `qa` release. Run `nh deployment release show production <number>` to see its description and notes, or open the group's **Releases** tab in the web UI.
 
-Devices tagged `prod` start updating as soon as the release exists, as long as the [`production` group](/setup/deployments) is on. The next part puts canaries and an approval in front of that.
+Devices tagged `prod` start updating as soon as the release exists, as long as the [`production` group](/setup/deployments) is on.
 
 **Go deeper:** [CI and automation](/outbound/ci-cd) · [Releases](/deployments/releases) · [Deployment groups](/setup/deployments) · [Build, sign, and upload firmware](/setup/firmware) · [API authentication](/api/authentication) · [Roles](/access/roles) · [nh command reference](/cli/reference)
 
@@ -264,7 +259,7 @@ While the group has a workflow, each step's `concurrent_updates` and the step or
 
 ### Add the workflow events to Slack
 
-The basic guide set up a Slack channel for `my_app` and said its **Workflow** events would stay quiet until now. On the organization's **Integrations** tab, open that channel's row menu and choose **Edit**. Tick **Workflow waiting for approval** and **Workflow step failed**, then click **Save channel**. See [Channel notifications](/outbound/slack#channel-notifications).
+On the organization's **Integrations** tab, open the row menu of the Slack channel you set up for `my_app` in the basic guide and choose **Edit**. Tick **Workflow waiting for approval** and **Workflow step failed**, then click **Save channel**. See [Channel notifications](/outbound/slack#channel-notifications).
 
 Anyone who will approve from Slack must have linked their Slack account with `/nerveshub link`, as you did in the basic guide's Slack check. The instance needs a Slack app: see [Feature prerequisites](/hosting/feature-prerequisites#slack).
 
@@ -464,17 +459,17 @@ To show one device's update live, with its stage and percentage, open the [event
 
 ## 4. Add guardrails
 
-The pipeline now releases to `production` through canaries and an approval. This last part limits the damage a bad release or a leaked credential can do, and shows where to look when a rollout goes wrong.
+This part limits the damage a bad release or a leaked credential can do, and shows where to look when a rollout goes wrong.
 
 ### Set the rollout controls
 
 Open a group and select the **Settings** tab. Each card saves on its own with **Save**. See [Rollout controls](/deployments/rollout-controls) for every setting.
 
-| Card | Setting | What it protects against | In a group with a workflow |
-| --- | --- | --- | --- |
-| **Sending updates** | **Devices updating at once** | A bad release reaching the whole group before anyone notices | Not used. Each step sets its own `concurrent_updates`. |
-| **Sending updates** | **Priority queue**, with **On this version or older** set to a version well behind the fleet | Devices far behind, such as ones fresh from the factory, waiting in line behind everything else | Not used. The step order decides who goes first. |
-| **Penalty box** | **After this many failed attempts** | One device that keeps starting an update without finishing it holding a rollout slot | Still applies |
+| Card | Setting | In a group with a workflow |
+| --- | --- | --- |
+| **Sending updates** | **Devices updating at once** | Not used. Each step sets its own `concurrent_updates`. |
+| **Sending updates** | **Priority queue**, with **On this version or older** set to a version well behind the fleet | Not used. The step order decides who goes first. |
+| **Penalty box** | **After this many failed attempts** | Still applies |
 
 `production` has a workflow, so the first two are disabled on it. Set them on `qa`, and on any group without a workflow. If you ever select **Remove workflow** on `production`, later releases go to the whole group, paced by these settings.
 
@@ -504,7 +499,7 @@ Custom roles need NervesHub 2.5.4 or later. You need the built-in **Admin** role
   </Step>
 </Steps>
 
-Approving a step and creating a release are the same permission, so the two roles differ only in what else they hold. Neither can change group settings, signing keys or device tags. Approving from Slack checks the same permission.
+Approving a step and creating a release are the same permission, so the two roles differ only in what else they hold. Neither can change group settings, signing keys or device tags.
 
 <Note>
   A product API key can take the `CI` role instead of a user. Product API keys are on the NervesHub main branch but in no tagged release as of NervesHub 2.5.4. See [Credentials for CI](#credentials-for-ci).
@@ -556,11 +551,6 @@ Trend charts, per-attempt update history and health charts need ClickHouse on th
 **Go deeper:** [Rollout controls](/deployments/rollout-controls) · [Deployment workflows](/concepts/deployment-workflows) · [Roles and permissions](/access/roles) · [Two-factor authentication](/access/two-factor) · [Audit log](/access/audit-log) · [Insights and history](/management/insights) · [Product notifications](/management/notifications) · [Health monitoring](/management/health-monitoring) · [Finding devices](/management/finding-devices) · [ClickHouse](/hosting/clickhouse) · [CI and automation](/outbound/ci-cd)
 
 ## What you have now
-
-- Every merge to `main` is built, signed and released to `qa`. A `v<version>` tag releases the firmware `qa` ran to `production`.
-- `production` updates up to five canaries, waits for a `Release approver`, then updates the rest of the fleet.
-- Slack and your own backend hear when a step waits or fails.
-- The pipeline and the approvers hold only the permissions they use, behind two-factor authentication.
 
 The finished `.github/workflows/firmware.yml`, unchanged since part 1:
 

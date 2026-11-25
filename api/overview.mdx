@@ -6,7 +6,7 @@ description: "Base URL, OpenAPI document, URL structure, response and error form
 
 NervesHub has a JSON API for devices, firmware, [archives](/updates/archives), [deployment groups](/setup/deployments) and their [releases](/deployments/releases), products, organizations, [signing keys](/concepts/firmware-signing), CA certificates, webhooks and [support scripts](/management/support-scripts). The `nh` CLI is built on it, and you can call it from CI or your own tooling.
 
-The **Endpoints** section in the sidebar is generated from the server's OpenAPI document. This page covers what applies to every endpoint.
+The **Endpoints** section in the sidebar is generated from the server's OpenAPI document.
 
 ## Base URL
 
@@ -189,8 +189,6 @@ Only the two endpoints the CLI uses to sign in through the browser are rate limi
 | `GET /api/auth/cli_session/{token}` | 120 requests a minute |
 
 A request over the limit gets `429` with a `Retry-After` header giving the seconds to wait.
-
-No other API endpoint is rate limited by NervesHub itself.
 
 ## Related pages
 

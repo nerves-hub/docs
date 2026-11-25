@@ -4,15 +4,13 @@ sidebarTitle: "Command reference"
 description: "Every nh command and subcommand, with its arguments and flags."
 ---
 
-This page lists every `nh` command. Run any command with `--help` for its full description and examples.
+Run any command with `--help` for its full description and examples.
 
 All commands accept the [global flags](/cli/configuration#global-flags): `--uri`, `--token`, `--org`, `--product`, `--data-dir`, `--non-interactive` and `-o`/`--output`. Commands that work on a product need an organization and a product, from flags, environment variables or saved settings.
 
 Commands that delete or deactivate something ask for confirmation first. Pass `-y` or `--yes` to skip the prompt.
 
 ## `nh user`
-
-Sign in and inspect the current user.
 
 ```bash
 nh user login     # sign in on the web and enter the code nh shows
@@ -30,8 +28,6 @@ nh user logout    # remove the saved API token
 
 ## `nh org`
 
-Manage organizations and their members.
-
 ```bash
 nh org list                       # organizations you belong to
 nh org show [name]                # one organization
@@ -47,8 +43,6 @@ nh org remove-member <email>      # remove a member
 Inviting members, changing roles and removing members need the **Admin** role. See [Roles](/access/roles).
 
 ## `nh product`
-
-Manage products.
 
 ```bash
 nh product list             # products in the organization
@@ -80,8 +74,6 @@ nh product update my_app --require-unique-firmware-version=false
 A format other than `fwup` must also be enabled on the instance. See [Feature prerequisites](/hosting/feature-prerequisites#firmware-formats).
 
 ## `nh device`
-
-Manage the devices in a product.
 
 ```bash
 nh device list
@@ -261,8 +253,6 @@ nh device shared-secrets delete <identifier> <key>  # deactivate a key (alias: d
 The secret is printed once by `create` and cannot be fetched again. `list` never shows secrets. See [Shared secrets](/auth/shared-secret).
 
 ## `nh firmware`
-
-Manage a product's firmware.
 
 ```bash
 nh firmware list

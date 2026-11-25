@@ -38,7 +38,7 @@ The `nh` CLI has no flags for these settings. Set them in the web UI, or send th
 
 The limit is soft. A few more devices can be updating at once as devices reconnect.
 
-A device in [device-managed update mode](/updates/device-managed-updates) is not held to this limit. When it asks for its update, NervesHub sends it whenever the group has firmware for it, whatever the number of updates in progress.
+A device in [device-managed update mode](/updates/device-managed-updates) is not held to this limit. When it asks for its update, NervesHub sends it whenever the group has firmware for it.
 
 <Note>
   While the group has a [workflow](/concepts/deployment-workflows), this setting and the priority queue are not used. Each workflow step sets its own `concurrent_updates`.
@@ -53,13 +53,13 @@ A device in [device-managed update mode](/updates/device-managed-updates) is not
 | **Connected longest**       | `FIFO`    | By when each device's current connection was established, oldest first.  |
 | **Connected most recently** | `LIFO`    | By when each device was first seen by NervesHub, newest first.           |
 
-**Connected most recently** does not look at the current connection. It puts the devices that connected to NervesHub for the first time most recently at the front.
+**Connected most recently** does not look at the current connection.
 
-New groups use `FIFO`. An instance operator can make new groups use `LIFO` by setting the `DEFAULT_LIFO_DEPLOYMENT_QUEUE` environment variable to `true`. See [Feature prerequisites](/hosting/feature-prerequisites#other-defaults).
+An instance operator can make new groups use `LIFO` by setting the `DEFAULT_LIFO_DEPLOYMENT_QUEUE` environment variable to `true`. See [Feature prerequisites](/hosting/feature-prerequisites#other-defaults).
 
 ## Priority queue
 
-The priority queue lets devices on old firmware skip the normal queue. Use it for devices fresh from the factory, which should reach current firmware before they do anything else.
+The priority queue lets devices on old firmware skip the normal queue. Use it for devices fresh from the factory.
 
 <Steps>
   <Step title="Turn it on">
@@ -82,7 +82,7 @@ If the priority queue is on but no version threshold is set, no device uses it.
 
 ## Penalty box
 
-A device that reports a failed update, or that keeps starting an update without finishing it, goes into the penalty box. NervesHub stops sending it updates until the penalty ends, so one device stuck in a failure loop does not keep taking a slot in the rollout.
+A device that reports a failed update, or that keeps starting an update without finishing it, goes into the penalty box. NervesHub stops sending it updates until the penalty ends.
 
 The **Penalty box** card has three rules:
 
@@ -92,7 +92,7 @@ The **Penalty box** card has three rules:
 | **Or this many close together**, within a number of seconds          | 5 attempts in 180 seconds |
 | **It stays in the penalty box for** a number of minutes              | 1,440 minutes      |
 
-A device enters the penalty box when it meets either of the first two rules. Those rules count the updates NervesHub sent the device, so they catch a device that keeps starting an update without finishing it. A device that reports a failed update enters the penalty box straight away, whatever the first two rules are set to, and stays for the same number of minutes. Entering the penalty box clears the device's recorded attempts, so the device has a full set of tries when the penalty ends.
+A device enters the penalty box when it meets either of the first two rules. Those rules count the updates NervesHub sent the device. A device that reports a failed update enters the penalty box straight away, whatever the first two rules are set to, and stays for the same number of minutes. Entering the penalty box clears the device's recorded attempts, so the device has a full set of tries when the penalty ends.
 
 An update the device [reschedules](/updates/applying-updates#what-ignoring-and-rescheduling-do) counts as an attempt too. With `nerves_hub_link` 2.14.0 a rescheduled update is offered again within about a minute, so a device that keeps rescheduling enters the penalty box.
 

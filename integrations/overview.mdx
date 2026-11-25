@@ -6,8 +6,6 @@ description: "The clients that connect a device to NervesHub, what each runs on,
 
 A device connects to NervesHub over a Phoenix Channels WebSocket and speaks the [device protocol](/device-api/websocket-overview). A client is the software on the device that speaks it. It reports the firmware the device is running, receives updates, and hands the download to whatever writes firmware on that platform.
 
-Which client you use follows from what the device runs.
-
 ## The clients
 
 | Client | Language | Runs on | Firmware format |
@@ -46,7 +44,7 @@ These states come from each project's own README. Check the repository for the c
 
 ## What differs between clients
 
-Features described elsewhere on this site are written for NervesHubLink unless the page says otherwise. The other clients differ in ways that matter when you operate a mixed fleet:
+Features described elsewhere on this site are written for NervesHubLink unless the page says otherwise. The other clients differ:
 
 - **Console.** NervesHubLink serves an IEx session. The AtomVM agent and nerves-hub-link-esp32 serve a fixed set of commands. The Linux agent offers a shell through the local shell extension.
 - **Support scripts.** On Nerves a script is Elixir. On the Linux agent it is a shell script. On the AtomVM agent it is a list of console commands. nerves-hub-link-esp32 does not run scripts. Scripts belong to the product, so a product with more than one kind of device needs scripts written for each.
@@ -72,7 +70,7 @@ A client that is not in this list can name itself with a `custom#` prefix, for e
 
 The server has no notion of an official client. Anything that speaks the device protocol is a device.
 
-If none of these clients covers your runtime, the [Device WebSocket protocol](/device-api/websocket-overview) and [WebSocket channel events](/device-api/websocket-events) references describe the connection, the join, and the messages in both directions. The existing clients are also useful as reference implementations.
+If none of these clients covers your runtime, the [Device WebSocket protocol](/device-api/websocket-overview) and [WebSocket channel events](/device-api/websocket-events) references describe the connection, the join, and the messages in both directions. The existing clients are reference implementations.
 
 ## Related pages
 

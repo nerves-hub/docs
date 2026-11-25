@@ -91,7 +91,7 @@ config :nerves_hub_link, NervesHubLink.UpdateManager.PartsUpdater,
 
 With `max_concurrent_parts` above `1`, the parts still needed are divided into that many contiguous ranges. Each range is downloaded over its own connection. Parts are still verified as they arrive and applied in order.
 
-This helps on links where one connection cannot fill the available bandwidth, such as high-latency satellite or cellular. It costs one connection per range on the device and on whatever serves the firmware, for every device in a rollout. Raise it deliberately.
+This helps on links where one connection cannot fill the available bandwidth, such as high-latency satellite or cellular. It costs one connection per range on the device and on whatever serves the firmware, for every device in a rollout.
 
 ### Servers that send no part checksums
 
@@ -109,8 +109,6 @@ config :nerves_hub_link, :retry_config,
   time_between_retries: 15_000,
   worst_case_download_speed: 30_000
 ```
-
-The values shown are the defaults.
 
 | Option | Default | Description |
 | --- | --- | --- |

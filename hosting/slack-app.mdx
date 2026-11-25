@@ -1,12 +1,12 @@
 ---
 title: "Create a Slack app for your instance"
 sidebarTitle: "Slack app"
-description: "How to create the Slack app a self-hosted NervesHub instance needs before organizations can connect Slack workspaces, including Socket Mode for an instance Slack cannot reach."
+description: "Create the Slack app a self-hosted NervesHub instance needs before organizations can connect Slack workspaces, including Socket Mode for an instance Slack cannot reach."
 ---
 
 The Slack integration works through a Slack app that belongs to the NervesHub instance. Organizations connect a workspace by installing that app. A self-hosted instance has no Slack app until you create one, and Slack stays hidden on every organization's **Integrations** page until you do.
 
-This page is for the person hosting the instance. What an organization admin does afterwards is on the [Slack](/outbound/slack) page.
+What an organization admin does afterwards is on the [Slack](/outbound/slack) page.
 
 ## Requirements
 
@@ -113,8 +113,6 @@ Posting notifications, installing the app and linking accounts work either way. 
 
 ## Create the app with Socket Mode
 
-Use this for an instance Slack cannot reach.
-
 <Steps>
   <Step title="Set the secrets encryption key">
     Generate a key and set it as `SECRETS_ENCRYPTION_KEY` on every node, if the instance does not have one yet:
@@ -203,8 +201,6 @@ Each web node keeps two Socket Mode connections open. Slack replaces every conne
 2. Click **Add to Slack** and approve the install in Slack. Slack sends you back to the **Integrations** page, which lists the workspace.
 3. Add a Slack channel and use **Send test message**. The message arrives in the channel.
 4. In Slack, run `/nerveshub help`. A reply listing the commands confirms that Slack reaches the instance, by request URL or Socket Mode.
-
-The [Slack](/outbound/slack) page covers each of these from the organization's side.
 
 ## Variables
 

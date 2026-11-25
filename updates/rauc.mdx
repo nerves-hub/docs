@@ -21,7 +21,7 @@ NervesHub can store and deploy [RAUC](https://rauc.io/) bundles (`.raucb`) along
 | Bundle format | `verity` |
 | Device client | The [Linux agent](/integrations/linux-agent) built with its `rauc` feature |
 
-RAUC 1.9 matters at both ends for different reasons. Older versions drop `[meta.<label>]` manifest sections while building a bundle, so the metadata NervesHub needs never reaches it. On the device, `bundle.hash` was added to slot status in 1.9, and that is how a device reports which bundle it is running.
+RAUC versions before 1.9 drop `[meta.<label>]` manifest sections while building a bundle, so the metadata NervesHub needs never reaches it. On the device, `bundle.hash` was added to slot status in 1.9, and that is how a device reports which bundle it is running.
 
 ## Enable RAUC
 

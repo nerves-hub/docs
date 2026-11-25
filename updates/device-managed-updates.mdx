@@ -6,7 +6,7 @@ description: "Let a device choose when it takes the firmware its deployment grou
 
 By default a device takes firmware whenever its deployment group sends it. Some devices should not: a machine mid-cycle, a vehicle in motion, or a device whose owner has a say over when it restarts.
 
-A device-managed device chooses **when** it takes firmware. It does not choose **what** firmware. Its [deployment group](/setup/deployments) still decides that. A device can never turn its own updates off, so an operator can always reach it.
+A device-managed device chooses when it takes firmware. Its [deployment group](/setup/deployments) still decides which firmware. A device can never turn its own updates off, so an operator can always reach it.
 
 ## Requirements
 
@@ -25,9 +25,9 @@ Every device has an update mode. The mode is stored in NervesHub, not on the dev
 | `device_managed` | **Device managed** | Never                   | Yes, if eligible              | Yes         |
 | `off`            | **Off**            | Never                   | Never                         | Yes         |
 
-Three rules hold in every mode:
+In every mode:
 
-- The deployment group names the firmware. A device-managed device stays in its group and is only left out of pushes.
+- A device-managed device stays in its group and is only left out of pushes.
 - A manual push always lands. Sending firmware by hand to an `automatic` device also sets it to `off`, so the group does not overwrite what you sent. Other modes are left as they are.
 - A device may only fetch firmware its deployment group would send it. A device in a [workflow](/concepts/deployment-workflows) step that has not started is refused whatever its mode.
 
@@ -98,8 +98,6 @@ Three rules hold in every mode:
   </Step>
 
   <Step title="Set the mode">
-    Choose who sets the mode: you, or the device.
-
     <Tabs>
       <Tab title="You set it">
         Open the device. In the page header, select the update mode and choose **Device managed**.
@@ -175,7 +173,7 @@ end
 
 `start_update/1` fetches the firmware URL and applies the update. It returns `:ok` once NervesHub has sent the update. From there the update runs exactly like one the deployment group pushed and reports through your `NervesHubLink.Client`. See [Applying updates](/updates/applying-updates).
 
-Firmware URLs are signed and time limited. That is why the URL is fetched at the moment the device is about to use it, not when it checks.
+Firmware URLs are signed and time limited, so the URL is fetched when the device is about to use it, not when it checks.
 
 | Return value                | Meaning                                                                                   |
 | --------------------------- | ----------------------------------------------------------------------------------------- |
@@ -197,7 +195,7 @@ A device that has downloaded an [archive](/updates/archives) counts as having an
 
 ## Let the device choose its mode
 
-A device may move itself between `:automatic` and `:device_managed`, and only when an operator has allowed it. A device can never set `:off`.
+A device may move itself between `:automatic` and `:device_managed`, and only when an operator has allowed it.
 
 `NervesHubLink.set_update_mode/2` returns:
 
@@ -246,7 +244,7 @@ Each change to the permission is recorded in the audit log per device.
 
 A device in `device_managed` mode that connects reporting a device API version below 2.4.0 is returned to `automatic`. NervesHub records the change in the audit log with the device as the actor.
 
-NervesHub does this because the device would otherwise be stranded. The deployment group does not push to it, and its firmware cannot ask. This matters most after a firmware auto-revert, where a failed update drops a device back onto an image that predates the feature.
+Otherwise the device would be stranded: the deployment group does not push to it, and its firmware cannot ask. This matters most after a firmware auto-revert, where a failed update drops a device back onto an image that predates the feature.
 
 Nothing reverses this automatically. Once the device runs firmware that supports device-managed updates, set its mode again.
 

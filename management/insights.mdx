@@ -4,7 +4,7 @@ sidebarTitle: "Insights and history"
 description: "Read a product's Insights page, and a device's connection history, firmware update history, and Data History tab."
 ---
 
-NervesHub keeps two kinds of fleet information. Current state says what every device is doing now. History says how that changed: when devices connected, how updates ended, and what messages crossed each connection. This page covers where each shows, and which parts need ClickHouse.
+NervesHub shows the current state of every device, and the history of how that changed: when devices connected, how updates ended, and what messages crossed each connection.
 
 ## Requirements
 
@@ -111,7 +111,7 @@ A failure adds to the device's count of consecutive failed updates. That count i
 
 An attempt that has just ended can take a moment to appear in **Update attempts**.
 
-The same update history feeds two other places. A deployment group's **Stats** tab counts how each release's attempts ended and how long they took. See [Deployment groups](/setup/deployments#stats-tab). A firmware's page counts its failed installs over the last 7 days. Both need ClickHouse.
+The same update history feeds two other places that need ClickHouse. A deployment group's **Stats** tab counts how each release's attempts ended and how long they took. See [Deployment groups](/setup/deployments#stats-tab). A firmware's page counts its failed installs over the last 7 days.
 
 ## Data History
 
@@ -131,7 +131,7 @@ What is kept of each message depends on its channel:
 | Console | The size only, never the contents |
 | [Local shell extension](/extensions/local-shell) | The size only, never the contents |
 
-Console and shell traffic is what someone typed and what came back, which can include credentials. NervesHub records that a message crossed, not what it said.
+Console and shell traffic is what someone typed and what came back, which can include credentials.
 
 If the tab shows "Analytics aren't enabled for your platform.", the instance runs without ClickHouse.
 

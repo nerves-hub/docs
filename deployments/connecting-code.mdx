@@ -30,8 +30,6 @@ Connecting code is Elixir that NervesHub sends to a device each time the device 
   </Step>
 </Steps>
 
-Every device in the group runs this code when it connects.
-
 ### On a release
 
 A release can carry its own code, which a device runs while it is running that release.
@@ -68,7 +66,7 @@ The mode sets where the release's code runs relative to the group's code:
 | ------------------------------- | ---------- | --------------------------------------------------- |
 | **After the group's code**      | `last`     | The group's code runs, then the release's. The default. |
 | **Before the group's code**     | `first`    | The release's code runs, then the group's.          |
-| **Instead of the group's code** | `override` | Only the release's code runs. The group's is left out. |
+| **Instead of the group's code** | `override` | Only the release's code runs. |
 
 A release with no code of its own leaves the group's code alone, whatever its mode.
 

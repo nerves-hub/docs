@@ -4,9 +4,9 @@ sidebarTitle: "Health monitoring"
 description: "Set health profiles for a product, read a device's health status and metric charts, and see the alarms its firmware has raised."
 ---
 
-NervesHub turns the metrics and alarms your devices report into a health status per device, charts of each metric over time, and a list of the alarms currently raised. This page covers the NervesHub side: where the data shows up and how you set the thresholds that decide whether a device is healthy.
+NervesHub turns the metrics and alarms your devices report into a health status per device, charts of each metric over time, and a list of the alarms currently raised.
 
-The data comes from the device. To send it, set up the [Health extension](/extensions/health) in your firmware and turn it on for the product.
+To send the data, set up the [Health extension](/extensions/health) in your firmware and turn it on for the product.
 
 ## Where the data comes from
 
@@ -51,7 +51,7 @@ A change of status can also be sent to your own systems as the `device.health_st
 
 A health profile is the set of thresholds that decides a device's status. Profiles belong to a product.
 
-Every product has a **Default** profile. You can add a profile for a platform, which applies to devices whose firmware reports that platform. A device uses its platform's profile if there is one, and **Default** otherwise.
+Every product has a **Default** profile. You can add a profile for a platform. A device whose firmware reports that platform uses its profile. Every other device uses **Default**.
 
 ### Default thresholds
 
@@ -68,7 +68,7 @@ A new product's **Default** profile starts with four metrics, each measured over
 
 Each metric in a profile has two levels, **Warning** and **Unhealthy**. Each level has a threshold and a period, from 1 minute to 24 hours.
 
-A level engages when the metric's median over that level's period reaches the threshold. In practice, that means at least half the readings in the period are at or past the threshold. A single odd reading does not change a device's status.
+A level engages when the metric's median over that level's period reaches the threshold: at least half the readings in the period are at or past it.
 
 By default a metric is unhealthy at or above its thresholds. You can flip a metric so that it is unhealthy at or below them, for values where low is the problem.
 
@@ -143,7 +143,7 @@ See the [CLI reference](/cli/reference) and the [API overview](/api/overview).
 
 ## Alarms
 
-Alarms come from the device. Your firmware raises and clears them, and NervesHub shows the set that is currently raised. NervesHub does not raise an alarm when a metric crosses a threshold: thresholds change the device's [health status](#health-status), not its alarms.
+Your firmware raises and clears alarms, and NervesHub shows the set that is currently raised. A metric crossing a threshold changes the device's [health status](#health-status), not its alarms.
 
 The **Alarms** row sits at the foot of the **Health** card on the **Details** tab and the **Now** card on the **Health** tab. It shows how many alarms are active. Each alarm is listed with its name, its description, and when it was raised. With no alarms it reads **None active**.
 

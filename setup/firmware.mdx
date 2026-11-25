@@ -6,7 +6,7 @@ description: "Build a fwup firmware file with Nerves, sign it with one of your o
 
 NervesHub stores Nerves firmware as fwup `.fw` files. A `.fw` file is a ZIP archive that holds the firmware's metadata, its data, and an Ed25519 signature. NervesHub checks the signature when you upload, and the device checks it again before it installs. See [Firmware signing](/concepts/firmware-signing) for how the keys fit together.
 
-This page covers fwup firmware, which is what a product accepts by default. For other formats see [RAUC](/updates/rauc), [ESP-IDF](/updates/esp-idf) and [AtomVM](/updates/atomvm).
+A product accepts fwup firmware by default. For other formats see [RAUC](/updates/rauc), [ESP-IDF](/updates/esp-idf) and [AtomVM](/updates/atomvm).
 
 ## Before you start
 
@@ -15,8 +15,6 @@ This page covers fwup firmware, which is what a product accepts by default. For 
 - `fwup` installed on the machine that uploads. `nh` uses it to sign `.fw` files.
 
 ## Build firmware
-
-Build with the standard Nerves workflow:
 
 ```bash
 export MIX_TARGET=rpi4

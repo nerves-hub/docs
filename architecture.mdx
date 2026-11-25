@@ -4,7 +4,7 @@ sidebarTitle: "Architecture"
 description: "How the NervesHub server, device library, CLI and storage fit together, what each one stores, and where the security boundaries are."
 ---
 
-NervesHub has a server, a client library on each device, and a CLI on your workstation or in [CI](/outbound/ci-cd). This page describes each part, what it stores, how a firmware update moves through them, and who holds which secret.
+NervesHub has a server, a client library on each device, and a CLI on your workstation or in [CI](/outbound/ci-cd).
 
 ## Components
 
@@ -48,7 +48,7 @@ One NervesHub release can run in three roles, chosen with the `NERVES_HUB_APP` e
 | `web` | The web UI, the HTTP API that the CLI uses, and the deployment orchestrators that pace rollouts. |
 | `device` | The device endpoint that holds device WebSocket connections. |
 
-The device endpoint serves HTTPS itself and terminates mutual TLS, because device certificates are how devices authenticate. A proxy in front of it has to pass the TLS connection through. It cannot terminate TLS on the endpoint's behalf.
+The device endpoint serves HTTPS itself and terminates mutual TLS, because device certificates are how devices authenticate. A proxy in front of it has to pass the TLS connection through.
 
 When you run more than one node, every node joins one Erlang cluster. A single node needs no cluster configuration.
 
@@ -62,7 +62,7 @@ When you run more than one node, every node joins one Erlang cluster. A single n
 | The device | Its private key and certificate, or its shared secret, and the public keys it trusts for firmware. |
 | Your workstation or CI | Firmware signing private keys and your API token. |
 
-ClickHouse is optional. Without it, NervesHub still connects devices and delivers updates, and current metric values still work because they are read from PostgreSQL. The Insights pages, connection and metric history, and the logging, error reports and metrics [extensions](/extensions/overview) need it. See [ClickHouse](/hosting/clickhouse) and [Feature prerequisites](/hosting/feature-prerequisites#clickhouse).
+Without ClickHouse, NervesHub still connects devices and delivers updates, and current metric values still work because they are read from PostgreSQL. The Insights pages, connection and metric history, and the logging, error reports and metrics [extensions](/extensions/overview) need it. See [ClickHouse](/hosting/clickhouse) and [Feature prerequisites](/hosting/feature-prerequisites#clickhouse).
 
 ## How a firmware update flows
 

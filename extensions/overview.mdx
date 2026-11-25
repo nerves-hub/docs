@@ -13,7 +13,7 @@ An extension only runs when three things agree:
 3. The device has it turned on in NervesHub.
 
 <Note>
-  An extension must be on for the product and for the device. A product created in the web UI starts with every extension on. A product created through the API or `nh` starts with every extension off, and sends nothing until you turn one on in its settings. The device setting is on by default, so a device follows its product unless you turn the extension off for that one device.
+  A product created in the web UI starts with every extension on. A product created through the API or `nh` starts with every extension off, and sends nothing until you turn one on in its settings. The device setting is on by default, so a device follows its product unless you turn the extension off for that one device.
 </Note>
 
 ## The extensions
@@ -52,7 +52,7 @@ An instance without ClickHouse does not advertise Logging, Error reports or Metr
     ```
 
     <Warning>
-      `extension_modules` replaces the default list. It does not add to it. Name every extension you want, not only the one you are adding. The list leaves out the optional [Local shell](/extensions/local-shell) extension.
+      `extension_modules` replaces the default list. Name every extension you want. The list leaves out the optional [Local shell](/extensions/local-shell) extension.
     </Warning>
   </Step>
 

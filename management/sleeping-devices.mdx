@@ -4,7 +4,7 @@ sidebarTitle: "Sleeping devices"
 description: "Have a battery device tell NervesHub it is going to sleep, so it shows as asleep with a wake time instead of offline."
 ---
 
-A device on a battery often cannot keep a connection open. It wakes, connects, does its work, and sleeps again. If it does not say so first, NervesHub only sees the connection close. The device shows as offline, the same as one that lost power, and every wake counts as a disconnect in its health and in Insights.
+A battery device wakes, connects, does its work, and sleeps again. If it does not say so first, NervesHub only sees the connection close. The device shows as offline, the same as one that lost power, and every wake counts as a disconnect in its health and in Insights.
 
 A device that tells NervesHub it is going to sleep shows as asleep instead, with when it is due back. Its sleep does not count as a disconnect.
 
@@ -31,7 +31,7 @@ Call `NervesHubLink.going_to_sleep/2` just before the device sleeps:
 The call pushes a `sleeping` message on the device channel and closes the connection. It returns once both are done, or after five seconds if the close is slow, so the device can sleep straight after. NervesHub does not reply.
 
 <ParamField path=":mode" type=":deep | :light" default=":deep">
-  What kind of sleep this is. NervesHub shows the mode to people and does nothing else with it. Use `:deep` when the device loses what it was running and starts again on waking. Use `:light` when it carries on where it left off, as after a suspend to RAM.
+  NervesHub shows the mode to people and does nothing else with it. Use `:deep` when the device loses what it was running and starts again on waking. Use `:light` when it carries on where it left off, as after a suspend to RAM.
 </ParamField>
 
 <ParamField path=":duration_ms" type="positive integer">
@@ -50,9 +50,9 @@ Send how long, never when. A device that has just woken may not have its clock s
 
 After `going_to_sleep/2` the connection stays closed.
 
-A device in deep sleep restarts when it wakes and connects at boot as it always does. You do not need to do anything.
+A device in deep sleep restarts when it wakes and connects at boot as it always does.
 
-A device that keeps running through its sleep reconnects with `NervesHubLink.reconnect/0`. Call it when the device wakes:
+A device that keeps running through its sleep calls `NervesHubLink.reconnect/0` when it wakes:
 
 ```elixir
 :ok = NervesHubLink.going_to_sleep(mode: :light, duration_ms: :timer.minutes(5))

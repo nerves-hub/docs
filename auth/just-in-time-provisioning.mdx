@@ -4,7 +4,7 @@ sidebarTitle: "Just-in-time provisioning"
 description: "Attach a JITP profile to a registered CA certificate so devices it signed are created in a product the first time they connect."
 ---
 
-Just-in-time provisioning (JITP) creates a device the first time it connects with a certificate signed by one of your registered certificate authorities. Without it, NervesHub refuses a certificate whose device does not exist yet, so you have to add every device before it ships. With it, you sign device certificates at the factory and the devices add themselves.
+Just-in-time provisioning (JITP) creates a device the first time it connects with a certificate signed by one of your registered certificate authorities. Without it, NervesHub refuses a certificate whose device does not exist yet, so you have to add every device before it ships.
 
 A JITP profile belongs to one CA certificate. It names the product new devices join, and optionally the tags and description they start with.
 
@@ -109,10 +109,10 @@ After that, the certificate is on file and the device connects like any other. S
 
 - **An existing device is not moved or changed.** NervesHub looks for the identifier in the whole organization. If a device with that identifier exists in any of the organization's products, the certificate is recorded for that device, and the profile's product, tags and description are not applied.
 - **A deleted device is not recreated.** If a device with that identifier has been deleted, the connection is refused until you restore the device or delete it permanently.
-- **A device that already has a certificate cannot add a new key this way.** If the existing device has a certificate on file, a certificate with a different public key is refused.
+- **A device that already has a certificate cannot add a new key this way.** A certificate with a different public key is refused.
 - **A deleted product stops provisioning.** From NervesHub 2.5.2, a profile whose product has been deleted creates no devices.
 - **The product must be in the CA's organization.** NervesHub rejects a profile that names another organization's product.
-- **Tags and description are copied once.** They are set when the device is created. Changing the profile does not change devices it already created.
+- **Tags and description are copied once.** Changing the profile does not change devices it already created.
 - **Product shared secrets are separate.** A device that connects with a product key is created without a profile, with no tags. See [Shared secret](/auth/shared-secret).
 
 ## Turn it off
