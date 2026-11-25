@@ -99,7 +99,7 @@ The default implementation returns `:ignore` when the offered firmware's UUID eq
 
 `nerves_hub_link` does not keep a timer for a rescheduled update. It reports the decision to NervesHub and waits to be offered the update again.
 
-- **Rescheduled.** The device asks NervesHub to hold the update back for the delay you returned. A delay in milliseconds is rounded to whole minutes. Delays under 5 minutes are raised to 5 minutes. Do not count on the delay. `nerves_hub_link` 2.14.0 sends it in minutes and NervesHub reads it in milliseconds, so the update is offered again within about a minute. Each offer counts as an attempt, so a device that keeps rescheduling meets its group's [penalty box](/deployments/rollout-controls#penalty-box) rules and is then offered nothing for the penalty time. [Let a device out early](/deployments/rollout-controls#let-a-device-out-early) shows how to clear it.
+- **Rescheduled.** The device asks NervesHub to hold the update back for the delay you returned. A delay in milliseconds is rounded to whole minutes. Delays under 5 minutes are raised to 5 minutes. NervesHub offers the update again after the delay.
 - **Ignored.** NervesHub holds updates back from the device for the [deployment group](/setup/deployments)'s penalty timeout, as it does after a failed update. See [rollout controls](/deployments/rollout-controls).
 
 If an update message arrives while another update is being applied, `nerves_hub_link` drops it and lets the running update finish.

@@ -78,10 +78,10 @@ An instance without ClickHouse does not advertise Logging, Error reports or Metr
 On the device, check which extensions NervesHub has attached:
 
 ```elixir
-iex> :sys.get_state(NervesHubLink.Extensions).extensions |> Map.new(fn {name, ext} -> {name, ext.attached?} end)
+iex> NervesHubLink.Extensions.list()
 ```
 
-Each extension has the value `true` once NervesHub has attached it. `NervesHubLink.Extensions.list()` lists the extensions in the firmware, but in `nerves_hub_link` 2.14.0 its `attached?` field reads `false` even for an attached extension.
+Each extension shows `attached?: true` once NervesHub has attached it.
 
 In NervesHub, the device's **Data History** tab records extension messages, and you can filter it to the **Extensions** channel. Data History needs ClickHouse on the instance.
 

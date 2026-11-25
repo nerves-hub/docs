@@ -244,10 +244,6 @@ nh deployment create production --firmware <UUID> --tag prod
 
 With no `--version` flag, a group matches devices on any firmware version. In the web UI, open **Deployment groups** and select **New deployment group**. The tag goes in **Tag(s) distributed to**.
 
-<Warning>
-  A new group has delta updates on. In such a group, a release whose delta fails to build is held back. It is not sent as full firmware. Firmware that is not built for deltas always fails that build. Unless you did the delta updates part of the [basic device guide](/guides/basic-device-setup), add `--delta-updatable=false` to both commands. See [Delta updates](/management/delta-updates#releases-wait-for-their-deltas).
-</Warning>
-
 ### Turn the groups on
 
 A new group is off and sends nothing. Turn both on:
@@ -354,7 +350,7 @@ The group starts sending the release as soon as it is created. To add a descript
 
 ### Watch the rollout
 
-- **The group page.** The badge beside the group's name reads **Rolling out** and then **Up to date**. The **Overview** tab counts how many of the group's devices are on the release's version. The **Releases** tab lists every release, newest first. Open a release to see its delta updates, if it has any. If a release stalls there, see the delta warning in [part 2](#create-the-two-groups). If a rollout goes wrong, select **Pause**.
+- **The group page.** The badge beside the group's name reads **Rolling out** and then **Up to date**. The **Overview** tab counts how many of the group's devices are on the release's version. The **Releases** tab lists every release, newest first. Open a release to see its delta updates, if it has any. If a rollout goes wrong, select **Pause**.
 - **A device.** Open the [device page](/management/fleet-overview#the-device-page) and select the **Firmware History** tab. **Installed firmware** lists each firmware the device reported. **Update attempts** shows how each update ended and needs ClickHouse on the instance: see [Feature prerequisites](/hosting/feature-prerequisites#clickhouse) and [Insights and history](/management/insights#firmware-update-history).
 - **The whole product.** The **Firmware** bar on [**Insights**](/management/insights) counts devices by version, and its **Failing updates** list names devices that keep failing.
 - **The terminal.** `nh deployment show` prints the group's state, device count and current release. `nh device list` prints each device's connection status and firmware version, and takes the [query language](/management/finding-devices#the-query-language) of the devices page:

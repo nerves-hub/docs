@@ -94,8 +94,6 @@ The **Penalty box** card has three rules:
 
 A device enters the penalty box when it meets either of the first two rules. Those rules count the updates NervesHub sent the device. A device that reports a failed update enters the penalty box straight away, whatever the first two rules are set to, and stays for the same number of minutes. Entering the penalty box clears the device's recorded attempts, so the device has a full set of tries when the penalty ends.
 
-An update the device [reschedules](/updates/applying-updates#what-ignoring-and-rescheduling-do) counts as an attempt too. With `nerves_hub_link` 2.14.0 a rescheduled update is offered again within about a minute, so a device that keeps rescheduling enters the penalty box.
-
 In a group with a workflow, a device in the penalty box counts as a failed device towards its step's `failure_tolerance`.
 
 ### Find devices in the penalty box

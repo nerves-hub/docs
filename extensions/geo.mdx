@@ -79,15 +79,6 @@ config :nerves_hub_link,
   ]
 ```
 
-Load the module when your application starts, because `nerves_hub_link` 2.14.0 uses the default resolver instead, without a warning, when your resolver's module is not loaded yet:
-
-```elixir
-# lib/my_app/application.ex, at the top of start/2
-Code.ensure_loaded(MyApp.GPSGeoResolver)
-```
-
-When your resolver is in use, the device logs `Location resolution completed successfully using MyApp.GPSGeoResolver` at the `:debug` level.
-
 A successful result is a map with `latitude`, `longitude` and `source`, and optionally `accuracy`. NervesHub labels the sources `geoip`, `gps` and `manual`. Any other source is shown as **From** followed by the source name.
 
 <Note>

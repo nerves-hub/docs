@@ -179,7 +179,7 @@ NervesHub can send ESP-IDF devices a patch in place of the whole image.
 
 - Deltas are generated on the server with [`detools`](https://github.com/eerimoq/detools), in the format Espressif's `esp_delta_ota` component applies. They are not fwup deltas and do not use `xdelta3`.
 - Any two ESP-IDF images of a product can be patched. Nothing has to be added to the build.
-- A device is sent a delta when its deployment group has **Delta updates** turned on and a delta from its current firmware has finished generating. With **Delta updates** off it is sent the full image. While the delta is generating, or after it failed, the device is not offered the update. See [Releases wait for their deltas](/management/delta-updates#releases-wait-for-their-deltas).
+- A device is sent a delta when its deployment group has **Delta updates** turned on and a delta from its current firmware has finished generating. With **Delta updates** off it is sent the full image. While the delta is generating, the device is not offered the update. If the delta fails, the device is sent the full image. See [Releases wait for their deltas](/management/delta-updates#releases-wait-for-their-deltas).
 - The device needs the `esp_delta_ota` component. The Rust client detects a patch from the first byte of the download and applies it with `esp_delta_ota`.
 - A patch rebuilds the target image byte for byte, so the signature block is unchanged and Secure Boot verifies the same bytes.
 
