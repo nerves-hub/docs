@@ -86,10 +86,15 @@ The examples use NervesCloud: `manage.nervescloud.com` for you and `devices.nerv
   </Step>
 
   <Step title="Add and configure NervesHubLink">
-    Add the library to the dependencies in `mix.exs`:
+    Add the library inside the `deps` function in `mix.exs`:
 
     ```elixir
-    {:nerves_hub_link, "~> 2.14", targets: @all_targets},
+    defp deps do
+      [
+        # ... existing deps ...
+        {:nerves_hub_link, "~> 2.14", targets: @all_targets}
+      ]
+    end
     ```
 
     Configure it in `config/target.exs`:

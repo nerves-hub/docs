@@ -14,13 +14,13 @@ description: "Add the nerves_hub_link dependency to a Nerves project, choose how
 
 <Steps>
   <Step title="Add the dependency">
-    Add `nerves_hub_link` to the target dependencies in `mix.exs`:
+    Add `nerves_hub_link` inside the `deps` function in `mix.exs`:
 
     ```elixir
     defp deps do
       [
         # ... existing deps ...
-        {:nerves_hub_link, "~> 2.14"}
+        {:nerves_hub_link, "~> 2.14", targets: @all_targets}
       ]
     end
     ```
