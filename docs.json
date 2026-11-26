@@ -83,25 +83,15 @@
             "group": "Firmware Updates",
             "pages": [
               "updates/overview",
+              "concepts/firmware-signing",
+              "management/delta-updates",
+              "updates/rauc",
+              "updates/esp-idf",
+              "updates/atomvm",
               "updates/applying-updates",
               "updates/download-strategies",
               "updates/device-managed-updates",
-              "updates/archives",
-              {
-                "group": "fwup",
-                "pages": [
-                  "concepts/firmware-signing",
-                  "management/delta-updates"
-                ]
-              },
-              {
-                "group": "Other firmware formats",
-                "pages": [
-                  "updates/rauc",
-                  "updates/esp-idf",
-                  "updates/atomvm"
-                ]
-              }
+              "updates/archives"
             ]
           },
           {
